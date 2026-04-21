@@ -1,11 +1,26 @@
 <script lang="ts">
+  interface Anchor {
+    line: number;
+    side: "LEFT" | "RIGHT";
+    startLine?: number;
+  }
+
   interface Props {
     initialValue?: string;
+    anchor?: Anchor;
     onsave: (body: string) => void;
     oncancel: () => void;
   }
 
-  const { initialValue = "", onsave, oncancel }: Props = $props();
+  const { initialValue = "", anchor, onsave, oncancel }: Props = $props();
+
+  function anchorLabel(a: Anchor): string {
+    const sign = a.side === "LEFT" ? "−" : "+";
+    if (a.startLine != null && a.startLine !== a.line) {
+      return `${sign}${a.startLine}–${a.line}`;
+    }
+    return `${sign}${a.line}`;
+  }
 
   // svelte-ignore state_referenced_locally
   let value = $state(initialValue);
@@ -32,6 +47,15 @@
 </script>
 
 <div class="composer">
+  {#if anchor}
+    <div class="composer__anchor">
+      <span class="composer__anchor-label">
+        {anchor.startLine != null && anchor.startLine !== anchor.line
+          ? `Commenting on lines ${anchorLabel(anchor)}`
+          : `Commenting on line ${anchorLabel(anchor)}`}
+      </span>
+    </div>
+  {/if}
   <textarea
     bind:this={textareaEl}
     bind:value
@@ -66,6 +90,21 @@
     margin: 4px 12px 8px 68px;
     padding: 8px;
     background: var(--bg-surface);
+  }
+
+  .composer__anchor {
+    display: flex;
+    margin-bottom: 6px;
+  }
+
+  .composer__anchor-label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--accent-blue);
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent-blue) 10%, var(--bg-inset));
+    border: 1px solid color-mix(in srgb, var(--accent-blue) 40%, transparent);
   }
 
   .composer__textarea {

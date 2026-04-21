@@ -140,6 +140,21 @@
     selectionSnapshot = selText.trim() || null;
   }
 
+  // composerAnchor packages the anchor for a composer instance so it
+  // can render an indicator showing which line(s) will be commented
+  // on. Uses rangeSnapshot when a multi-line selection is live; falls
+  // back to a single-line anchor on the clicked line.
+  function composerAnchor(
+    line: number,
+    side: "LEFT" | "RIGHT",
+  ): { line: number; side: "LEFT" | "RIGHT"; startLine?: number } {
+    const r = rangeSnapshot;
+    if (r && r.side === side && r.startLine !== r.endLine) {
+      return { line: r.endLine, side, startLine: r.startLine };
+    }
+    return { line, side };
+  }
+
   // rangeTooltip returns a label for the + / ? button indicating the
   // range it'll anchor to, given the anchor side. Null means the
   // button falls back to a single-line anchor (no active selection
@@ -687,18 +702,21 @@
                 </div>
                 {#if leftKey && openComposer === leftKey && leftAnchor}
                   <DiffComposer
+                    anchor={composerAnchor(leftAnchor.line, leftAnchor.side)}
                     onsave={(body) => saveDraft(leftAnchor.line, leftAnchor.side, body)}
                     oncancel={closeComposer}
                   />
                 {/if}
                 {#if rightKey && openComposer === rightKey && rightAnchor}
                   <DiffComposer
+                    anchor={composerAnchor(rightAnchor.line, rightAnchor.side)}
                     onsave={(body) => saveDraft(rightAnchor.line, rightAnchor.side, body)}
                     oncancel={closeComposer}
                   />
                 {/if}
                 {#if leftKey && openAsk === leftKey && leftAnchor}
                   <AIAskComposer
+                    anchor={composerAnchor(leftAnchor.line, leftAnchor.side)}
                     {...(selectionSnapshot ? { selectionPreview: selectionSnapshot } : {})}
                     error={askError}
                     submitting={askSubmitting}
@@ -708,6 +726,7 @@
                 {/if}
                 {#if rightKey && openAsk === rightKey && rightAnchor}
                   <AIAskComposer
+                    anchor={composerAnchor(rightAnchor.line, rightAnchor.side)}
                     {...(selectionSnapshot ? { selectionPreview: selectionSnapshot } : {})}
                     error={askError}
                     submitting={askSubmitting}
@@ -803,12 +822,14 @@
                 </div>
                 {#if anchorKey && openComposer === anchorKey && anchor}
                   <DiffComposer
+                    anchor={composerAnchor(anchor.line, anchor.side)}
                     onsave={(body) => saveDraft(anchor.line, anchor.side, body)}
                     oncancel={closeComposer}
                   />
                 {/if}
                 {#if anchorKey && openAsk === anchorKey && anchor}
                   <AIAskComposer
+                    anchor={composerAnchor(anchor.line, anchor.side)}
                     {...(selectionSnapshot ? { selectionPreview: selectionSnapshot } : {})}
                     error={askError}
                     submitting={askSubmitting}

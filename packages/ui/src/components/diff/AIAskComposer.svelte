@@ -1,6 +1,13 @@
 <script lang="ts">
+  interface Anchor {
+    line: number;
+    side: "LEFT" | "RIGHT";
+    startLine?: number;
+  }
+
   interface Props {
     selectionPreview?: string;
+    anchor?: Anchor;
     error?: string | null;
     submitting?: boolean;
     onsubmit: (question: string) => void;
@@ -9,11 +16,20 @@
 
   const {
     selectionPreview,
+    anchor,
     error = null,
     submitting = false,
     onsubmit,
     oncancel,
   }: Props = $props();
+
+  function anchorText(a: Anchor): string {
+    const sign = a.side === "LEFT" ? "−" : "+";
+    if (a.startLine != null && a.startLine !== a.line) {
+      return `lines ${sign}${a.startLine}–${a.line}`;
+    }
+    return `line ${sign}${a.line}`;
+  }
 
   let value = $state("");
   let textareaEl: HTMLTextAreaElement | undefined = $state();
@@ -39,6 +55,9 @@
 <div class="ai-ask">
   <div class="ai-ask__header">
     <span class="ai-ask__badge">Ask Claude</span>
+    {#if anchor}
+      <span class="ai-ask__anchor">about {anchorText(anchor)}</span>
+    {/if}
     {#if selectionPreview}
       <span class="ai-ask__selection" title={selectionPreview}>
         “{selectionPreview.length > 60
@@ -97,6 +116,15 @@
     border-radius: 999px;
     background: var(--accent-purple);
     color: #fff;
+  }
+
+  .ai-ask__anchor {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--accent-purple);
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent-purple) 12%, var(--bg-inset));
   }
 
   .ai-ask__selection {
