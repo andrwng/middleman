@@ -83,7 +83,11 @@
   <div class="ai-thread__header">
     <span class="ai-thread__badge">Claude</span>
     <span class="ai-thread__anchor">
-      {thread.anchor_side === "LEFT" ? "−" : "+"}{thread.anchor_line}
+      {thread.anchor_side === "LEFT" ? "−" : "+"}{thread.hunk_start_line != null &&
+      thread.hunk_end_line != null &&
+      thread.hunk_start_line !== thread.hunk_end_line
+        ? `${thread.hunk_start_line}–${thread.hunk_end_line}`
+        : thread.anchor_line}
     </span>
     <span class="ai-thread__commit" title="Asked against this commit">
       {thread.commit_sha.slice(0, 7)}

@@ -59,6 +59,24 @@ func TestBuildPrompt(t *testing.T) {
 	assert.Contains(t, prompt, "+new")
 	assert.Contains(t, prompt, "x := 1")
 	assert.Contains(t, prompt, "what does this do?")
+	// No hunk range → single-line phrasing.
+	assert.Contains(t, prompt, "Anchored line: 42")
+}
+
+func TestBuildPrompt_MultiLineRange(t *testing.T) {
+	start := 40
+	end := 43
+	prompt := buildPrompt(CreateThreadInput{
+		Path:          "foo.go",
+		AnchorSide:    "RIGHT",
+		AnchorLine:    43,
+		HunkStartLine: &start,
+		HunkEndLine:   &end,
+		CommitSHA:     "abc1234",
+	}, "why?")
+
+	assert.Contains(t, prompt, "Anchored lines: 40-43 (RIGHT side)")
+	assert.NotContains(t, prompt, "Anchored line: 43")
 }
 
 // writeFakeClaude installs a shell script at path that emits the given

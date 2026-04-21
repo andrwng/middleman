@@ -67,20 +67,73 @@
     return "";
   }
 
+  // When the reviewer has a multi-line selection at click time we
+  // snapshot its range so the resulting comment/question anchors to
+  // the whole span. If the selection is empty, single-line, or
+  // straddles the LEFT/RIGHT sides we fall back to the clicked line.
+  let rangeSnapshot = $state<{ startLine: number; endLine: number; side: "LEFT" | "RIGHT" } | null>(null);
+
+  function snapshotRangeFor(side: "LEFT" | "RIGHT"): void {
+    rangeSnapshot = currentSelectionRange(side);
+  }
+
+  function currentSelectionRange(
+    clickedSide: "LEFT" | "RIGHT",
+  ): { startLine: number; endLine: number; side: "LEFT" | "RIGHT" } | null {
+    if (typeof window === "undefined") return null;
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0) return null;
+    if (!fileEl) return null;
+
+    const anchorWrap = nearestLineWrap(sel.anchorNode);
+    const focusWrap = nearestLineWrap(sel.focusNode);
+    if (!anchorWrap || !focusWrap) return null;
+
+    // Both ends must live inside this file and on the same side.
+    if (!fileEl.contains(anchorWrap) || !fileEl.contains(focusWrap)) return null;
+    const aSide = anchorWrap.dataset.anchorSide;
+    const fSide = focusWrap.dataset.anchorSide;
+    if (aSide !== clickedSide || fSide !== clickedSide) return null;
+
+    const a = parseInt(anchorWrap.dataset.anchorLine ?? "", 10);
+    const f = parseInt(focusWrap.dataset.anchorLine ?? "", 10);
+    if (!Number.isFinite(a) || !Number.isFinite(f) || a === f) return null;
+    const [startLine, endLine] = a < f ? [a, f] : [f, a];
+    return { startLine, endLine, side: clickedSide };
+  }
+
+  function nearestLineWrap(node: Node | null): HTMLElement | null {
+    let el = node instanceof Element ? node : node?.parentElement ?? null;
+    while (el) {
+      if (el instanceof HTMLElement && el.dataset.anchorLine != null) return el;
+      el = el.parentElement;
+    }
+    return null;
+  }
+
   function openComposerFor(line: number, side: "LEFT" | "RIGHT"): void {
+    snapshotRangeFor(side);
     openComposer = `${line}:${side}`;
   }
 
   function closeComposer(): void {
     openComposer = null;
+    rangeSnapshot = null;
   }
 
   function saveDraft(line: number, side: "LEFT" | "RIGHT", body: string): void {
     const commitSha = currentCommitSha();
+    const range = rangeSnapshot;
     diffStore.addDraftComment({
       path: file.path,
-      line,
+      // GitHub's convention for multi-line comments: `line` is the
+      // last line, `startLine` is the first. Respect that even when
+      // the reviewer clicked the + on the start line.
+      line: range ? range.endLine : line,
       side,
+      ...(range && range.startLine !== range.endLine
+        ? { startLine: range.startLine }
+        : {}),
       commitSha,
       body,
     });
@@ -103,6 +156,9 @@
       ? (window.getSelection()?.toString() ?? "")
       : "";
     selectionSnapshot = selText.trim() || null;
+    // Snapshot the range the same way the comment composer does so a
+    // multi-line selection becomes a multi-line anchor.
+    snapshotRangeFor(side);
     openAsk = `${line}:${side}`;
     askError = null;
   }
@@ -112,6 +168,7 @@
     selectionSnapshot = null;
     askError = null;
     askSubmitting = false;
+    rangeSnapshot = null;
   }
 
   async function submitAsk(line: number, side: "LEFT" | "RIGHT", question: string): Promise<void> {
@@ -133,13 +190,22 @@
         return;
       }
 
+      const range = rangeSnapshot;
       const body: Parameters<typeof aiStore.createThread>[0] = {
         path: file.path,
         anchor_side: side,
-        anchor_line: line,
+        // Use the last line of the range as the primary anchor, matching
+        // the review-comment convention. Pass hunk_start_line/hunk_end_line
+        // so the backend prompt includes the range in the question
+        // context sent to Claude.
+        anchor_line: range ? range.endLine : line,
         commit_sha: commitSha,
         question,
       };
+      if (range && range.startLine !== range.endLine) {
+        body.hunk_start_line = range.startLine;
+        body.hunk_end_line = range.endLine;
+      }
       if (selectionSnapshot) body.selection_text = selectionSnapshot;
 
       const result = await aiStore.createThread(body);
@@ -395,7 +461,13 @@
                 <div class="ss-row">
                   <div class="ss-cell ss-cell--left">
                     {#if row.left}
-                      <div class="line-wrap" class:line-wrap--commentable={!!leftAnchor}>
+                      <div
+                        class="line-wrap"
+                        class:line-wrap--commentable={!!leftAnchor}
+                        {...(leftAnchor
+                          ? { "data-anchor-line": leftAnchor.line, "data-anchor-side": leftAnchor.side }
+                          : {})}
+                      >
                         <DiffLineComponent
                           type={row.left.line.type}
                           content={row.left.line.content}
@@ -433,7 +505,13 @@
                   </div>
                   <div class="ss-cell ss-cell--right">
                     {#if row.right}
-                      <div class="line-wrap" class:line-wrap--commentable={!!rightAnchor}>
+                      <div
+                        class="line-wrap"
+                        class:line-wrap--commentable={!!rightAnchor}
+                        {...(rightAnchor
+                          ? { "data-anchor-line": rightAnchor.line, "data-anchor-side": rightAnchor.side }
+                          : {})}
+                      >
                         <DiffLineComponent
                           type={row.right.line.type}
                           content={row.right.line.content}
@@ -540,7 +618,13 @@
               {#each hunk.lines as line, lineIdx}
                 {@const anchor = anchorFor(line.type, line.old_num ?? undefined, line.new_num ?? undefined)}
                 {@const anchorKey = anchor ? `${anchor.line}:${anchor.side}` : null}
-                <div class="line-wrap" class:line-wrap--commentable={!!anchor}>
+                <div
+                  class="line-wrap"
+                  class:line-wrap--commentable={!!anchor}
+                  {...(anchor
+                    ? { "data-anchor-line": anchor.line, "data-anchor-side": anchor.side }
+                    : {})}
+                >
                   <DiffLineComponent
                     type={line.type}
                     content={line.content}

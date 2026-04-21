@@ -374,7 +374,11 @@ func buildPrompt(in CreateThreadInput, question string) string {
 		b.WriteString("\n\n")
 	}
 	b.WriteString(fmt.Sprintf("File: %s\n", in.Path))
-	b.WriteString(fmt.Sprintf("Anchored line: %d (%s side)\n", in.AnchorLine, in.AnchorSide))
+	if in.HunkStartLine != nil && in.HunkEndLine != nil && *in.HunkStartLine != *in.HunkEndLine {
+		b.WriteString(fmt.Sprintf("Anchored lines: %d-%d (%s side)\n", *in.HunkStartLine, *in.HunkEndLine, in.AnchorSide))
+	} else {
+		b.WriteString(fmt.Sprintf("Anchored line: %d (%s side)\n", in.AnchorLine, in.AnchorSide))
+	}
 	b.WriteString(fmt.Sprintf("Commit SHA: %s\n", in.CommitSHA))
 	if in.HunkText != "" {
 		b.WriteString("\nHunk:\n```diff\n")

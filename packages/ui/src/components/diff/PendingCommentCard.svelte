@@ -40,7 +40,9 @@
       </span>
     {/if}
     <span class="pending__anchor">
-      {comment.side === "LEFT" ? "−" : "+"}{comment.line}
+      {comment.side === "LEFT" ? "−" : "+"}{comment.startLine != null && comment.startLine !== comment.line
+        ? `${comment.startLine}–${comment.line}`
+        : comment.line}
     </span>
     <button type="button" class="pending__delete" onclick={ondelete} title="Delete pending comment">
       <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6">
