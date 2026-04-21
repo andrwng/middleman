@@ -1046,19 +1046,6 @@
     opacity: 1;
   }
 
-  /* When the reviewer has an active multi-line selection, keep the
-     action buttons visible on every line so the affordance is
-     discoverable without hovering an exact pixel. */
-  .line-wrap--commentable:has(.add-comment-btn--range) .line-actions {
-    opacity: 1;
-  }
-
-  .add-comment-btn--range,
-  .ask-ai-btn--range {
-    outline: 2px solid var(--bg-surface);
-    box-shadow: 0 0 0 3px currentColor;
-  }
-
   /* Floating toolbar anchored to the end of a multi-line selection.
      Fixed positioning relative to the document so it survives scroll
      inside the diff container. mousedown preventDefault inside the

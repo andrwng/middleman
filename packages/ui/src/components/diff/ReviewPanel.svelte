@@ -183,7 +183,9 @@
           {#each group.comments as c (c.id)}
             <div class="preview-comment">
               <span class="preview-comment__anchor">
-                {c.side === "LEFT" ? "−" : "+"}{c.line}
+                {c.side === "LEFT" ? "−" : "+"}{c.startLine != null && c.startLine !== c.line
+                  ? `${c.startLine}–${c.line}`
+                  : c.line}
               </span>
               <span class="preview-comment__body">{c.body}</span>
             </div>
