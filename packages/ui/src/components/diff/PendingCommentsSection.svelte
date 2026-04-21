@@ -12,8 +12,16 @@
   // window to avoid flapping.
   const headSha = $derived(commits && commits.length > 0 ? commits[0]!.sha : "");
 
+  // Drifted = anchored to a commit that isn't what we'll publish
+  // against now. An empty commit_sha is also drifted: the draft was
+  // made before we had a commit list so its effective anchor is
+  // unknown and may not resolve.
   function isDrifted(c: DraftComment): boolean {
-    return headSha !== "" && c.commitSha !== "" && c.commitSha !== headSha;
+    return headSha !== "" && (c.commitSha === "" || c.commitSha !== headSha);
+  }
+
+  function shaLabel(c: DraftComment): string {
+    return c.commitSha ? c.commitSha.slice(0, 7) : "???";
   }
 
   // Collapsed by default; expands automatically on first draft so
@@ -92,6 +100,15 @@
               title="Scroll to this draft in the diff"
             >
               <span class="draft-item__anchor">{anchorLabel(c)}</span>
+              <span
+                class="draft-item__sha"
+                class:draft-item__sha--drifted={isDrifted(c)}
+                title={c.commitSha
+                  ? `Anchored to ${shaLabel(c)}`
+                  : "Anchor commit unknown (drafted before the commit list loaded)"}
+              >
+                @ {shaLabel(c)}
+              </span>
               <span class="draft-item__path">{c.path}</span>
               <span class="draft-item__preview">{truncate(c.body, 80)}</span>
             </button>
@@ -229,6 +246,24 @@
   .draft-item--drifted .draft-item__anchor {
     color: var(--accent-amber);
     background: color-mix(in srgb, var(--accent-amber) 14%, transparent);
+  }
+
+  .draft-item__sha {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    padding: 1px 6px;
+    border-radius: 999px;
+    border: 1px solid var(--border-muted);
+    background: var(--bg-inset);
+    flex-shrink: 0;
+    cursor: help;
+  }
+
+  .draft-item__sha--drifted {
+    color: var(--accent-amber);
+    border-color: var(--accent-amber);
+    background: color-mix(in srgb, var(--accent-amber) 12%, var(--bg-inset));
   }
 
   .draft-item__path {

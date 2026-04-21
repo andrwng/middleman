@@ -14,31 +14,38 @@
 
   const { comment, currentHeadSha, ondelete }: Props = $props();
 
+  // A draft is "drifted" when we can't assume it'll resolve against
+  // the review's commit_id at publish time. That covers both:
+  //  - a known-different commit (the classic drift case), and
+  //  - an unknown commit (commit_sha was empty at draft time because
+  //    the commit list hadn't loaded yet — the comment was anchored
+  //    optimistically to the head we later send as commit_id).
   const drifted = $derived(
     currentHeadSha !== "" &&
-      comment.commitSha !== "" &&
-      comment.commitSha !== currentHeadSha,
+      (comment.commitSha === "" || comment.commitSha !== currentHeadSha),
   );
 
-  const chipTitle = $derived(
-    drifted
-      ? `Drafted against ${comment.commitSha.slice(0, 7)}. Publish will use ${currentHeadSha.slice(0, 7)} as the review's base; GitHub may reject this comment if line numbers have shifted.`
-      : `Drafted against ${comment.commitSha.slice(0, 7)}.`,
-  );
+  const chipTitle = $derived.by(() => {
+    if (!comment.commitSha) {
+      return `Anchor commit unknown (the commit list wasn't loaded when this was drafted). Publish will use ${currentHeadSha.slice(0, 7)}; GitHub may reject this comment if the line numbers don't resolve.`;
+    }
+    if (drifted) {
+      return `Drafted against ${comment.commitSha.slice(0, 7)}. Publish will use ${currentHeadSha.slice(0, 7)} as the review's base; GitHub may reject this comment if line numbers have shifted.`;
+    }
+    return `Drafted against ${comment.commitSha.slice(0, 7)}.`;
+  });
 </script>
 
 <div class="pending" class:pending--drifted={drifted}>
   <div class="pending__header">
     <span class="pending__badge">Pending</span>
-    {#if comment.commitSha}
-      <span
-        class="pending__commit"
-        class:pending__commit--drifted={drifted}
-        title={chipTitle}
-      >
-        @ {comment.commitSha.slice(0, 7)}
-      </span>
-    {/if}
+    <span
+      class="pending__commit"
+      class:pending__commit--drifted={drifted}
+      title={chipTitle}
+    >
+      @ {comment.commitSha ? comment.commitSha.slice(0, 7) : "???"}
+    </span>
     <span class="pending__anchor">
       {comment.side === "LEFT" ? "−" : "+"}{comment.startLine != null && comment.startLine !== comment.line
         ? `${comment.startLine}–${comment.line}`

@@ -21,6 +21,11 @@
 
   onMount(() => {
     void diffStore.loadDiff(owner, name, number);
+    // Preload commits so currentCommitSha() always has the head to
+    // anchor new drafts against. Otherwise drafts made before the
+    // Commits panel is expanded carry commitSha = "" and render as
+    // "on current" (blue) when they're really unknown.
+    void diffStore.loadCommits();
     aiStore.start(owner, name, number);
 
     return () => {
