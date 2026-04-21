@@ -21,6 +21,7 @@ import (
 	"github.com/shurcooL/githubv4"
 	Assert "github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/wesm/middleman/internal/aireview"
 	"github.com/wesm/middleman/internal/apiclient"
 	"github.com/wesm/middleman/internal/apiclient/generated"
 	"github.com/wesm/middleman/internal/db"
@@ -4678,6 +4679,218 @@ func setupTestServerWithClones(t *testing.T) (
 
 	client = setupTestClient(t, srv)
 	return client, database, mergeBase, headSHA, commitSHAs
+}
+
+// setupTestServerForAIReview extends setupTestServerWithClones with
+// worktree support + a fake claude binary, then returns everything an
+// AI-review test needs.
+func setupTestServerForAIReview(t *testing.T) (*apiclient.Client, *db.DB, string, string) {
+	t.Helper()
+
+	dir := t.TempDir()
+	database, err := db.Open(filepath.Join(dir, "test.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { database.Close() })
+
+	bareDir := filepath.Join(dir, "clones")
+	require.NoError(t, os.MkdirAll(bareDir, 0o755))
+	bare := filepath.Join(bareDir, "github.com", "acme", "widget.git")
+
+	tmpWork := filepath.Join(dir, "work")
+	runGit(t, dir, "init", "--bare", "--initial-branch=main", bare)
+	runGit(t, dir, "clone", bare, tmpWork)
+	runGit(t, tmpWork, "config", "user.email", "test@test.com")
+	runGit(t, tmpWork, "config", "user.name", "Test")
+
+	require.NoError(t, os.WriteFile(filepath.Join(tmpWork, "base.txt"), []byte("base\n"), 0o644))
+	runGit(t, tmpWork, "add", ".")
+	runGit(t, tmpWork, "commit", "-m", "base commit")
+	runGit(t, tmpWork, "push", "origin", "main")
+	mergeBase := testGitSHA(t, tmpWork, "HEAD")
+
+	runGit(t, tmpWork, "checkout", "-b", "pr")
+	require.NoError(t, os.WriteFile(filepath.Join(tmpWork, "a.txt"), []byte("hello\n"), 0o644))
+	runGit(t, tmpWork, "add", ".")
+	runGit(t, tmpWork, "commit", "-m", "add file")
+	runGit(t, tmpWork, "push", "origin", "pr")
+	headSHA := testGitSHA(t, tmpWork, "HEAD")
+
+	// Fake claude that echoes a known JSON result.
+	claudeBin := filepath.Join(dir, "claude")
+	require.NoError(t, os.WriteFile(claudeBin,
+		[]byte(`#!/bin/sh
+cat <<EOF
+{"type":"result","subtype":"success","is_error":false,"result":"fake answer","session_id":"sess-test"}
+EOF
+`), 0o755))
+	aireview.SetBinaryForTest(claudeBin)
+	t.Cleanup(func() { aireview.SetBinaryForTest("claude") })
+
+	clones := gitclone.New(bareDir, nil)
+	mock := &mockGH{}
+	repos := []ghclient.RepoRef{{Owner: "acme", Name: "widget", PlatformHost: "github.com"}}
+	syncer := ghclient.NewSyncer(map[string]ghclient.Client{"github.com": mock}, database, nil, repos, time.Minute, nil, nil)
+	t.Cleanup(syncer.Stop)
+	srv := New(database, syncer, nil, "/", nil, ServerOptions{
+		Clones:      clones,
+		WorktreeDir: filepath.Join(dir, "worktrees"),
+	})
+
+	seedPR(t, database, "acme", "widget", 1)
+	ctx := context.Background()
+	repoID, err := database.UpsertRepo(ctx, "github.com", "acme", "widget")
+	require.NoError(t, err)
+	require.NoError(t, database.UpdateDiffSHAs(ctx, repoID, 1, headSHA, mergeBase, mergeBase))
+
+	client := setupTestClient(t, srv)
+	return client, database, headSHA, mergeBase
+}
+
+func TestAPICreateAIThreadThenListThenDelete(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+	ctx := context.Background()
+
+	client, database, headSHA, _ := setupTestServerForAIReview(t)
+
+	// Create a thread + initial question.
+	createResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberAiThreadsWithResponse(
+		ctx, "acme", "widget", 1,
+		generated.PostReposByOwnerByNamePullsByNumberAiThreadsJSONRequestBody{
+			Path:       "a.txt",
+			AnchorSide: "RIGHT",
+			AnchorLine: 1,
+			CommitSha:  headSHA,
+			Question:   "what does this file do?",
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, createResp.StatusCode())
+	require.NotNil(createResp.JSON200)
+	require.NotNil(createResp.JSON200.Thread)
+	threadID := createResp.JSON200.Thread.Id
+	assert.Equal("active", createResp.JSON200.Thread.Status)
+	assert.Equal(int64(1), createResp.JSON200.Question.ThreadId)
+
+	// Wait for the background runner to complete. Fake claude is fast
+	// so a short bounded loop is fine.
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		got, err := database.GetAIQuestion(ctx, createResp.JSON200.Question.Id)
+		require.NoError(err)
+		if got.Status == "done" {
+			assert.Equal("fake answer", got.Answer)
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("question never completed; last status=%q err=%q", got.Status, got.Error)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	// Listing should return the thread and the completed question.
+	listResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberAiThreadsWithResponse(
+		ctx, "acme", "widget", 1, nil,
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, listResp.StatusCode())
+	require.NotNil(listResp.JSON200.Threads)
+	assert.Len(*listResp.JSON200.Threads, 1)
+	require.NotNil(listResp.JSON200.Questions)
+	assert.Len(*listResp.JSON200.Questions, 1)
+
+	// Delete the thread.
+	delResp, err := client.HTTP.DeleteAiThreadWithResponse(ctx, "acme", "widget", 1, threadID)
+	require.NoError(err)
+	assert.Equal(http.StatusNoContent, delResp.StatusCode())
+
+	// List should now be empty.
+	listResp2, err := client.HTTP.GetReposByOwnerByNamePullsByNumberAiThreadsWithResponse(
+		ctx, "acme", "widget", 1, nil,
+	)
+	require.NoError(err)
+	if listResp2.JSON200.Threads != nil {
+		assert.Empty(*listResp2.JSON200.Threads)
+	}
+}
+
+func TestAPIAddFollowUpQuestion(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+	ctx := context.Background()
+
+	client, database, headSHA, _ := setupTestServerForAIReview(t)
+
+	createResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberAiThreadsWithResponse(
+		ctx, "acme", "widget", 1,
+		generated.PostReposByOwnerByNamePullsByNumberAiThreadsJSONRequestBody{
+			Path:       "a.txt",
+			AnchorSide: "RIGHT",
+			AnchorLine: 1,
+			CommitSha:  headSHA,
+			Question:   "q1",
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, createResp.StatusCode())
+	threadID := createResp.JSON200.Thread.Id
+
+	// Wait for the first question's run to complete so session_id
+	// is persisted before the follow-up.
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		got, err := database.GetAIQuestion(ctx, createResp.JSON200.Question.Id)
+		require.NoError(err)
+		if got.Status == "done" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("first question never completed")
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	// Follow-up: reuses the session.
+	followResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsWithResponse(
+		ctx, "acme", "widget", 1, threadID,
+		generated.PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsJSONRequestBody{
+			Question: "q2",
+		},
+	)
+	require.NoError(err)
+	assert.Equal(http.StatusOK, followResp.StatusCode())
+	assert.Equal(threadID, followResp.JSON200.ThreadId)
+
+	// Detail endpoint should show both questions.
+	deadline = time.Now().Add(3 * time.Second)
+	for {
+		detail, err := client.HTTP.GetReposByOwnerByNamePullsByNumberAiThreadsByThreadIdWithResponse(
+			ctx, "acme", "widget", 1, threadID,
+		)
+		require.NoError(err)
+		if detail.JSON200 != nil && detail.JSON200.Questions != nil &&
+			len(*detail.JSON200.Questions) == 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("detail never returned two questions")
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+func TestAPICreateAIThread_Validation(t *testing.T) {
+	client, _, headSHA, _ := setupTestServerForAIReview(t)
+
+	resp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberAiThreadsWithResponse(
+		context.Background(), "acme", "widget", 1,
+		generated.PostReposByOwnerByNamePullsByNumberAiThreadsJSONRequestBody{
+			Path: "a.txt", AnchorSide: "SIDEWAYS", AnchorLine: 1,
+			CommitSha: headSHA, Question: "q",
+		},
+	)
+	require.NoError(t, err)
+	Assert.Equal(t, http.StatusBadRequest, resp.StatusCode())
 }
 
 func TestAPIGetCommits(t *testing.T) {

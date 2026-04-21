@@ -50,6 +50,70 @@ type ActivityResponse struct {
 	Items  *[]ActivityItemResponse `json:"items"`
 }
 
+// AddAIQuestionInputBody defines model for AddAIQuestionInputBody.
+type AddAIQuestionInputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema   *string `json:"$schema,omitempty"`
+	Question string  `json:"question"`
+}
+
+// AiQuestionResponse defines model for AiQuestionResponse.
+type AiQuestionResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema        *string    `json:"$schema,omitempty"`
+	Answer        string     `json:"answer"`
+	CitationsJson string     `json:"citations_json"`
+	CompletedAt   *time.Time `json:"completed_at,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	Error         *string    `json:"error,omitempty"`
+	Id            int64      `json:"id"`
+	Question      string     `json:"question"`
+	StartedAt     *time.Time `json:"started_at,omitempty"`
+	Status        string     `json:"status"`
+	ThreadId      int64      `json:"thread_id"`
+}
+
+// AiThreadCreatedOutputBody defines model for AiThreadCreatedOutputBody.
+type AiThreadCreatedOutputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema   *string            `json:"$schema,omitempty"`
+	Question AiQuestionResponse `json:"question"`
+	Thread   AiThreadResponse   `json:"thread"`
+}
+
+// AiThreadDetailResponse defines model for AiThreadDetailResponse.
+type AiThreadDetailResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema    *string               `json:"$schema,omitempty"`
+	Questions *[]AiQuestionResponse `json:"questions"`
+	Thread    AiThreadResponse      `json:"thread"`
+}
+
+// AiThreadResponse defines model for AiThreadResponse.
+type AiThreadResponse struct {
+	AnchorLine      int64      `json:"anchor_line"`
+	AnchorSide      string     `json:"anchor_side"`
+	ClaudeSessionId *string    `json:"claude_session_id,omitempty"`
+	ClosedAt        *time.Time `json:"closed_at,omitempty"`
+	CommitSha       string     `json:"commit_sha"`
+	CreatedAt       time.Time  `json:"created_at"`
+	HunkEndLine     *int64     `json:"hunk_end_line,omitempty"`
+	HunkStartLine   *int64     `json:"hunk_start_line,omitempty"`
+	Id              int64      `json:"id"`
+	MrId            int64      `json:"mr_id"`
+	Path            string     `json:"path"`
+	SelectionText   *string    `json:"selection_text,omitempty"`
+	Status          string     `json:"status"`
+}
+
+// AiThreadsListOutputBody defines model for AiThreadsListOutputBody.
+type AiThreadsListOutputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema    *string               `json:"$schema,omitempty"`
+	Questions *[]AiQuestionResponse `json:"questions"`
+	Threads   *[]AiThreadResponse   `json:"threads"`
+}
+
 // ApprovePRInputBody defines model for ApprovePRInputBody.
 type ApprovePRInputBody struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -98,6 +162,42 @@ type CommitsResponse struct {
 
 	// Commits Commits in newest-first order
 	Commits *[]CommitResponse `json:"commits"`
+}
+
+// CreateAIThreadInputBody defines model for CreateAIThreadInputBody.
+type CreateAIThreadInputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+
+	// AnchorLine 1-based line in the file at the anchor SHA
+	AnchorLine int64 `json:"anchor_line"`
+
+	// AnchorSide LEFT or RIGHT
+	AnchorSide string `json:"anchor_side"`
+
+	// CommitSha Commit the question is anchored to
+	CommitSha string `json:"commit_sha"`
+
+	// HunkEndLine Optional end of the hunk
+	HunkEndLine *int64 `json:"hunk_end_line,omitempty"`
+
+	// HunkStartLine Optional start of the hunk the reviewer was looking at
+	HunkStartLine *int64 `json:"hunk_start_line,omitempty"`
+
+	// HunkText Raw hunk contents, quoted into the prompt
+	HunkText *string `json:"hunk_text,omitempty"`
+
+	// Path File path the question is about
+	Path string `json:"path"`
+
+	// PromptContext Extra orientation text appended to the prompt (PR title, branch, etc.)
+	PromptContext *string `json:"prompt_context,omitempty"`
+
+	// Question Reviewer's question, free-form natural language
+	Question string `json:"question"`
+
+	// SelectionText Text the reviewer selected
+	SelectionText *string `json:"selection_text,omitempty"`
 }
 
 // CreateWorkspaceInputBody defines model for CreateWorkspaceInputBody.
@@ -707,6 +807,11 @@ type GetReposByOwnerByNameCommentAutocompleteParams struct {
 	Limit   *int64  `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// GetReposByOwnerByNamePullsByNumberAiThreadsParams defines parameters for GetReposByOwnerByNamePullsByNumberAiThreads.
+type GetReposByOwnerByNamePullsByNumberAiThreadsParams struct {
+	SinceId *int64 `form:"since_id,omitempty" json:"since_id,omitempty"`
+}
+
 // GetReposByOwnerByNamePullsByNumberDiffParams defines parameters for GetReposByOwnerByNamePullsByNumberDiff.
 type GetReposByOwnerByNamePullsByNumberDiffParams struct {
 	Whitespace *string `form:"whitespace,omitempty" json:"whitespace,omitempty"`
@@ -739,6 +844,12 @@ type SetIssueGithubStateJSONRequestBody = GithubStateInputBody
 
 // EditPrContentJSONRequestBody defines body for EditPrContent for application/json ContentType.
 type EditPrContentJSONRequestBody = EditPRContentInputBody
+
+// PostReposByOwnerByNamePullsByNumberAiThreadsJSONRequestBody defines body for PostReposByOwnerByNamePullsByNumberAiThreads for application/json ContentType.
+type PostReposByOwnerByNamePullsByNumberAiThreadsJSONRequestBody = CreateAIThreadInputBody
+
+// PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsJSONRequestBody defines body for PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestions for application/json ContentType.
+type PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsJSONRequestBody = AddAIQuestionInputBody
 
 // PostReposByOwnerByNamePullsByNumberApproveJSONRequestBody defines body for PostReposByOwnerByNamePullsByNumberApprove for application/json ContentType.
 type PostReposByOwnerByNamePullsByNumberApproveJSONRequestBody = ApprovePRInputBody
@@ -887,6 +998,28 @@ type ClientInterface interface {
 	EditPrContentWithBody(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	EditPrContent(ctx context.Context, owner string, name string, number int64, body EditPrContentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetReposByOwnerByNamePullsByNumberAiThreads request
+	GetReposByOwnerByNamePullsByNumberAiThreads(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberAiThreadsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PostReposByOwnerByNamePullsByNumberAiThreadsWithBody request with any body
+	PostReposByOwnerByNamePullsByNumberAiThreadsWithBody(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	PostReposByOwnerByNamePullsByNumberAiThreads(ctx context.Context, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberAiThreadsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteAiThread request
+	DeleteAiThread(ctx context.Context, owner string, name string, number int64, threadId int64, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetReposByOwnerByNamePullsByNumberAiThreadsByThreadId request
+	GetReposByOwnerByNamePullsByNumberAiThreadsByThreadId(ctx context.Context, owner string, name string, number int64, threadId int64, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsWithBody request with any body
+	PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsWithBody(ctx context.Context, owner string, name string, number int64, threadId int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestions(ctx context.Context, owner string, name string, number int64, threadId int64, body PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteAiQuestion request
+	DeleteAiQuestion(ctx context.Context, owner string, name string, number int64, threadId int64, questionId int64, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PostReposByOwnerByNamePullsByNumberApproveWithBody request with any body
 	PostReposByOwnerByNamePullsByNumberApproveWithBody(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1170,6 +1303,102 @@ func (c *Client) EditPrContentWithBody(ctx context.Context, owner string, name s
 
 func (c *Client) EditPrContent(ctx context.Context, owner string, name string, number int64, body EditPrContentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewEditPrContentRequest(c.Server, owner, name, number, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetReposByOwnerByNamePullsByNumberAiThreads(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberAiThreadsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetReposByOwnerByNamePullsByNumberAiThreadsRequest(c.Server, owner, name, number, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PostReposByOwnerByNamePullsByNumberAiThreadsWithBody(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostReposByOwnerByNamePullsByNumberAiThreadsRequestWithBody(c.Server, owner, name, number, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PostReposByOwnerByNamePullsByNumberAiThreads(ctx context.Context, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberAiThreadsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostReposByOwnerByNamePullsByNumberAiThreadsRequest(c.Server, owner, name, number, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DeleteAiThread(ctx context.Context, owner string, name string, number int64, threadId int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteAiThreadRequest(c.Server, owner, name, number, threadId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetReposByOwnerByNamePullsByNumberAiThreadsByThreadId(ctx context.Context, owner string, name string, number int64, threadId int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetReposByOwnerByNamePullsByNumberAiThreadsByThreadIdRequest(c.Server, owner, name, number, threadId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsWithBody(ctx context.Context, owner string, name string, number int64, threadId int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsRequestWithBody(c.Server, owner, name, number, threadId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestions(ctx context.Context, owner string, name string, number int64, threadId int64, body PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsRequest(c.Server, owner, name, number, threadId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DeleteAiQuestion(ctx context.Context, owner string, name string, number int64, threadId int64, questionId int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteAiQuestionRequest(c.Server, owner, name, number, threadId, questionId)
 	if err != nil {
 		return nil, err
 	}
@@ -2516,6 +2745,377 @@ func NewEditPrContentRequestWithBody(server string, owner string, name string, n
 	return req, nil
 }
 
+// NewGetReposByOwnerByNamePullsByNumberAiThreadsRequest generates requests for GetReposByOwnerByNamePullsByNumberAiThreads
+func NewGetReposByOwnerByNamePullsByNumberAiThreadsRequest(server string, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberAiThreadsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s/ai-threads", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.SinceId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "since_id", *params.SinceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPostReposByOwnerByNamePullsByNumberAiThreadsRequest calls the generic PostReposByOwnerByNamePullsByNumberAiThreads builder with application/json body
+func NewPostReposByOwnerByNamePullsByNumberAiThreadsRequest(server string, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberAiThreadsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPostReposByOwnerByNamePullsByNumberAiThreadsRequestWithBody(server, owner, name, number, "application/json", bodyReader)
+}
+
+// NewPostReposByOwnerByNamePullsByNumberAiThreadsRequestWithBody generates requests for PostReposByOwnerByNamePullsByNumberAiThreads with any type of body
+func NewPostReposByOwnerByNamePullsByNumberAiThreadsRequestWithBody(server string, owner string, name string, number int64, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s/ai-threads", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteAiThreadRequest generates requests for DeleteAiThread
+func NewDeleteAiThreadRequest(server string, owner string, name string, number int64, threadId int64) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam3 string
+
+	pathParam3, err = runtime.StyleParamWithOptions("simple", false, "thread_id", threadId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s/ai-threads/%s", pathParam0, pathParam1, pathParam2, pathParam3)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetReposByOwnerByNamePullsByNumberAiThreadsByThreadIdRequest generates requests for GetReposByOwnerByNamePullsByNumberAiThreadsByThreadId
+func NewGetReposByOwnerByNamePullsByNumberAiThreadsByThreadIdRequest(server string, owner string, name string, number int64, threadId int64) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam3 string
+
+	pathParam3, err = runtime.StyleParamWithOptions("simple", false, "thread_id", threadId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s/ai-threads/%s", pathParam0, pathParam1, pathParam2, pathParam3)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsRequest calls the generic PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestions builder with application/json body
+func NewPostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsRequest(server string, owner string, name string, number int64, threadId int64, body PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsRequestWithBody(server, owner, name, number, threadId, "application/json", bodyReader)
+}
+
+// NewPostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsRequestWithBody generates requests for PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestions with any type of body
+func NewPostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsRequestWithBody(server string, owner string, name string, number int64, threadId int64, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam3 string
+
+	pathParam3, err = runtime.StyleParamWithOptions("simple", false, "thread_id", threadId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s/ai-threads/%s/questions", pathParam0, pathParam1, pathParam2, pathParam3)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteAiQuestionRequest generates requests for DeleteAiQuestion
+func NewDeleteAiQuestionRequest(server string, owner string, name string, number int64, threadId int64, questionId int64) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam3 string
+
+	pathParam3, err = runtime.StyleParamWithOptions("simple", false, "thread_id", threadId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam4 string
+
+	pathParam4, err = runtime.StyleParamWithOptions("simple", false, "question_id", questionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s/ai-threads/%s/questions/%s", pathParam0, pathParam1, pathParam2, pathParam3, pathParam4)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewPostReposByOwnerByNamePullsByNumberApproveRequest calls the generic PostReposByOwnerByNamePullsByNumberApprove builder with application/json body
 func NewPostReposByOwnerByNamePullsByNumberApproveRequest(server string, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberApproveJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -3767,6 +4367,28 @@ type ClientWithResponsesInterface interface {
 
 	EditPrContentWithResponse(ctx context.Context, owner string, name string, number int64, body EditPrContentJSONRequestBody, reqEditors ...RequestEditorFn) (*EditPrContentResponse, error)
 
+	// GetReposByOwnerByNamePullsByNumberAiThreadsWithResponse request
+	GetReposByOwnerByNamePullsByNumberAiThreadsWithResponse(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberAiThreadsParams, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberAiThreadsResponse, error)
+
+	// PostReposByOwnerByNamePullsByNumberAiThreadsWithBodyWithResponse request with any body
+	PostReposByOwnerByNamePullsByNumberAiThreadsWithBodyWithResponse(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberAiThreadsResponse, error)
+
+	PostReposByOwnerByNamePullsByNumberAiThreadsWithResponse(ctx context.Context, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberAiThreadsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberAiThreadsResponse, error)
+
+	// DeleteAiThreadWithResponse request
+	DeleteAiThreadWithResponse(ctx context.Context, owner string, name string, number int64, threadId int64, reqEditors ...RequestEditorFn) (*DeleteAiThreadResponse, error)
+
+	// GetReposByOwnerByNamePullsByNumberAiThreadsByThreadIdWithResponse request
+	GetReposByOwnerByNamePullsByNumberAiThreadsByThreadIdWithResponse(ctx context.Context, owner string, name string, number int64, threadId int64, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberAiThreadsByThreadIdResponse, error)
+
+	// PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsWithBodyWithResponse request with any body
+	PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsWithBodyWithResponse(ctx context.Context, owner string, name string, number int64, threadId int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsResponse, error)
+
+	PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsWithResponse(ctx context.Context, owner string, name string, number int64, threadId int64, body PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsResponse, error)
+
+	// DeleteAiQuestionWithResponse request
+	DeleteAiQuestionWithResponse(ctx context.Context, owner string, name string, number int64, threadId int64, questionId int64, reqEditors ...RequestEditorFn) (*DeleteAiQuestionResponse, error)
+
 	// PostReposByOwnerByNamePullsByNumberApproveWithBodyWithResponse request with any body
 	PostReposByOwnerByNamePullsByNumberApproveWithBodyWithResponse(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberApproveResponse, error)
 
@@ -4171,6 +4793,142 @@ func (r EditPrContentResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r EditPrContentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetReposByOwnerByNamePullsByNumberAiThreadsResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *AiThreadsListOutputBody
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r GetReposByOwnerByNamePullsByNumberAiThreadsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetReposByOwnerByNamePullsByNumberAiThreadsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type PostReposByOwnerByNamePullsByNumberAiThreadsResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *AiThreadCreatedOutputBody
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r PostReposByOwnerByNamePullsByNumberAiThreadsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PostReposByOwnerByNamePullsByNumberAiThreadsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DeleteAiThreadResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteAiThreadResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteAiThreadResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetReposByOwnerByNamePullsByNumberAiThreadsByThreadIdResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *AiThreadDetailResponse
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r GetReposByOwnerByNamePullsByNumberAiThreadsByThreadIdResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetReposByOwnerByNamePullsByNumberAiThreadsByThreadIdResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *AiQuestionResponse
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DeleteAiQuestionResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteAiQuestionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteAiQuestionResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -4849,6 +5607,76 @@ func (c *ClientWithResponses) EditPrContentWithResponse(ctx context.Context, own
 		return nil, err
 	}
 	return ParseEditPrContentResponse(rsp)
+}
+
+// GetReposByOwnerByNamePullsByNumberAiThreadsWithResponse request returning *GetReposByOwnerByNamePullsByNumberAiThreadsResponse
+func (c *ClientWithResponses) GetReposByOwnerByNamePullsByNumberAiThreadsWithResponse(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberAiThreadsParams, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberAiThreadsResponse, error) {
+	rsp, err := c.GetReposByOwnerByNamePullsByNumberAiThreads(ctx, owner, name, number, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetReposByOwnerByNamePullsByNumberAiThreadsResponse(rsp)
+}
+
+// PostReposByOwnerByNamePullsByNumberAiThreadsWithBodyWithResponse request with arbitrary body returning *PostReposByOwnerByNamePullsByNumberAiThreadsResponse
+func (c *ClientWithResponses) PostReposByOwnerByNamePullsByNumberAiThreadsWithBodyWithResponse(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberAiThreadsResponse, error) {
+	rsp, err := c.PostReposByOwnerByNamePullsByNumberAiThreadsWithBody(ctx, owner, name, number, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostReposByOwnerByNamePullsByNumberAiThreadsResponse(rsp)
+}
+
+func (c *ClientWithResponses) PostReposByOwnerByNamePullsByNumberAiThreadsWithResponse(ctx context.Context, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberAiThreadsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberAiThreadsResponse, error) {
+	rsp, err := c.PostReposByOwnerByNamePullsByNumberAiThreads(ctx, owner, name, number, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostReposByOwnerByNamePullsByNumberAiThreadsResponse(rsp)
+}
+
+// DeleteAiThreadWithResponse request returning *DeleteAiThreadResponse
+func (c *ClientWithResponses) DeleteAiThreadWithResponse(ctx context.Context, owner string, name string, number int64, threadId int64, reqEditors ...RequestEditorFn) (*DeleteAiThreadResponse, error) {
+	rsp, err := c.DeleteAiThread(ctx, owner, name, number, threadId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteAiThreadResponse(rsp)
+}
+
+// GetReposByOwnerByNamePullsByNumberAiThreadsByThreadIdWithResponse request returning *GetReposByOwnerByNamePullsByNumberAiThreadsByThreadIdResponse
+func (c *ClientWithResponses) GetReposByOwnerByNamePullsByNumberAiThreadsByThreadIdWithResponse(ctx context.Context, owner string, name string, number int64, threadId int64, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberAiThreadsByThreadIdResponse, error) {
+	rsp, err := c.GetReposByOwnerByNamePullsByNumberAiThreadsByThreadId(ctx, owner, name, number, threadId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetReposByOwnerByNamePullsByNumberAiThreadsByThreadIdResponse(rsp)
+}
+
+// PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsWithBodyWithResponse request with arbitrary body returning *PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsResponse
+func (c *ClientWithResponses) PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsWithBodyWithResponse(ctx context.Context, owner string, name string, number int64, threadId int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsResponse, error) {
+	rsp, err := c.PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsWithBody(ctx, owner, name, number, threadId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsResponse(rsp)
+}
+
+func (c *ClientWithResponses) PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsWithResponse(ctx context.Context, owner string, name string, number int64, threadId int64, body PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsResponse, error) {
+	rsp, err := c.PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestions(ctx, owner, name, number, threadId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsResponse(rsp)
+}
+
+// DeleteAiQuestionWithResponse request returning *DeleteAiQuestionResponse
+func (c *ClientWithResponses) DeleteAiQuestionWithResponse(ctx context.Context, owner string, name string, number int64, threadId int64, questionId int64, reqEditors ...RequestEditorFn) (*DeleteAiQuestionResponse, error) {
+	rsp, err := c.DeleteAiQuestion(ctx, owner, name, number, threadId, questionId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteAiQuestionResponse(rsp)
 }
 
 // PostReposByOwnerByNamePullsByNumberApproveWithBodyWithResponse request with arbitrary body returning *PostReposByOwnerByNamePullsByNumberApproveResponse
@@ -5580,6 +6408,190 @@ func ParseEditPrContentResponse(rsp *http.Response) (*EditPrContentResponse, err
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetReposByOwnerByNamePullsByNumberAiThreadsResponse parses an HTTP response from a GetReposByOwnerByNamePullsByNumberAiThreadsWithResponse call
+func ParseGetReposByOwnerByNamePullsByNumberAiThreadsResponse(rsp *http.Response) (*GetReposByOwnerByNamePullsByNumberAiThreadsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetReposByOwnerByNamePullsByNumberAiThreadsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AiThreadsListOutputBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePostReposByOwnerByNamePullsByNumberAiThreadsResponse parses an HTTP response from a PostReposByOwnerByNamePullsByNumberAiThreadsWithResponse call
+func ParsePostReposByOwnerByNamePullsByNumberAiThreadsResponse(rsp *http.Response) (*PostReposByOwnerByNamePullsByNumberAiThreadsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PostReposByOwnerByNamePullsByNumberAiThreadsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AiThreadCreatedOutputBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteAiThreadResponse parses an HTTP response from a DeleteAiThreadWithResponse call
+func ParseDeleteAiThreadResponse(rsp *http.Response) (*DeleteAiThreadResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteAiThreadResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetReposByOwnerByNamePullsByNumberAiThreadsByThreadIdResponse parses an HTTP response from a GetReposByOwnerByNamePullsByNumberAiThreadsByThreadIdWithResponse call
+func ParseGetReposByOwnerByNamePullsByNumberAiThreadsByThreadIdResponse(rsp *http.Response) (*GetReposByOwnerByNamePullsByNumberAiThreadsByThreadIdResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetReposByOwnerByNamePullsByNumberAiThreadsByThreadIdResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AiThreadDetailResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsResponse parses an HTTP response from a PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsWithResponse call
+func ParsePostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsResponse(rsp *http.Response) (*PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AiQuestionResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteAiQuestionResponse parses an HTTP response from a DeleteAiQuestionWithResponse call
+func ParseDeleteAiQuestionResponse(rsp *http.Response) (*DeleteAiQuestionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteAiQuestionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest ErrorModel
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {

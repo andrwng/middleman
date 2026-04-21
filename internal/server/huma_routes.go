@@ -403,6 +403,22 @@ func (s *Server) registerAPI(api huma.API) {
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/commits", s.getCommits)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/diff", s.getDiff)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/files", s.getFiles)
+	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/ai-threads", s.createAIThread)
+	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/ai-threads", s.listAIThreads)
+	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/ai-threads/{thread_id}", s.getAIThread)
+	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/ai-threads/{thread_id}/questions", s.addAIQuestion)
+	huma.Register(api, huma.Operation{
+		OperationID:   "delete-ai-thread",
+		Method:        http.MethodDelete,
+		Path:          "/repos/{owner}/{name}/pulls/{number}/ai-threads/{thread_id}",
+		DefaultStatus: http.StatusNoContent,
+	}, s.deleteAIThread)
+	huma.Register(api, huma.Operation{
+		OperationID:   "delete-ai-question",
+		Method:        http.MethodDelete,
+		Path:          "/repos/{owner}/{name}/pulls/{number}/ai-threads/{thread_id}/questions/{question_id}",
+		DefaultStatus: http.StatusNoContent,
+	}, s.deleteAIQuestion)
 	huma.Get(api, "/stacks", s.listStacks)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/stack", s.getStackForPR)
 

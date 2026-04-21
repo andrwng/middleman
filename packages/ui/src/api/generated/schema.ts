@@ -223,6 +223,74 @@ export interface paths {
         patch: operations["edit-pr-content"];
         trace?: never;
     };
+    "/repos/{owner}/{name}/pulls/{number}/ai-threads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get repos by owner by name pulls by number ai threads */
+        get: operations["get-repos-by-owner-by-name-pulls-by-number-ai-threads"];
+        put?: never;
+        /** Post repos by owner by name pulls by number ai threads */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-ai-threads"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{owner}/{name}/pulls/{number}/ai-threads/{thread_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get repos by owner by name pulls by number ai threads by thread ID */
+        get: operations["get-repos-by-owner-by-name-pulls-by-number-ai-threads-by-thread-id"];
+        put?: never;
+        post?: never;
+        delete: operations["delete-ai-thread"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{owner}/{name}/pulls/{number}/ai-threads/{thread_id}/questions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post repos by owner by name pulls by number ai threads by thread ID questions */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-ai-threads-by-thread-id-questions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{owner}/{name}/pulls/{number}/ai-threads/{thread_id}/questions/{question_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["delete-ai-question"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/repos/{owner}/{name}/pulls/{number}/approve": {
         parameters: {
             query?: never;
@@ -599,6 +667,90 @@ export interface components {
             capped: boolean;
             items: components["schemas"]["ActivityItemResponse"][] | null;
         };
+        AddAIQuestionInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/AddAIQuestionInputBody.json
+             */
+            readonly $schema?: string;
+            question: string;
+        };
+        AiQuestionResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/AiQuestionResponse.json
+             */
+            readonly $schema?: string;
+            answer: string;
+            citations_json: string;
+            /** Format: date-time */
+            completed_at?: string;
+            /** Format: date-time */
+            created_at: string;
+            error?: string;
+            /** Format: int64 */
+            id: number;
+            question: string;
+            /** Format: date-time */
+            started_at?: string;
+            status: string;
+            /** Format: int64 */
+            thread_id: number;
+        };
+        AiThreadCreatedOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/AiThreadCreatedOutputBody.json
+             */
+            readonly $schema?: string;
+            question: components["schemas"]["AiQuestionResponse"];
+            thread: components["schemas"]["AiThreadResponse"];
+        };
+        AiThreadDetailResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/AiThreadDetailResponse.json
+             */
+            readonly $schema?: string;
+            questions: components["schemas"]["AiQuestionResponse"][] | null;
+            thread: components["schemas"]["AiThreadResponse"];
+        };
+        AiThreadResponse: {
+            /** Format: int64 */
+            anchor_line: number;
+            anchor_side: string;
+            claude_session_id?: string;
+            /** Format: date-time */
+            closed_at?: string;
+            commit_sha: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: int64 */
+            hunk_end_line?: number;
+            /** Format: int64 */
+            hunk_start_line?: number;
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            mr_id: number;
+            path: string;
+            selection_text?: string;
+            status: string;
+        };
+        AiThreadsListOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/AiThreadsListOutputBody.json
+             */
+            readonly $schema?: string;
+            questions: components["schemas"]["AiQuestionResponse"][] | null;
+            threads: components["schemas"]["AiThreadResponse"][] | null;
+        };
         ApprovePRInputBody: {
             /**
              * Format: uri
@@ -649,6 +801,43 @@ export interface components {
             readonly $schema?: string;
             /** @description Commits in newest-first order */
             commits: components["schemas"]["CommitResponse"][] | null;
+        };
+        CreateAIThreadInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/CreateAIThreadInputBody.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: int64
+             * @description 1-based line in the file at the anchor SHA
+             */
+            anchor_line: number;
+            /** @description LEFT or RIGHT */
+            anchor_side: string;
+            /** @description Commit the question is anchored to */
+            commit_sha: string;
+            /**
+             * Format: int64
+             * @description Optional end of the hunk
+             */
+            hunk_end_line?: number;
+            /**
+             * Format: int64
+             * @description Optional start of the hunk the reviewer was looking at
+             */
+            hunk_start_line?: number;
+            /** @description Raw hunk contents, quoted into the prompt */
+            hunk_text?: string;
+            /** @description File path the question is about */
+            path: string;
+            /** @description Extra orientation text appended to the prompt (PR title, branch, etc.) */
+            prompt_context?: string;
+            /** @description Reviewer's question, free-form natural language */
+            question: string;
+            /** @description Text the reviewer selected */
+            selection_text?: string;
         };
         CreateWorkspaceInputBody: {
             /**
@@ -1822,6 +2011,215 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["MergeRequestDetailResponse"];
                 };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-repos-by-owner-by-name-pulls-by-number-ai-threads": {
+        parameters: {
+            query?: {
+                since_id?: number;
+            };
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiThreadsListOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-ai-threads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateAIThreadInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiThreadCreatedOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-repos-by-owner-by-name-pulls-by-number-ai-threads-by-thread-id": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+                thread_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiThreadDetailResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "delete-ai-thread": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+                thread_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-ai-threads-by-thread-id-questions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+                thread_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddAIQuestionInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiQuestionResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "delete-ai-question": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+                thread_id: number;
+                question_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Error */
             default: {

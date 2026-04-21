@@ -9,11 +9,13 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
+	"github.com/wesm/middleman/internal/aireview"
 	"github.com/wesm/middleman/internal/config"
 	"github.com/wesm/middleman/internal/db"
 	"github.com/wesm/middleman/internal/gitclone"
@@ -60,6 +62,7 @@ type Server struct {
 	syncer            *ghclient.Syncer
 	clones            *gitclone.Manager
 	workspaces        *workspace.Manager
+	aiReview          *aireview.Runner
 	cfg               *config.Config
 	cfgPath           string
 	cfgMu             sync.Mutex
@@ -292,6 +295,21 @@ func newServer(
 		s.workspaces.SetTmuxCommand(cfg.TmuxCommand())
 		if clones != nil {
 			s.workspaces.SetClones(clones)
+		}
+	}
+
+	if clones != nil && options.WorktreeDir != "" {
+		s.aiReview = aireview.New(aireview.RunnerConfig{
+			DB:          database,
+			Clones:      clones,
+			WorktreeDir: filepath.Join(options.WorktreeDir, "ai-review"),
+			HostFor:     syncer.HostForRepo,
+		})
+		// Best-effort: mark any questions left running from a prior
+		// process as failed. Runs synchronously here because it's
+		// cheap and matters before handlers can serve list requests.
+		if err := s.aiReview.ReconcileOnStartup(bgCtx); err != nil {
+			slog.Warn("ai review reconcile on startup failed", "err", err)
 		}
 	}
 
