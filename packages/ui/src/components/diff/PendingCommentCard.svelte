@@ -27,7 +27,7 @@
   );
 </script>
 
-<div class="pending">
+<div class="pending" class:pending--drifted={drifted}>
   <div class="pending__header">
     <span class="pending__badge">Pending</span>
     {#if comment.commitSha}
@@ -54,13 +54,23 @@
 </div>
 
 <style>
+  /* On-current: the draft is anchored to the PR head, so it should
+     publish cleanly. Use the primary accent (blue) to read as
+     "ready to go". Drifted: switch to amber to read as "warning —
+     this may not resolve at publish time". */
   .pending {
     margin: 4px 12px 8px 68px;
     padding: 8px 10px;
-    border: 1px solid var(--accent-amber);
-    border-left: 3px solid var(--accent-amber);
+    border: 1px solid var(--accent-blue);
+    border-left: 3px solid var(--accent-blue);
     border-radius: var(--radius-sm);
-    background: color-mix(in srgb, var(--accent-amber) 6%, var(--bg-surface));
+    background: color-mix(in srgb, var(--accent-blue) 6%, var(--bg-surface));
+  }
+
+  .pending--drifted {
+    border-color: var(--accent-amber);
+    border-left-color: var(--accent-amber);
+    background: color-mix(in srgb, var(--accent-amber) 8%, var(--bg-surface));
   }
 
   .pending__header {
@@ -77,6 +87,11 @@
     letter-spacing: 0.05em;
     padding: 1px 6px;
     border-radius: 999px;
+    background: var(--accent-blue);
+    color: #fff;
+  }
+
+  .pending--drifted .pending__badge {
     background: var(--accent-amber);
     color: #000;
   }
