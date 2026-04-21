@@ -30,6 +30,9 @@
   const loading = $derived(diffStore.isDiffLoading());
   const error = $derived(diffStore.getDiffError());
   const tabWidth = $derived(diffStore.getTabWidth());
+  const scope = $derived(diffStore.getScope());
+  const activeCommit = $derived(diffStore.getActiveCommit());
+  const commitIndex = $derived(diffStore.getCommitIndex());
 
   function scrollToFile(path: string): void {
     if (!diffArea) return;
@@ -111,6 +114,13 @@
     window.addEventListener("keydown", handleKeydown);
     return () => window.removeEventListener("keydown", handleKeydown);
   });
+
+  // Auto-mark commit as reviewed when its diff finishes loading
+  $effect(() => {
+    if (scope.kind === "commit" && diff && !loading) {
+      diffStore.markCommitReviewed(scope.sha);
+    }
+  });
 </script>
 
 <div class="diff-view">
@@ -136,6 +146,16 @@
     {:else if diff}
       <div class="diff-main">
         <DiffToolbar />
+        {#if scope.kind === "commit" && activeCommit && commitIndex}
+          <div class="commit-header">
+            <div class="commit-header__top">
+              <span class="commit-header__position">Commit {commitIndex.current} of {commitIndex.total}</span>
+              <span class="commit-header__sha">{activeCommit.sha.slice(0, 7)}</span>
+              <span class="commit-header__author">{activeCommit.author_name}</span>
+            </div>
+            <div class="commit-header__message">{activeCommit.message}</div>
+          </div>
+        {/if}
         <div
           class="diff-area"
           bind:this={diffArea}
@@ -213,6 +233,44 @@
 
   .diff-state-msg--error {
     color: var(--accent-red);
+  }
+
+  .commit-header {
+    padding: 8px 16px;
+    background: var(--bg-inset);
+    border-bottom: 1px solid var(--diff-border);
+    flex-shrink: 0;
+  }
+
+  .commit-header__top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+  }
+
+  .commit-header__position {
+    font-weight: 600;
+    color: var(--accent-blue);
+  }
+
+  .commit-header__sha {
+    font-family: var(--font-mono);
+    font-size: 10px;
+  }
+
+  .commit-header__author {
+    margin-left: auto;
+  }
+
+  .commit-header__message {
+    font-size: 13px;
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.4;
   }
 
   @keyframes spin {

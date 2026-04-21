@@ -69,6 +69,28 @@ function saveCollapsedFiles(
   safeSetItem("diff-collapsed-files", JSON.stringify(cf));
 }
 
+function loadReviewedCommits(): Record<string, string[]> {
+  try {
+    const raw = safeGetItem("diff-reviewed-commits");
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
+    const result: Record<string, string[]> = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (Array.isArray(value) && value.every((v) => typeof v === "string")) {
+        result[key] = value as string[];
+      }
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+function saveReviewedCommits(rc: Record<string, string[]>): void {
+  safeSetItem("diff-reviewed-commits", JSON.stringify(rc));
+}
+
 export function createDiffStore(opts?: DiffStoreOptions) {
   const getBasePath = opts?.getBasePath ?? (() => "/");
 
@@ -99,6 +121,7 @@ export function createDiffStore(opts?: DiffStoreOptions) {
   let currentOwner = $state("");
   let currentName = $state("");
   let currentNumber = $state(0);
+  let reviewedCommits = $state<Record<string, string[]>>(loadReviewedCommits());
 
   function getCurrentPR(): { owner: string; name: string; number: number } | null {
     if (!currentOwner) return null;
@@ -462,6 +485,50 @@ export function createDiffStore(opts?: DiffStoreOptions) {
     return commitsError;
   }
 
+  /** Returns the 1-based index and total for the active commit. */
+  function getCommitIndex(): { current: number; total: number } | null {
+    if (!commits || commits.length === 0) return null;
+    const s = scope;
+    if (s.kind !== "commit") return null;
+    const idx = commits.findIndex((c) => c.sha === s.sha);
+    if (idx === -1) return null;
+    // commits are newest-first, so position is reversed for display
+    return { current: commits.length - idx, total: commits.length };
+  }
+
+  /** Returns the CommitInfo for the active commit scope. */
+  function getActiveCommit(): CommitInfo | null {
+    const s = scope;
+    if (!commits || s.kind !== "commit") return null;
+    return commits.find((c) => c.sha === s.sha) ?? null;
+  }
+
+  function reviewedKey(): string {
+    return `${currentOwner}/${currentName}#${currentNumber}`;
+  }
+
+  function markCommitReviewed(sha: string): void {
+    if (!currentOwner) return;
+    const key = reviewedKey();
+    const current = reviewedCommits[key] ?? [];
+    if (current.includes(sha)) return;
+    reviewedCommits = { ...reviewedCommits, [key]: [...current, sha] };
+    saveReviewedCommits(reviewedCommits);
+  }
+
+  function isCommitReviewed(sha: string): boolean {
+    const key = reviewedKey();
+    return (reviewedCommits[key] ?? []).includes(sha);
+  }
+
+  function getReviewProgress(): { reviewed: number; total: number } | null {
+    if (!commits || commits.length === 0) return null;
+    const key = reviewedKey();
+    const reviewed = reviewedCommits[key] ?? [];
+    const count = commits.filter((c) => reviewed.includes(c.sha)).length;
+    return { reviewed: count, total: commits.length };
+  }
+
   function selectCommit(sha: string): void {
     scope = { kind: "commit", sha };
     if (currentOwner && currentName && currentNumber) {
@@ -552,6 +619,11 @@ export function createDiffStore(opts?: DiffStoreOptions) {
     getCommits,
     isCommitsLoading,
     getCommitsError,
+    getCommitIndex,
+    getActiveCommit,
+    markCommitReviewed,
+    isCommitReviewed,
+    getReviewProgress,
     loadCommits,
     selectCommit,
     selectRange,

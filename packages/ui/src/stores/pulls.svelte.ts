@@ -30,6 +30,30 @@ function apiErrorMessage(
   return error.detail ?? error.title ?? fallback;
 }
 
+function loadAuthorFilter(): string[] {
+  try {
+    const raw = localStorage.getItem("pr-author-filter");
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((v): v is string => typeof v === "string");
+  } catch {
+    return [];
+  }
+}
+
+function saveAuthorFilter(authors: string[]): void {
+  try {
+    if (authors.length === 0) {
+      localStorage.removeItem("pr-author-filter");
+    } else {
+      localStorage.setItem("pr-author-filter", JSON.stringify(authors));
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 export function createPullsStore(opts: PullsStoreOptions) {
   const apiClient = opts.client;
   const getGlobalRepo = opts.getGlobalRepo ?? (() => undefined);
@@ -45,14 +69,49 @@ export function createPullsStore(opts: PullsStoreOptions) {
   let filterStarred = $state(false);
   let filterState = $state<string>("open");
   let searchQuery = $state<string | undefined>(undefined);
+  let filterAuthors = $state<string[]>(loadAuthorFilter());
   let selectedPR = $state<
     { owner: string; name: string; number: number } | null
   >(null);
 
   // --- reads ---
 
+  function applyAuthorFilter(prs: PullRequest[]): PullRequest[] {
+    if (filterAuthors.length === 0) return prs;
+    const set = new Set(filterAuthors);
+    return prs.filter((pr) => set.has(pr.Author ?? ""));
+  }
+
+  /** Returns all unique authors from the unfiltered PR list. */
+  function getAvailableAuthors(): string[] {
+    const seen = new Set<string>();
+    for (const pr of pulls) {
+      const author = pr.Author;
+      if (author) seen.add(author);
+    }
+    return [...seen].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  }
+
+  function getFilterAuthors(): string[] {
+    return filterAuthors;
+  }
+
+  function setFilterAuthors(authors: string[]): void {
+    filterAuthors = authors;
+    saveAuthorFilter(authors);
+  }
+
+  function toggleFilterAuthor(author: string): void {
+    if (filterAuthors.includes(author)) {
+      filterAuthors = filterAuthors.filter((a) => a !== author);
+    } else {
+      filterAuthors = [...filterAuthors, author];
+    }
+    saveAuthorFilter(filterAuthors);
+  }
+
   function getPulls(): PullRequest[] {
-    return pulls;
+    return applyAuthorFilter(pulls);
   }
 
   function isLoading(): boolean {
@@ -74,7 +133,7 @@ export function createPullsStore(opts: PullsStoreOptions) {
   /** Groups pulls by "owner/name" into a Map. */
   function pullsByRepo(): Map<string, PullRequest[]> {
     const map = new Map<string, PullRequest[]>();
-    for (const pr of pulls) {
+    for (const pr of applyAuthorFilter(pulls)) {
       const key =
         `${pr.repo_owner ?? ""}/${pr.repo_name ?? ""}`;
       const existing = map.get(key);
@@ -380,6 +439,10 @@ export function createPullsStore(opts: PullsStoreOptions) {
     getFilterKanban,
     getFilterStarred,
     setFilterStarred,
+    getAvailableAuthors,
+    getFilterAuthors,
+    setFilterAuthors,
+    toggleFilterAuthor,
     getFilterState,
     setFilterState,
     getDisplayOrderPRs,

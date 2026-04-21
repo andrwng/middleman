@@ -112,6 +112,27 @@
     if (!key || !pr || !pr.worktree_links) return false;
     return pr.worktree_links.some((l) => l.worktree_key === key);
   });
+
+  let authorPopoverOpen = $state(false);
+  const authorFilterActive = $derived(pulls.getFilterAuthors().length > 0);
+
+  function toggleAuthorPopover(): void {
+    authorPopoverOpen = !authorPopoverOpen;
+  }
+
+  function handleAuthorPopoverMousedown(e: MouseEvent): void {
+    // Close if click is outside the popover
+    const target = e.target as HTMLElement;
+    if (!target.closest(".author-filter-wrap")) {
+      authorPopoverOpen = false;
+    }
+  }
+
+  $effect(() => {
+    if (!authorPopoverOpen) return;
+    document.addEventListener("mousedown", handleAuthorPopoverMousedown);
+    return () => document.removeEventListener("mousedown", handleAuthorPopoverMousedown);
+  });
 </script>
 
 <div class="pull-list">
@@ -185,6 +206,46 @@
         </svg>
       {/if}
     </button>
+    <div class="author-filter-wrap">
+      <button
+        class="author-filter-btn"
+        class:author-filter-btn--active={authorFilterActive}
+        onclick={toggleAuthorPopover}
+        title={authorFilterActive
+          ? `Filtering: ${pulls.getFilterAuthors().join(", ")}`
+          : "Filter by author"}
+      >
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M10.561 8.073a6.005 6.005 0 0 1 3.432 5.142.75.75 0 1 1-1.498.07 4.5 4.5 0 0 0-8.99 0 .75.75 0 0 1-1.498-.07 6.004 6.004 0 0 1 3.431-5.142 3.999 3.999 0 1 1 5.123 0zM10.5 5a2.5 2.5 0 1 0-5 0 2.5 2.5 0 0 0 5 0z" />
+        </svg>
+        {#if authorFilterActive}
+          <span class="author-filter-badge">{pulls.getFilterAuthors().length}</span>
+        {/if}
+      </button>
+      {#if authorPopoverOpen}
+        <div class="author-popover">
+          {#each pulls.getAvailableAuthors() as author (author)}
+            {@const checked = pulls.getFilterAuthors().includes(author)}
+            <button
+              class="author-popover__item"
+              class:author-popover__item--active={checked}
+              onclick={() => pulls.toggleFilterAuthor(author)}
+            >
+              <span class="author-popover__check">{checked ? "\u2713" : ""}</span>
+              <span class="author-popover__name">{author}</span>
+            </button>
+          {:else}
+            <div class="author-popover__empty">No authors</div>
+          {/each}
+          {#if authorFilterActive}
+            <button
+              class="author-popover__reset"
+              onclick={() => { pulls.setFilterAuthors([]); authorPopoverOpen = false; }}
+            >Clear filter</button>
+          {/if}
+        </div>
+      {/if}
+    </div>
   </div>
 
   {#if pulls.getFilterState() !== "open"}
@@ -408,6 +469,127 @@
 
   .star-filter-btn--active {
     color: var(--accent-amber);
+  }
+
+  .author-filter-wrap {
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  .author-filter-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    width: 26px;
+    height: 26px;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: color 0.1s, background 0.1s;
+  }
+
+  .author-filter-btn:hover {
+    color: var(--accent-blue);
+    background: var(--bg-surface-hover);
+  }
+
+  .author-filter-btn--active {
+    color: var(--accent-blue);
+    width: auto;
+    padding: 0 6px;
+  }
+
+  .author-filter-badge {
+    font-size: 9px;
+    font-weight: 600;
+    min-width: 14px;
+    height: 14px;
+    line-height: 14px;
+    text-align: center;
+    border-radius: 7px;
+    background: var(--accent-blue);
+    color: white;
+  }
+
+  .author-popover {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: 4px;
+    min-width: 160px;
+    max-height: 260px;
+    overflow-y: auto;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: 6px;
+    box-shadow: var(--shadow-md);
+    z-index: 50;
+    padding: 4px 0;
+  }
+
+  .author-popover__item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 5px 10px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    border: none;
+    background: none;
+    text-align: left;
+  }
+
+  .author-popover__item:hover {
+    background: var(--bg-surface-hover);
+  }
+
+  .author-popover__item--active {
+    color: var(--text-primary);
+  }
+
+  .author-popover__check {
+    width: 14px;
+    text-align: center;
+    font-size: 11px;
+    color: var(--accent-blue);
+    flex-shrink: 0;
+  }
+
+  .author-popover__name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--font-mono);
+    font-size: 11px;
+  }
+
+  .author-popover__empty {
+    padding: 8px 10px;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .author-popover__reset {
+    display: block;
+    width: 100%;
+    padding: 5px 10px;
+    font-size: 11px;
+    color: var(--text-muted);
+    cursor: pointer;
+    border: none;
+    border-top: 1px solid var(--border-muted);
+    background: none;
+    text-align: left;
+    margin-top: 2px;
+  }
+
+  .author-popover__reset:hover {
+    color: var(--accent-blue);
+    background: var(--bg-surface-hover);
   }
 
   .count-badge {

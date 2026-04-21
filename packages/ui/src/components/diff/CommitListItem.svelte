@@ -8,10 +8,11 @@
   interface Props {
     commit: CommitInfo;
     active: boolean;
+    reviewed: boolean;
     onclick: (sha: string, shiftKey: boolean) => void;
   }
 
-  const { commit, active, onclick }: Props = $props();
+  const { commit, active, reviewed, onclick }: Props = $props();
 
   function relativeDate(iso: string): string {
     const diff = Date.now() - parseAPITimestamp(iso).getTime();
@@ -37,6 +38,9 @@
   onclick={handleClick}
   title={commit.message}
 >
+  {#if reviewed}
+    <span class="commit-item__reviewed" title="Reviewed">&check;</span>
+  {/if}
   <span class="commit-item__sha">{commit.sha.slice(0, 7)}</span>
   <span class="commit-item__msg">{commit.message}</span>
   <span class="commit-item__date">{relativeDate(commit.authored_at)}</span>
@@ -85,6 +89,14 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     min-width: 0;
+  }
+
+  .commit-item__reviewed {
+    font-size: 10px;
+    color: var(--accent-green);
+    flex-shrink: 0;
+    width: 12px;
+    text-align: center;
   }
 
   .commit-item__date {
