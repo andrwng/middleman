@@ -4,6 +4,20 @@ import type {
 } from "../api/types.js";
 import type { MiddlemanClient } from "../types.js";
 
+export interface PublishedReviewComment {
+  id: number;
+  author: string;
+  body: string;
+  createdAt: string;
+  path: string;
+  line: number;
+  startLine: number | null;
+  side: "LEFT" | "RIGHT";
+  commitId: string;
+  htmlUrl: string;
+  inReplyTo: number;
+}
+
 export interface DetailStoreOptions {
   client: MiddlemanClient;
   getPage?: () => string;
@@ -104,6 +118,59 @@ export function createDetailStore(
       } catch {
         /* ignore */
       }
+    }
+    return out;
+  }
+
+  // Returns a map from file path to an array of published (synced)
+  // review comments on that file. Each entry has anchor info the
+  // diff view can use to render the comment inline.
+  function getReviewCommentsByFilePath(): Map<string, PublishedReviewComment[]> {
+    const out = new Map<string, PublishedReviewComment[]>();
+    const events = detail?.events;
+    if (!events) return out;
+    for (const e of events) {
+      if (e.EventType !== "review_comment") continue;
+      const raw = e.MetadataJSON;
+      if (!raw) continue;
+      try {
+        const meta = JSON.parse(raw) as {
+          path?: string;
+          line?: number;
+          start_line?: number;
+          side?: string;
+          commit_id?: string;
+          html_url?: string;
+          in_reply_to?: number;
+        };
+        const path = meta.path;
+        if (!path) continue;
+        const side = meta.side === "LEFT" ? "LEFT" : "RIGHT";
+        const list = out.get(path) ?? [];
+        list.push({
+          id: e.ID,
+          author: e.Author,
+          body: e.Body,
+          createdAt: e.CreatedAt,
+          path,
+          line: meta.line ?? 0,
+          startLine: meta.start_line ?? null,
+          side,
+          commitId: meta.commit_id ?? "",
+          htmlUrl: meta.html_url ?? "",
+          inReplyTo: meta.in_reply_to ?? 0,
+        });
+        out.set(path, list);
+      } catch {
+        /* ignore */
+      }
+    }
+    // Sort each file's comments oldest-first (by created date) so
+    // replies land below the parent when rendered in a thread.
+    for (const [, list] of out) {
+      list.sort((a, b) =>
+        a.createdAt.localeCompare(b.createdAt),
+      );
     }
     return out;
   }
@@ -608,6 +675,7 @@ export function createDetailStore(
     getDetailLoaded,
     isStaleRefreshing,
     getCommitCommentCounts,
+    getReviewCommentsByFilePath,
     clearDetail,
     loadDetail,
     refreshDetailOnly,

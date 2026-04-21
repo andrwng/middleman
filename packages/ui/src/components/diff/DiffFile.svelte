@@ -3,7 +3,7 @@
   import type { DiffFile as DiffFileType, DiffHunk } from "../../api/types.js";
   import { getStores } from "../../context.js";
 
-  const { diff: diffStore, ai: aiStore } = getStores();
+  const { diff: diffStore, ai: aiStore, detail: detailStore } = getStores();
   import { tokenizeLineDual, langFromPath, type DualToken } from "../../utils/highlight.js";
   import { pairHunk } from "../../utils/diffPairing.js";
   import DiffLineComponent from "./DiffLine.svelte";
@@ -12,7 +12,9 @@
   import PendingCommentCard from "./PendingCommentCard.svelte";
   import AIAskComposer from "./AIAskComposer.svelte";
   import AIThreadCard from "./AIThreadCard.svelte";
+  import ReviewCommentCard from "./ReviewCommentCard.svelte";
   import type { DraftComment } from "../../stores/diff.svelte.js";
+  import type { PublishedReviewComment } from "../../stores/detail.svelte.js";
 
   interface Props {
     file: DiffFileType;
@@ -52,6 +54,33 @@
       map.set(key, arr);
     }
     return map;
+  });
+
+  // Published review comments (synced from GitHub) for this file,
+  // grouped by anchor so the render pass can place them inline
+  // alongside pending drafts.
+  const reviewCommentsByAnchor = $derived.by(() => {
+    const byFile = detailStore.getReviewCommentsByFilePath();
+    const forFile = byFile.get(file.path) ?? [];
+    const map = new Map<string, PublishedReviewComment[]>();
+    for (const c of forFile) {
+      if (c.line <= 0) continue; // outdated; rendered elsewhere
+      const key = `${c.line}:${c.side}`;
+      const arr = map.get(key) ?? [];
+      arr.push(c);
+      map.set(key, arr);
+    }
+    return map;
+  });
+
+  // Count of comments on this file whose anchors don't resolve in
+  // the current diff (line is null because GitHub marked the comment
+  // outdated after a push). We surface this as a banner at the top
+  // of the file so the reviewer knows to look on GitHub.
+  const outdatedReviewCount = $derived.by(() => {
+    const byFile = detailStore.getReviewCommentsByFilePath();
+    const forFile = byFile.get(file.path) ?? [];
+    return forFile.filter((c) => c.line <= 0).length;
   });
 
   // The SHA we anchor new comments against — the newest commit in the
@@ -576,6 +605,11 @@
   </div>
   {#if !collapsed}
     <div class="file-content">
+      {#if outdatedReviewCount > 0}
+        <div class="outdated-banner" title="These comments were made against an older version of this file; their line numbers don't resolve in the current diff.">
+          {outdatedReviewCount} outdated review comment{outdatedReviewCount === 1 ? "" : "s"} on this file — view on GitHub to see them
+        </div>
+      {/if}
       {#if renderedFile.is_binary}
         <div class="binary-notice">Binary file changed</div>
       {:else}
@@ -749,6 +783,15 @@
                       ondelete={() => diffStore.removeDraftComment(p.id)}
                     />
                   {/each}
+                  {@const published = reviewCommentsByAnchor.get(leftKey) ?? []}
+                  {#each published as rc (rc.id)}
+                    <ReviewCommentCard
+                      comment={rc}
+                      repoOwner={owner}
+                      repoName={name}
+                      currentHeadSha={currentCommitSha()}
+                    />
+                  {/each}
                   {#if leftAnchor}
                     {#each getAIThreadsAtAnchor(leftAnchor.line, leftAnchor.side) as thread (thread.id)}
                       <AIThreadCard {thread} repoOwner={owner} repoName={name} />
@@ -762,6 +805,15 @@
                       comment={p}
                       currentHeadSha={currentCommitSha()}
                       ondelete={() => diffStore.removeDraftComment(p.id)}
+                    />
+                  {/each}
+                  {@const published = reviewCommentsByAnchor.get(rightKey) ?? []}
+                  {#each published as rc (rc.id)}
+                    <ReviewCommentCard
+                      comment={rc}
+                      repoOwner={owner}
+                      repoName={name}
+                      currentHeadSha={currentCommitSha()}
                     />
                   {/each}
                   {#if rightAnchor}
@@ -850,6 +902,15 @@
                       comment={p}
                       currentHeadSha={currentCommitSha()}
                       ondelete={() => diffStore.removeDraftComment(p.id)}
+                    />
+                  {/each}
+                  {@const published = reviewCommentsByAnchor.get(anchorKey) ?? []}
+                  {#each published as rc (rc.id)}
+                    <ReviewCommentCard
+                      comment={rc}
+                      repoOwner={owner}
+                      repoName={name}
+                      currentHeadSha={currentCommitSha()}
                     />
                   {/each}
                   {#if anchor}
@@ -1027,6 +1088,15 @@
     color: var(--diff-line-num);
     font-size: 13px;
     font-style: italic;
+  }
+
+  .outdated-banner {
+    padding: 6px 14px;
+    font-size: 11px;
+    color: var(--accent-amber);
+    background: color-mix(in srgb, var(--accent-amber) 8%, var(--bg-inset));
+    border-bottom: 1px solid color-mix(in srgb, var(--accent-amber) 30%, var(--diff-border));
+    cursor: help;
   }
 
   .hunk-header {
