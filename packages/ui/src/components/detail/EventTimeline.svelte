@@ -58,6 +58,52 @@
     return meta.path;
   }
 
+  // "Mechanics" = commit & force-push events. They're noisy relative
+  // to actual discussion. Default collapsed; user can opt in.
+  const MECHANICS_TYPES = new Set(["commit", "force_push"]);
+  function isMechanics(eventType: string): boolean {
+    return MECHANICS_TYPES.has(eventType);
+  }
+
+  let showMechanics = $state(
+    typeof localStorage !== "undefined" && localStorage.getItem("activity-show-mechanics") === "true",
+  );
+  function toggleMechanics(): void {
+    showMechanics = !showMechanics;
+    try {
+      localStorage.setItem("activity-show-mechanics", String(showMechanics));
+    } catch { /* ignore */ }
+  }
+
+  const mechanicsCount = $derived(events.filter((e) => isMechanics(e.EventType)).length);
+  const visibleEvents = $derived(
+    showMechanics ? events : events.filter((e) => !isMechanics(e.EventType)),
+  );
+
+  // threadStarts[i] is the path that a review-comment thread begins at
+  // index i of visibleEvents. Undefined means index i is either not a
+  // review_comment or is a continuation of the previous file's thread.
+  const threadStarts = $derived.by(() => {
+    const starts = new Map<number, string>();
+    let prevPath: string | null = null;
+    let prevWasComment = false;
+    visibleEvents.forEach((e, i) => {
+      if (e.EventType !== "review_comment") {
+        prevPath = null;
+        prevWasComment = false;
+        return;
+      }
+      const meta = parseReviewCommentMeta(e.MetadataJSON);
+      const path = meta?.path ?? "";
+      if (!prevWasComment || path !== prevPath) {
+        starts.set(i, path);
+      }
+      prevPath = path;
+      prevWasComment = true;
+    });
+    return starts;
+  });
+
   let copiedId = $state<string | null>(null);
   let copyTimeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -77,9 +123,30 @@
 {#if events.length === 0}
   <p class="empty">No activity yet</p>
 {:else}
+  {#if mechanicsCount > 0}
+    <div class="mechanics-toggle">
+      <button
+        type="button"
+        class="mechanics-toggle__btn"
+        class:mechanics-toggle__btn--on={showMechanics}
+        onclick={toggleMechanics}
+        title="Show or hide commit and force-push events"
+      >
+        {showMechanics ? "Hide" : "Show"} mechanics
+        <span class="mechanics-toggle__count">{mechanicsCount}</span>
+      </button>
+    </div>
+  {/if}
   <ol class="timeline">
-    {#each events as event (event.ID)}
-      <li class="event">
+    {#each visibleEvents as event, i (event.ID)}
+      {#if threadStarts.has(i)}
+        <li class="thread-header" aria-hidden="true">
+          <span class="thread-header__dot"></span>
+          <span class="thread-header__label">Comments on</span>
+          <span class="thread-header__path">{threadStarts.get(i)}</span>
+        </li>
+      {/if}
+      <li class="event" class:event--threaded={event.EventType === "review_comment"}>
         <div class="event-rail">
           <span
             class="dot"
@@ -154,6 +221,78 @@
     font-size: 13px;
     color: var(--text-muted);
     padding: 16px 0;
+  }
+
+  .mechanics-toggle {
+    display: flex;
+    justify-content: flex-end;
+    padding: 0 0 8px;
+  }
+
+  .mechanics-toggle__btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    color: var(--text-muted);
+    background: var(--bg-inset);
+    border: 1px solid var(--border-muted);
+    cursor: pointer;
+  }
+
+  .mechanics-toggle__btn:hover {
+    color: var(--text-primary);
+    background: var(--bg-surface-hover);
+  }
+
+  .mechanics-toggle__btn--on {
+    color: var(--text-primary);
+    border-color: var(--accent-blue);
+  }
+
+  .mechanics-toggle__count {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
+  .thread-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 0 4px 0;
+    font-size: 11px;
+    color: var(--text-muted);
+    list-style: none;
+  }
+
+  .thread-header__dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--accent-purple);
+    opacity: 0.4;
+    margin-left: 7px;
+    flex-shrink: 0;
+  }
+
+  .thread-header__label {
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+  }
+
+  .thread-header__path {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+
+  /* Slightly inset threaded events so the thread visually groups. */
+  .event--threaded .event-card {
+    margin-left: 16px;
   }
 
   .timeline {

@@ -37,8 +37,20 @@
     owner, name, number, onPullsRefresh, hideTabs = false,
   }: Props = $props();
 
-  let activeTab = $state<"conversation" | "files">("conversation");
+  let activeTab = $state<"review" | "activity">("review");
   let ciExpanded = $state(false);
+
+  // Cover-letter collapse state on the Review tab, persisted so the
+  // reviewer's preference survives tab/PR switches.
+  let coverCollapsed = $state(
+    typeof localStorage !== "undefined" && localStorage.getItem("pr-cover-collapsed") === "true",
+  );
+  function toggleCoverCollapsed(): void {
+    coverCollapsed = !coverCollapsed;
+    try {
+      localStorage.setItem("pr-cover-collapsed", String(coverCollapsed));
+    } catch { /* ignore */ }
+  }
 
   $effect(() => {
     void detailStore.loadDetail(owner, name, number);
@@ -334,18 +346,10 @@
           <button
             type="button"
             class="detail-tab"
-            class:detail-tab--active={activeTab === "conversation"}
-            onclick={() => { activeTab = "conversation"; }}
+            class:detail-tab--active={activeTab === "review"}
+            onclick={() => { activeTab = "review"; }}
           >
-            Conversation
-          </button>
-          <button
-            type="button"
-            class="detail-tab"
-            class:detail-tab--active={activeTab === "files"}
-            onclick={() => { activeTab = "files"; }}
-          >
-            Files changed
+            Review
             {#if pr.Additions > 0}
               <span class="files-stat files-stat--add">+{pr.Additions}</span>
             {/if}
@@ -353,14 +357,54 @@
               <span class="files-stat files-stat--del">-{pr.Deletions}</span>
             {/if}
           </button>
+          <button
+            type="button"
+            class="detail-tab"
+            class:detail-tab--active={activeTab === "activity"}
+            onclick={() => { activeTab = "activity"; }}
+          >
+            Activity
+          </button>
         </div>
       {/if}
-      {#if !hideTabs && activeTab === "files"}
+      {#if !hideTabs && activeTab === "review"}
         <div class="files-layout">
           <aside class="files-sidebar">
             <DiffSidebar />
           </aside>
           <div class="files-main">
+            <div class="review-cover" class:review-cover--collapsed={coverCollapsed}>
+              <button
+                type="button"
+                class="review-cover__toggle"
+                onclick={toggleCoverCollapsed}
+                title={coverCollapsed ? "Expand description" : "Collapse description"}
+              >
+                <svg
+                  class="review-cover__chevron"
+                  class:review-cover__chevron--collapsed={coverCollapsed}
+                  width="10" height="10" viewBox="0 0 10 10" fill="none"
+                  stroke="currentColor" stroke-width="1.6"
+                >
+                  <polyline points="2,3.5 5,6.5 8,3.5" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+                <span class="review-cover__title">{pr.Title}</span>
+                <span class="review-cover__meta">
+                  <span class="review-cover__author">{pr.Author}</span>
+                  <span class="review-cover__sep">·</span>
+                  <span class="review-cover__num">#{pr.Number}</span>
+                </span>
+              </button>
+              {#if !coverCollapsed}
+                {#if pr.Body}
+                  <div class="review-cover__body markdown-body">
+                    {@html renderMarkdown(pr.Body, { owner, name })}
+                  </div>
+                {:else}
+                  <div class="review-cover__empty">No description</div>
+                {/if}
+              {/if}
+            </div>
             <DiffView {owner} {name} {number} />
           </div>
         </div>
@@ -862,6 +906,88 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
+  }
+
+  /* Cover letter banner at the top of the Review surface. Collapsed
+     shows just a title row; expanded reveals the markdown body.
+     Bounded by max-height so a very long description doesn't push the
+     diff off-screen — the body scrolls inside the banner if needed. */
+  .review-cover {
+    display: flex;
+    flex-direction: column;
+    border-bottom: 1px solid var(--diff-border);
+    background: var(--bg-inset);
+    flex-shrink: 0;
+  }
+
+  .review-cover--collapsed {
+    border-bottom-color: var(--border-muted);
+  }
+
+  .review-cover__toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    width: 100%;
+    border: none;
+    background: none;
+    text-align: left;
+    cursor: pointer;
+    color: var(--text-primary);
+    font-size: 13px;
+  }
+
+  .review-cover__toggle:hover {
+    background: var(--bg-surface-hover);
+  }
+
+  .review-cover__chevron {
+    flex-shrink: 0;
+    transition: transform 0.15s;
+    color: var(--text-muted);
+  }
+
+  .review-cover__chevron--collapsed {
+    transform: rotate(-90deg);
+  }
+
+  .review-cover__title {
+    font-weight: 600;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .review-cover__meta {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+
+  .review-cover__sep {
+    color: var(--text-muted);
+  }
+
+  .review-cover__body {
+    padding: 4px 16px 14px 34px;
+    max-height: 30vh;
+    overflow-y: auto;
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--text-primary);
+  }
+
+  .review-cover__empty {
+    padding: 2px 16px 12px 34px;
+    font-size: 12px;
+    color: var(--text-muted);
+    font-style: italic;
   }
 
   /* On narrow viewports the fixed 280px sidebar would crush the
