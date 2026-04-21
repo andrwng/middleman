@@ -38,7 +38,34 @@
     onSidebarResize,
   }: Props = $props();
 
-  const selectedPRDetail = $derived(detailStore.getDetail());
+  // Kick off detail loading whenever the selected PR changes AND the
+  // Review branch is showing — PullDetail (which normally loads detail)
+  // isn't rendered on the Review branch, so without this the cover
+  // banner shows stale detail from the previously loaded PR.
+  $effect(() => {
+    if (!selectedPR) return;
+    if (detailTab !== "files") return;
+    const { owner, name, number } = selectedPR;
+    void detailStore.loadDetail(owner, name, number);
+    detailStore.startDetailPolling(owner, name, number);
+    return () => detailStore.stopDetailPolling();
+  });
+
+  // Guard the banner against rendering a previous PR's detail during
+  // the load gap.
+  const selectedPRDetail = $derived.by(() => {
+    const d = detailStore.getDetail();
+    if (!d || !selectedPR) return null;
+    const mr = d.merge_request;
+    if (
+      d.repo_owner !== selectedPR.owner ||
+      d.repo_name !== selectedPR.name ||
+      mr.Number !== selectedPR.number
+    ) {
+      return null;
+    }
+    return d;
+  });
 </script>
 
 <CollapsibleResizableSidebar
