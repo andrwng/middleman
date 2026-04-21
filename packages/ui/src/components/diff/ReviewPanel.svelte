@@ -23,6 +23,28 @@
   let submitting = $state(false);
   let errorMsg = $state<string | null>(null);
 
+  // Split an error string into text segments and http(s) URL segments
+  // so the template can render URLs as clickable anchors without
+  // {@html} (keeps it XSS-safe).
+  interface ErrorSegment {
+    kind: "text" | "link";
+    value: string;
+  }
+  const errorSegments = $derived.by<ErrorSegment[]>(() => {
+    if (!errorMsg) return [];
+    const out: ErrorSegment[] = [];
+    const re = /https?:\/\/[^\s)]+/g;
+    let last = 0;
+    for (const m of errorMsg.matchAll(re)) {
+      const idx = m.index ?? 0;
+      if (idx > last) out.push({ kind: "text", value: errorMsg.slice(last, idx) });
+      out.push({ kind: "link", value: m[0] });
+      last = idx + m[0].length;
+    }
+    if (last < errorMsg.length) out.push({ kind: "text", value: errorMsg.slice(last) });
+    return out;
+  });
+
   function onBodyInput(e: Event): void {
     diffStore.setDraftBody((e.target as HTMLTextAreaElement).value);
   }
@@ -174,7 +196,17 @@
   {/if}
 
   {#if errorMsg}
-    <div class="panel__error">{errorMsg}</div>
+    <div class="panel__error">
+      {#each errorSegments as seg, i (i)}
+        {#if seg.kind === "link"}
+          <a href={seg.value} target="_blank" rel="noopener noreferrer" class="panel__error-link">
+            {seg.value}
+          </a>
+        {:else}
+          {seg.value}
+        {/if}
+      {/each}
+    </div>
   {/if}
 
   <div class="panel__actions">
@@ -356,6 +388,16 @@
     padding: 8px;
     text-align: center;
     font-style: italic;
+  }
+
+  .panel__error-link {
+    color: var(--accent-red);
+    text-decoration: underline;
+    word-break: break-all;
+  }
+
+  .panel__error-link:hover {
+    filter: brightness(1.15);
   }
 
   .panel__error {

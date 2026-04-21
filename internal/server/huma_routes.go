@@ -1133,6 +1133,17 @@ func (s *Server) submitReview(ctx context.Context, input *submitReviewInput) (*s
 		Comments: comments,
 	})
 	if err != nil {
+		// GitHub enforces at most one pending review per PR per user.
+		// When the reviewer already has one outstanding (e.g. started
+		// from the GitHub web UI), CreateReview fails 422 with a
+		// specific message. Translate that to a clearer conflict error
+		// so the UI can guide the user to resolve it.
+		if strings.Contains(err.Error(), "one pending review per pull request") {
+			prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", input.Owner, input.Name, input.Number)
+			return nil, huma.Error409Conflict(
+				"You already have a pending review on this PR. Cancel or submit it on GitHub before trying again: " + prURL,
+			)
+		}
 		return nil, huma.Error502BadGateway("submit review: " + err.Error())
 	}
 
