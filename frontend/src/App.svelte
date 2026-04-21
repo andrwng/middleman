@@ -372,7 +372,13 @@
       return;
     }
 
-    if (e.key === "f" && page === "pulls") {
+    if (
+      e.key === "f" &&
+      page === "pulls" &&
+      !e.metaKey &&
+      !e.ctrlKey &&
+      !e.altKey
+    ) {
       const sel = getSelectedPRFromRoute();
       if (sel) {
         e.preventDefault();
@@ -397,6 +403,13 @@
       "view" in currentRoute &&
       currentRoute.view === "board";
     const isIssues = page === "issues";
+
+    // Unmodified single-letter shortcuts only — don't swallow the
+    // browser's Cmd/Ctrl-F, Cmd-1, Cmd-J, etc. Escape is modifier-
+    // free by nature so it doesn't need the guard.
+    if (e.key !== "Escape" && (e.metaKey || e.ctrlKey || e.altKey)) {
+      return;
+    }
 
     switch (e.key) {
       case "j":

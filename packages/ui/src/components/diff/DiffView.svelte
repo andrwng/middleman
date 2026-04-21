@@ -87,6 +87,9 @@
     const tag = (e.target as HTMLElement).tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
     if ((e.target as HTMLElement).isContentEditable) return;
+    // Unmodified single-letter shortcuts only — don't swallow
+    // Cmd/Ctrl-F, Cmd-J (downloads), etc.
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
 
     if (e.key === "j" || e.key === "k") {
       if (!diff || diff.files.length === 0) return;
@@ -104,7 +107,6 @@
     }
 
     if (e.key === "[" || e.key === "]") {
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
       e.preventDefault();
       if (e.key === "[") {
         diffStore.stepPrev();
@@ -114,7 +116,6 @@
     }
 
     if (e.key === "m") {
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
       e.preventDefault();
       diffStore.jumpToNextUnreviewed();
     }
