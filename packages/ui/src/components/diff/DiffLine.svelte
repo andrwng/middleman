@@ -8,9 +8,10 @@
     newNum?: number;
     noNewline?: boolean;
     tokens: DualToken[];
+    splitSide?: "left" | "right";
   }
 
-  const { type, oldNum, newNum, noNewline, tokens }: Props = $props();
+  const { type, oldNum, newNum, noNewline, tokens, splitSide }: Props = $props();
 
   const marker = $derived(type === "add" ? "+" : type === "delete" ? "-" : " ");
 </script>
@@ -20,16 +21,20 @@
   class:diff-line--add={type === "add"}
   class:diff-line--del={type === "delete"}
 >
-  <span
-    class="gutter gutter-old"
-    class:gutter--add={type === "add"}
-    class:gutter--del={type === "delete"}
-  >{oldNum ?? ""}</span>
-  <span
-    class="gutter gutter-new"
-    class:gutter--add={type === "add"}
-    class:gutter--del={type === "delete"}
-  >{newNum ?? ""}</span>
+  {#if splitSide !== "right"}
+    <span
+      class="gutter gutter-old"
+      class:gutter--add={type === "add"}
+      class:gutter--del={type === "delete"}
+    >{oldNum ?? ""}</span>
+  {/if}
+  {#if splitSide !== "left"}
+    <span
+      class="gutter gutter-new"
+      class:gutter--add={type === "add"}
+      class:gutter--del={type === "delete"}
+    >{newNum ?? ""}</span>
+  {/if}
   <span
     class="marker"
     class:marker--add={type === "add"}

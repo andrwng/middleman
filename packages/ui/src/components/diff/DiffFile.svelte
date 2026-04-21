@@ -5,6 +5,7 @@
 
   const { diff: diffStore } = getStores();
   import { tokenizeLineDual, langFromPath, type DualToken } from "../../utils/highlight.js";
+  import { pairHunk } from "../../utils/diffPairing.js";
   import DiffLineComponent from "./DiffLine.svelte";
   import CollapsedRegion from "./CollapsedRegion.svelte";
 
@@ -19,6 +20,7 @@
 
   const collapsed = $derived(diffStore.isFileCollapsed(owner, name, number, file.path));
   const lang = $derived(langFromPath(file.path));
+  const layout = $derived(diffStore.getLayout());
 
   // Track viewport visibility so off-screen files skip expensive tokenization
   // on whitespace toggles and theme switches. Starts false so the initial
@@ -192,7 +194,7 @@
       {#if renderedFile.is_binary}
         <div class="binary-notice">Binary file changed</div>
       {:else}
-        <div class="file-rows">
+        <div class="file-rows" class:file-rows--split={layout === "split"}>
           {#each renderedFile.hunks as hunk, hunkIdx}
             {#if hunkIdx > 0}
               {@const gap = computeCollapsedLines(renderedFile.hunks, hunkIdx)}
@@ -200,21 +202,59 @@
                 <CollapsedRegion lineCount={gap} />
               {/if}
             {/if}
-            <div class="hunk-header">
-              <span class="hunk-gutter"></span>
-              <span class="hunk-gutter"></span>
-              <span class="hunk-text">@@ -{hunk.old_start},{hunk.old_count} +{hunk.new_start},{hunk.new_count} @@{hunk.section ? ` ${hunk.section}` : ""}</span>
-            </div>
-            {#each hunk.lines as line, lineIdx}
-              <DiffLineComponent
-                type={line.type}
-                content={line.content}
-                {...(line.old_num != null ? { oldNum: line.old_num } : {})}
-                {...(line.new_num != null ? { newNum: line.new_num } : {})}
-                {...(line.no_newline ? { noNewline: line.no_newline } : {})}
-                tokens={getTokens(hunkIdx, lineIdx)}
-              />
-            {/each}
+            {#if layout === "split"}
+              <div class="hunk-header hunk-header--split">
+                <span class="hunk-text">@@ -{hunk.old_start},{hunk.old_count} +{hunk.new_start},{hunk.new_count} @@{hunk.section ? ` ${hunk.section}` : ""}</span>
+              </div>
+              {#each pairHunk(hunk) as row}
+                <div class="ss-row">
+                  <div class="ss-cell ss-cell--left">
+                    {#if row.left}
+                      <DiffLineComponent
+                        type={row.left.line.type}
+                        content={row.left.line.content}
+                        {...(row.left.line.old_num != null ? { oldNum: row.left.line.old_num } : {})}
+                        {...(row.left.line.no_newline ? { noNewline: row.left.line.no_newline } : {})}
+                        tokens={getTokens(hunkIdx, row.left.lineIdx)}
+                        splitSide="left"
+                      />
+                    {:else}
+                      <div class="ss-empty"></div>
+                    {/if}
+                  </div>
+                  <div class="ss-cell ss-cell--right">
+                    {#if row.right}
+                      <DiffLineComponent
+                        type={row.right.line.type}
+                        content={row.right.line.content}
+                        {...(row.right.line.new_num != null ? { newNum: row.right.line.new_num } : {})}
+                        {...(row.right.line.no_newline ? { noNewline: row.right.line.no_newline } : {})}
+                        tokens={getTokens(hunkIdx, row.right.lineIdx)}
+                        splitSide="right"
+                      />
+                    {:else}
+                      <div class="ss-empty"></div>
+                    {/if}
+                  </div>
+                </div>
+              {/each}
+            {:else}
+              <div class="hunk-header">
+                <span class="hunk-gutter"></span>
+                <span class="hunk-gutter"></span>
+                <span class="hunk-text">@@ -{hunk.old_start},{hunk.old_count} +{hunk.new_start},{hunk.new_count} @@{hunk.section ? ` ${hunk.section}` : ""}</span>
+              </div>
+              {#each hunk.lines as line, lineIdx}
+                <DiffLineComponent
+                  type={line.type}
+                  content={line.content}
+                  {...(line.old_num != null ? { oldNum: line.old_num } : {})}
+                  {...(line.new_num != null ? { newNum: line.new_num } : {})}
+                  {...(line.no_newline ? { noNewline: line.no_newline } : {})}
+                  tokens={getTokens(hunkIdx, lineIdx)}
+                />
+              {/each}
+            {/if}
           {/each}
         </div>
       {/if}
@@ -305,6 +345,33 @@
   .file-rows {
     min-width: 100%;
     width: max-content;
+  }
+
+  .file-rows--split {
+    width: 100%;
+  }
+
+  .ss-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .ss-cell {
+    min-width: 0;
+    overflow-x: auto;
+  }
+
+  .ss-cell--left {
+    border-right: 1px solid var(--diff-border);
+  }
+
+  .ss-empty {
+    height: 20px;
+    background: var(--diff-empty-bg, var(--bg-inset));
+  }
+
+  .hunk-header--split {
+    display: block;
   }
 
   .binary-notice {

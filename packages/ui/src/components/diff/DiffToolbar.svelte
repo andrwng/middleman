@@ -3,9 +3,27 @@
 
   const { diff } = getStores();
   const tabOptions = [1, 2, 4, 8] as const;
+  const layoutOptions = [
+    { value: "unified", label: "Unified" },
+    { value: "split", label: "Split" },
+  ] as const;
 </script>
 
 <div class="diff-toolbar">
+  <div class="toolbar-group">
+    <span class="toolbar-label">Layout</span>
+    <div class="segmented-control">
+      {#each layoutOptions as opt}
+        <button
+          class="segment"
+          class:segment--active={diff.getLayout() === opt.value}
+          onclick={() => diff.setLayout(opt.value)}
+        >
+          {opt.label}
+        </button>
+      {/each}
+    </div>
+  </div>
   <div class="toolbar-group">
     <span class="toolbar-label">Tab width</span>
     <div class="segmented-control">

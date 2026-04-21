@@ -35,6 +35,13 @@ function loadTabWidth(): number {
   return VALID_TAB_WIDTHS.includes(raw) ? raw : 4;
 }
 
+export type DiffLayout = "unified" | "split";
+
+function loadLayout(): DiffLayout {
+  const raw = safeGetItem("diff-layout");
+  return raw === "split" ? "split" : "unified";
+}
+
 function loadCollapsedFiles(): Record<string, string[]> {
   try {
     const raw = safeGetItem("diff-collapsed-files");
@@ -107,6 +114,7 @@ export function createDiffStore(opts?: DiffStoreOptions) {
   let hideWhitespace = $state(
     safeGetItem("diff-hide-whitespace") === "true",
   );
+  let layout = $state<DiffLayout>(loadLayout());
   let collapsedFiles = $state<Record<string, string[]>>(
     loadCollapsedFiles(),
   );
@@ -157,6 +165,9 @@ export function createDiffStore(opts?: DiffStoreOptions) {
   }
   function getHideWhitespace(): boolean {
     return hideWhitespace;
+  }
+  function getLayout(): DiffLayout {
+    return layout;
   }
   function getActiveFile(): string | null {
     return activeFile;
@@ -210,6 +221,11 @@ export function createDiffStore(opts?: DiffStoreOptions) {
     if (currentOwner && currentName && currentNumber) {
       void reloadDiffOnly();
     }
+  }
+
+  function setLayout(v: DiffLayout): void {
+    layout = v;
+    safeSetItem("diff-layout", v);
   }
 
   async function reloadDiffOnly(): Promise<void> {
@@ -602,6 +618,7 @@ export function createDiffStore(opts?: DiffStoreOptions) {
     isFileListLoading,
     getTabWidth,
     getHideWhitespace,
+    getLayout,
     getActiveFile,
     setActiveFile,
     isScrolling,
@@ -611,6 +628,7 @@ export function createDiffStore(opts?: DiffStoreOptions) {
     consumeScrollTarget,
     setTabWidth,
     setHideWhitespace,
+    setLayout,
     isFileCollapsed,
     toggleFileCollapsed,
     loadDiff,
