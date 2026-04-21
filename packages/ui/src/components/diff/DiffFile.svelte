@@ -545,7 +545,13 @@
   </div>
 {/if}
 
-<div class="diff-file" class:diff-file--viewed={viewed} data-file-path={file.path} bind:this={fileEl}>
+<div
+  class="diff-file"
+  class:diff-file--viewed={viewed}
+  class:diff-file--selecting={liveSelection != null}
+  data-file-path={file.path}
+  bind:this={fileEl}
+>
   <div class="file-header">
     <button class="file-header__collapse" onclick={toggle} title={collapsed ? "Expand file" : "Collapse file"}>
       <svg class="collapse-chevron" class:collapse-chevron--collapsed={collapsed} width="12" height="12" viewBox="0 0 12 12" fill="none">
@@ -1065,6 +1071,15 @@
   .line-wrap--commentable:hover .line-actions,
   .line-actions:focus-within {
     opacity: 1;
+  }
+
+  /* While the reviewer has an active multi-line selection, hide the
+     per-line hover buttons. The floating toolbar near the selection
+     carries the comment/ask actions; keeping the hover buttons
+     visible makes them flash on every line the cursor passes while
+     the selection is being dragged. */
+  .diff-file--selecting .line-actions {
+    display: none;
   }
 
   /* Floating toolbar anchored to the end of a multi-line selection.
