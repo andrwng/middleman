@@ -67,22 +67,70 @@
     return "";
   }
 
-  // When the reviewer has a multi-line selection at click time we
-  // snapshot its range so the resulting comment/question anchors to
-  // the whole span. If the selection is empty, single-line, or
-  // straddles the LEFT/RIGHT sides we fall back to the clicked line.
+  // liveSelection continuously tracks the reviewer's text selection
+  // inside this file. Updated on every selectionchange event so we
+  // never depend on a snapshot taken at click/mousedown time — which
+  // could be racing with the browser's own focus-driven selection
+  // clearing. Stays non-null as long as a multi-line same-side
+  // selection exists.
+  let liveSelection = $state<{ startLine: number; endLine: number; side: "LEFT" | "RIGHT" } | null>(null);
+
+  // rangeSnapshot is the range we'll anchor the next comment/question
+  // to. snapshotRangeFor copies liveSelection into it at click time.
   let rangeSnapshot = $state<{ startLine: number; endLine: number; side: "LEFT" | "RIGHT" } | null>(null);
 
-  function snapshotRangeFor(side: "LEFT" | "RIGHT"): void {
-    rangeSnapshot = currentSelectionRange(side);
+  $effect(() => {
+    if (typeof document === "undefined") return;
+    const handler = (): void => {
+      liveSelection = computeSelectionRange();
+    };
+    document.addEventListener("selectionchange", handler);
+    return () => document.removeEventListener("selectionchange", handler);
+  });
+
+  function computeSelectionRange(): { startLine: number; endLine: number; side: "LEFT" | "RIGHT" } | null {
+    if (typeof window === "undefined") return null;
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0) return null;
+    if (!fileEl) return null;
+
+    const anchorWrap = nearestLineWrap(sel.anchorNode);
+    const focusWrap = nearestLineWrap(sel.focusNode);
+    if (!anchorWrap || !focusWrap) return null;
+    if (!fileEl.contains(anchorWrap) || !fileEl.contains(focusWrap)) return null;
+
+    const aSide = anchorWrap.dataset.anchorSide;
+    const fSide = focusWrap.dataset.anchorSide;
+    if (aSide !== fSide) return null;
+    if (aSide !== "LEFT" && aSide !== "RIGHT") return null;
+
+    const a = parseInt(anchorWrap.dataset.anchorLine ?? "", 10);
+    const f = parseInt(focusWrap.dataset.anchorLine ?? "", 10);
+    if (!Number.isFinite(a) || !Number.isFinite(f) || a === f) return null;
+    const [startLine, endLine] = a < f ? [a, f] : [f, a];
+    return { startLine, endLine, side: aSide };
   }
 
-  // preserveSelection runs on mousedown (which fires BEFORE the browser
-  // clears the text selection to focus the button). It snapshots both
-  // the range and the selected text while the selection is still
-  // alive, and preventDefault()s so the selection stays visually
-  // intact through the click. The corresponding onclick then just
-  // reads rangeSnapshot / selectionSnapshot.
+  function snapshotRangeFor(side: "LEFT" | "RIGHT"): void {
+    // Try a fresh read from window.getSelection() first — we run
+    // inside mousedown, which is early enough that the selection is
+    // typically still alive. Fall back to the most recent live
+    // selection from the selectionchange listener if the fresh read
+    // comes up empty (some browsers collapse before mousedown fires).
+    const fresh = computeSelectionRange();
+    const pick = fresh ?? liveSelection;
+    if (pick && pick.side === side) {
+      rangeSnapshot = pick;
+    } else {
+      rangeSnapshot = null;
+    }
+  }
+
+  // preserveSelection runs on mousedown. It (1) captures the range
+  // before the browser's default focus behavior can collapse the
+  // selection, and (2) preventDefault()s so the selection stays
+  // visually alive through the click. Both steps are belt-and-braces
+  // on top of the continuous selectionchange tracking above.
   function preserveSelection(side: "LEFT" | "RIGHT", e: MouseEvent): void {
     e.preventDefault();
     snapshotRangeFor(side);
@@ -92,29 +140,14 @@
     selectionSnapshot = selText.trim() || null;
   }
 
-  function currentSelectionRange(
-    clickedSide: "LEFT" | "RIGHT",
-  ): { startLine: number; endLine: number; side: "LEFT" | "RIGHT" } | null {
-    if (typeof window === "undefined") return null;
-    const sel = window.getSelection();
-    if (!sel || sel.isCollapsed || sel.rangeCount === 0) return null;
-    if (!fileEl) return null;
-
-    const anchorWrap = nearestLineWrap(sel.anchorNode);
-    const focusWrap = nearestLineWrap(sel.focusNode);
-    if (!anchorWrap || !focusWrap) return null;
-
-    // Both ends must live inside this file and on the same side.
-    if (!fileEl.contains(anchorWrap) || !fileEl.contains(focusWrap)) return null;
-    const aSide = anchorWrap.dataset.anchorSide;
-    const fSide = focusWrap.dataset.anchorSide;
-    if (aSide !== clickedSide || fSide !== clickedSide) return null;
-
-    const a = parseInt(anchorWrap.dataset.anchorLine ?? "", 10);
-    const f = parseInt(focusWrap.dataset.anchorLine ?? "", 10);
-    if (!Number.isFinite(a) || !Number.isFinite(f) || a === f) return null;
-    const [startLine, endLine] = a < f ? [a, f] : [f, a];
-    return { startLine, endLine, side: clickedSide };
+  // rangeTooltip returns a label for the + / ? button indicating the
+  // range it'll anchor to, given the anchor side. Null means the
+  // button falls back to a single-line anchor (no active selection
+  // on this side), so callers can render a normal tooltip.
+  function rangeTooltip(side: "LEFT" | "RIGHT"): string | null {
+    const sel = liveSelection;
+    if (!sel || sel.side !== side) return null;
+    return `lines ${sel.startLine}–${sel.endLine}`;
   }
 
   function nearestLineWrap(node: Node | null): HTMLElement | null {
@@ -494,9 +527,12 @@
                             <button
                               type="button"
                               class="add-comment-btn"
+                              class:add-comment-btn--range={rangeTooltip(leftAnchor.side) != null}
                               onmousedown={(e) => preserveSelection(leftAnchor.side, e)}
                               onclick={() => openComposerFor(leftAnchor.line, leftAnchor.side)}
-                              title="Add review comment"
+                              title={rangeTooltip(leftAnchor.side)
+                                ? `Comment on ${rangeTooltip(leftAnchor.side)}`
+                                : "Add review comment"}
                             >
                               <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M5 2V8M2 5H8" stroke-linecap="round" />
@@ -505,9 +541,12 @@
                             <button
                               type="button"
                               class="ask-ai-btn"
+                              class:ask-ai-btn--range={rangeTooltip(leftAnchor.side) != null}
                               onmousedown={(e) => preserveSelection(leftAnchor.side, e)}
                               onclick={() => openAskFor(leftAnchor.line, leftAnchor.side)}
-                              title="Ask Claude about this line"
+                              title={rangeTooltip(leftAnchor.side)
+                                ? `Ask Claude about ${rangeTooltip(leftAnchor.side)}`
+                                : "Ask Claude about this line"}
                             >
                               ?
                             </button>
@@ -540,9 +579,12 @@
                             <button
                               type="button"
                               class="add-comment-btn"
+                              class:add-comment-btn--range={rangeTooltip(rightAnchor.side) != null}
                               onmousedown={(e) => preserveSelection(rightAnchor.side, e)}
                               onclick={() => openComposerFor(rightAnchor.line, rightAnchor.side)}
-                              title="Add review comment"
+                              title={rangeTooltip(rightAnchor.side)
+                                ? `Comment on ${rangeTooltip(rightAnchor.side)}`
+                                : "Add review comment"}
                             >
                               <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M5 2V8M2 5H8" stroke-linecap="round" />
@@ -551,9 +593,12 @@
                             <button
                               type="button"
                               class="ask-ai-btn"
+                              class:ask-ai-btn--range={rangeTooltip(rightAnchor.side) != null}
                               onmousedown={(e) => preserveSelection(rightAnchor.side, e)}
                               onclick={() => openAskFor(rightAnchor.line, rightAnchor.side)}
-                              title="Ask Claude about this line"
+                              title={rangeTooltip(rightAnchor.side)
+                                ? `Ask Claude about ${rangeTooltip(rightAnchor.side)}`
+                                : "Ask Claude about this line"}
                             >
                               ?
                             </button>
@@ -655,9 +700,12 @@
                       <button
                         type="button"
                         class="add-comment-btn"
+                        class:add-comment-btn--range={rangeTooltip(anchor.side) != null}
                         onmousedown={(e) => preserveSelection(anchor.side, e)}
                         onclick={() => openComposerFor(anchor.line, anchor.side)}
-                        title="Add review comment"
+                        title={rangeTooltip(anchor.side)
+                          ? `Comment on ${rangeTooltip(anchor.side)}`
+                          : "Add review comment"}
                       >
                         <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2">
                           <path d="M5 2V8M2 5H8" stroke-linecap="round" />
@@ -666,9 +714,12 @@
                       <button
                         type="button"
                         class="ask-ai-btn"
+                        class:ask-ai-btn--range={rangeTooltip(anchor.side) != null}
                         onmousedown={(e) => preserveSelection(anchor.side, e)}
                         onclick={() => openAskFor(anchor.line, anchor.side)}
-                        title="Ask Claude about this line"
+                        title={rangeTooltip(anchor.side)
+                          ? `Ask Claude about ${rangeTooltip(anchor.side)}`
+                          : "Ask Claude about this line"}
                       >
                         ?
                       </button>
@@ -918,6 +969,19 @@
   .line-wrap--commentable:hover .line-actions,
   .line-actions:focus-within {
     opacity: 1;
+  }
+
+  /* When the reviewer has an active multi-line selection, keep the
+     action buttons visible on every line so the affordance is
+     discoverable without hovering an exact pixel. */
+  .line-wrap--commentable:has(.add-comment-btn--range) .line-actions {
+    opacity: 1;
+  }
+
+  .add-comment-btn--range,
+  .ask-ai-btn--range {
+    outline: 2px solid var(--bg-surface);
+    box-shadow: 0 0 0 3px currentColor;
   }
 
   .add-comment-btn,
