@@ -77,6 +77,21 @@
     rangeSnapshot = currentSelectionRange(side);
   }
 
+  // preserveSelection runs on mousedown (which fires BEFORE the browser
+  // clears the text selection to focus the button). It snapshots both
+  // the range and the selected text while the selection is still
+  // alive, and preventDefault()s so the selection stays visually
+  // intact through the click. The corresponding onclick then just
+  // reads rangeSnapshot / selectionSnapshot.
+  function preserveSelection(side: "LEFT" | "RIGHT", e: MouseEvent): void {
+    e.preventDefault();
+    snapshotRangeFor(side);
+    const selText = typeof window !== "undefined"
+      ? (window.getSelection()?.toString() ?? "")
+      : "";
+    selectionSnapshot = selText.trim() || null;
+  }
+
   function currentSelectionRange(
     clickedSide: "LEFT" | "RIGHT",
   ): { startLine: number; endLine: number; side: "LEFT" | "RIGHT" } | null {
@@ -112,7 +127,9 @@
   }
 
   function openComposerFor(line: number, side: "LEFT" | "RIGHT"): void {
-    snapshotRangeFor(side);
+    // Range was already snapshotted by the button's onmousedown; do
+    // not re-snapshot here because the selection is typically gone
+    // by click time.
     openComposer = `${line}:${side}`;
   }
 
@@ -152,13 +169,9 @@
   let selectionSnapshot = $state<string | null>(null);
 
   function openAskFor(line: number, side: "LEFT" | "RIGHT"): void {
-    const selText = typeof window !== "undefined"
-      ? (window.getSelection()?.toString() ?? "")
-      : "";
-    selectionSnapshot = selText.trim() || null;
-    // Snapshot the range the same way the comment composer does so a
-    // multi-line selection becomes a multi-line anchor.
-    snapshotRangeFor(side);
+    // Selection text and range were both captured by the button's
+    // onmousedown before the browser cleared the selection. Don't
+    // try to re-read here — it'll be collapsed.
     openAsk = `${line}:${side}`;
     askError = null;
   }
@@ -481,6 +494,7 @@
                             <button
                               type="button"
                               class="add-comment-btn"
+                              onmousedown={(e) => preserveSelection(leftAnchor.side, e)}
                               onclick={() => openComposerFor(leftAnchor.line, leftAnchor.side)}
                               title="Add review comment"
                             >
@@ -491,6 +505,7 @@
                             <button
                               type="button"
                               class="ask-ai-btn"
+                              onmousedown={(e) => preserveSelection(leftAnchor.side, e)}
                               onclick={() => openAskFor(leftAnchor.line, leftAnchor.side)}
                               title="Ask Claude about this line"
                             >
@@ -525,6 +540,7 @@
                             <button
                               type="button"
                               class="add-comment-btn"
+                              onmousedown={(e) => preserveSelection(rightAnchor.side, e)}
                               onclick={() => openComposerFor(rightAnchor.line, rightAnchor.side)}
                               title="Add review comment"
                             >
@@ -535,6 +551,7 @@
                             <button
                               type="button"
                               class="ask-ai-btn"
+                              onmousedown={(e) => preserveSelection(rightAnchor.side, e)}
                               onclick={() => openAskFor(rightAnchor.line, rightAnchor.side)}
                               title="Ask Claude about this line"
                             >
@@ -638,6 +655,7 @@
                       <button
                         type="button"
                         class="add-comment-btn"
+                        onmousedown={(e) => preserveSelection(anchor.side, e)}
                         onclick={() => openComposerFor(anchor.line, anchor.side)}
                         title="Add review comment"
                       >
@@ -648,6 +666,7 @@
                       <button
                         type="button"
                         class="ask-ai-btn"
+                        onmousedown={(e) => preserveSelection(anchor.side, e)}
                         onclick={() => openAskFor(anchor.line, anchor.side)}
                         title="Ask Claude about this line"
                       >
