@@ -85,6 +85,29 @@ export function createDetailStore(
     return detailLoaded;
   }
 
+  // Returns the number of review_comment events attached to each commit
+  // SHA in the current PR, parsed from the event's MetadataJSON. Used by
+  // the commit list to badge commits that have existing review threads.
+  function getCommitCommentCounts(): Map<string, number> {
+    const out = new Map<string, number>();
+    const events = detail?.events;
+    if (!events) return out;
+    for (const e of events) {
+      if (e.EventType !== "review_comment") continue;
+      const raw = e.MetadataJSON;
+      if (!raw) continue;
+      try {
+        const meta = JSON.parse(raw) as { commit_id?: string };
+        const sha = meta.commit_id;
+        if (!sha) continue;
+        out.set(sha, (out.get(sha) ?? 0) + 1);
+      } catch {
+        /* ignore */
+      }
+    }
+    return out;
+  }
+
   function isStaleRefreshing(): boolean {
     if (!detail || !syncing) return false;
     const fetchedAt = detail.detail_fetched_at;
@@ -584,6 +607,7 @@ export function createDetailStore(
     getDetailError,
     getDetailLoaded,
     isStaleRefreshing,
+    getCommitCommentCounts,
     clearDetail,
     loadDetail,
     refreshDetailOnly,

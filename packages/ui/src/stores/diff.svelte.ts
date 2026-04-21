@@ -3,7 +3,8 @@ import type { DiffResult, FilesResult, CommitInfo } from "../api/types.js";
 export type DiffScope =
   | { kind: "head" }
   | { kind: "commit"; sha: string }
-  | { kind: "range"; fromSha: string; toSha: string };
+  | { kind: "range"; fromSha: string; toSha: string }
+  | { kind: "unreviewed" };
 
 export interface DiffStoreOptions {
   getBasePath?: () => string;
@@ -98,6 +99,28 @@ function saveReviewedCommits(rc: Record<string, string[]>): void {
   safeSetItem("diff-reviewed-commits", JSON.stringify(rc));
 }
 
+function loadReviewedFiles(): Record<string, string[]> {
+  try {
+    const raw = safeGetItem("diff-reviewed-files");
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
+    const result: Record<string, string[]> = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (Array.isArray(value) && value.every((v) => typeof v === "string")) {
+        result[key] = value as string[];
+      }
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+function saveReviewedFiles(rf: Record<string, string[]>): void {
+  safeSetItem("diff-reviewed-files", JSON.stringify(rf));
+}
+
 export function createDiffStore(opts?: DiffStoreOptions) {
   const getBasePath = opts?.getBasePath ?? (() => "/");
 
@@ -130,6 +153,7 @@ export function createDiffStore(opts?: DiffStoreOptions) {
   let currentName = $state("");
   let currentNumber = $state(0);
   let reviewedCommits = $state<Record<string, string[]>>(loadReviewedCommits());
+  let reviewedFiles = $state<Record<string, string[]>>(loadReviewedFiles());
 
   function getCurrentPR(): { owner: string; name: string; number: number } | null {
     if (!currentOwner) return null;
@@ -243,13 +267,8 @@ export function createDiffStore(opts?: DiffStoreOptions) {
     storeError = null;
     try {
       const basePath = getBasePath();
-      const reloadParams = new URLSearchParams();
+      const reloadParams = scopeToDiffParams(scope);
       if (hideWhitespace) reloadParams.set("whitespace", "hide");
-      if (scope.kind === "commit") reloadParams.set("commit", scope.sha);
-      if (scope.kind === "range") {
-        reloadParams.set("from", scope.fromSha);
-        reloadParams.set("to", scope.toSha);
-      }
       const reloadQs = reloadParams.toString();
       const url =
         `${basePath}api/v1/repos/` +
@@ -387,13 +406,8 @@ export function createDiffStore(opts?: DiffStoreOptions) {
 
     const diffPromise = (async () => {
       try {
-        const params = new URLSearchParams();
+        const params = scopeToDiffParams(scope);
         if (hideWhitespace) params.set("whitespace", "hide");
-        if (scope.kind === "commit") params.set("commit", scope.sha);
-        if (scope.kind === "range") {
-          params.set("from", scope.fromSha);
-          params.set("to", scope.toSha);
-        }
         const qs = params.toString();
         const url = `${prefix}/diff${qs ? `?${qs}` : ""}`;
         const data = await fetchJSON(url, diffAc.signal);
@@ -523,6 +537,90 @@ export function createDiffStore(opts?: DiffStoreOptions) {
     return `${currentOwner}/${currentName}#${currentNumber}`;
   }
 
+  // scopeKey returns a stable string identifier for the current scope.
+  // Used as part of the reviewed-files storage key so a file marked
+  // viewed inside commit X isn't implicitly considered viewed when the
+  // user switches to commit Y (which may have a very different version
+  // of the same file).
+  function scopeKey(s: DiffScope): string {
+    switch (s.kind) {
+      case "head": return "head";
+      case "commit": return `commit:${s.sha}`;
+      case "range": return `range:${s.fromSha}..${s.toSha}`;
+      case "unreviewed": {
+        const r = getUnreviewedRange();
+        return r ? `unreviewed:${r.fromSha}..${r.toSha}` : "unreviewed:empty";
+      }
+    }
+  }
+
+  function reviewedFilesKey(): string {
+    return `${reviewedKey()}::${scopeKey(scope)}`;
+  }
+
+  // Resolves the "unreviewed" scope into a concrete range, or null when
+  // every commit has been reviewed (nothing to diff).
+  function getUnreviewedRange(): { fromSha: string; toSha: string } | null {
+    if (!commits || commits.length === 0) return null;
+    const key = reviewedKey();
+    const reviewed = new Set(reviewedCommits[key] ?? []);
+    // commits are newest-first; the oldest unreviewed is the highest index.
+    let oldestIdx = -1;
+    for (let i = commits.length - 1; i >= 0; i--) {
+      if (!reviewed.has(commits[i]!.sha)) {
+        oldestIdx = i;
+        break;
+      }
+    }
+    if (oldestIdx === -1) return null;
+    return { fromSha: commits[oldestIdx]!.sha, toSha: commits[0]!.sha };
+  }
+
+  function scopeToDiffParams(s: DiffScope): URLSearchParams {
+    const p = new URLSearchParams();
+    if (s.kind === "commit") p.set("commit", s.sha);
+    if (s.kind === "range") {
+      p.set("from", s.fromSha);
+      p.set("to", s.toSha);
+    }
+    if (s.kind === "unreviewed") {
+      const r = getUnreviewedRange();
+      if (r) {
+        p.set("from", r.fromSha);
+        p.set("to", r.toSha);
+      }
+      // If r is null, caller falls through to HEAD scope (no params).
+    }
+    return p;
+  }
+
+  function markFileReviewed(path: string, viewed: boolean): void {
+    if (!currentOwner) return;
+    const key = reviewedFilesKey();
+    const current = reviewedFiles[key] ?? [];
+    const has = current.includes(path);
+    if (viewed && has) return;
+    if (!viewed && !has) return;
+    const next = viewed
+      ? [...current, path]
+      : current.filter((p) => p !== path);
+    reviewedFiles = { ...reviewedFiles, [key]: next };
+    saveReviewedFiles(reviewedFiles);
+  }
+
+  function isFileReviewed(path: string): boolean {
+    const key = reviewedFilesKey();
+    return (reviewedFiles[key] ?? []).includes(path);
+  }
+
+  function getFileReviewProgress(): { reviewed: number; total: number } | null {
+    const list = getFileList();
+    if (!list || list.files.length === 0) return null;
+    const reviewed = new Set(reviewedFiles[reviewedFilesKey()] ?? []);
+    const count = list.files.filter((f) => reviewed.has(f.path)).length;
+    return { reviewed: count, total: list.files.length };
+  }
+
   function markCommitReviewed(sha: string): void {
     if (!currentOwner) return;
     const key = reviewedKey();
@@ -571,6 +669,60 @@ export function createDiffStore(opts?: DiffStoreOptions) {
     }
   }
 
+  // jumpToNextUnreviewed advances to the oldest unreviewed commit newer
+  // than the current position, or resets to HEAD when none remain.
+  // Since selecting a commit auto-marks it reviewed, this is effectively
+  // the "I'm done with this one, show me the next thing I haven't seen"
+  // keybinding (m).
+  function jumpToNextUnreviewed(): void {
+    if (!commits) {
+      void loadCommits();
+      return;
+    }
+    if (commits.length === 0) return;
+    const key = reviewedKey();
+    const reviewed = new Set(reviewedCommits[key] ?? []);
+    const s = scope;
+
+    // Determine the "newest already-reviewed" cutoff: anything equal or
+    // older than this should be ignored. commits are newest-first.
+    let cutoffIdx = commits.length; // nothing ignored initially.
+    if (s.kind === "commit") {
+      cutoffIdx = commits.findIndex((c) => c.sha === s.sha);
+    } else if (s.kind === "range") {
+      cutoffIdx = commits.findIndex((c) => c.sha === s.toSha);
+    }
+
+    // Search from the cutoff toward newer commits (lower indices) first
+    // — if none, fall through to older commits.
+    for (let i = cutoffIdx - 1; i >= 0; i--) {
+      if (!reviewed.has(commits[i]!.sha)) {
+        selectCommit(commits[i]!.sha);
+        return;
+      }
+    }
+    for (let i = commits.length - 1; i > cutoffIdx; i--) {
+      if (!reviewed.has(commits[i]!.sha)) {
+        selectCommit(commits[i]!.sha);
+        return;
+      }
+    }
+    resetToHead();
+  }
+
+  function selectUnreviewed(): void {
+    scope = { kind: "unreviewed" };
+    if (currentOwner && currentName && currentNumber) {
+      void loadDiff(currentOwner, currentName, currentNumber);
+    }
+  }
+
+  // True when at least one commit is unreviewed. Used to enable/disable
+  // the "since last review" control.
+  function hasUnreviewed(): boolean {
+    return getUnreviewedRange() !== null;
+  }
+
   function stepPrev(): void {
     if (!commits) {
       void loadCommits();
@@ -583,8 +735,12 @@ export function createDiffStore(opts?: DiffStoreOptions) {
     } else if (s.kind === "commit") {
       const idx = commits.findIndex((c) => c.sha === s.sha);
       if (idx < commits.length - 1) selectCommit(commits[idx + 1]!.sha);
-    } else {
+    } else if (s.kind === "range") {
       selectCommit(s.fromSha);
+    } else {
+      // unreviewed → step into the oldest unreviewed commit.
+      const r = getUnreviewedRange();
+      if (r) selectCommit(r.fromSha);
     }
   }
 
@@ -604,8 +760,10 @@ export function createDiffStore(opts?: DiffStoreOptions) {
       } else {
         resetToHead();
       }
-    } else {
+    } else if (s.kind === "range") {
       selectCommit(s.toSha);
+    } else {
+      resetToHead();
     }
   }
 
@@ -642,10 +800,16 @@ export function createDiffStore(opts?: DiffStoreOptions) {
     markCommitReviewed,
     isCommitReviewed,
     getReviewProgress,
+    markFileReviewed,
+    isFileReviewed,
+    getFileReviewProgress,
     loadCommits,
     selectCommit,
     selectRange,
     resetToHead,
+    selectUnreviewed,
+    hasUnreviewed,
+    jumpToNextUnreviewed,
     stepPrev,
     stepNext,
   };

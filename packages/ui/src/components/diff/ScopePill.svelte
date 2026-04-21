@@ -13,7 +13,8 @@
   const label = $derived.by(() => {
     if (scope.kind === "head") return "HEAD";
     if (scope.kind === "commit") return scope.sha.slice(0, 7);
-    return `${scope.fromSha.slice(0, 7)}..${scope.toSha.slice(0, 7)}`;
+    if (scope.kind === "range") return `${scope.fromSha.slice(0, 7)}..${scope.toSha.slice(0, 7)}`;
+    return "Since last review";
   });
 </script>
 

@@ -94,6 +94,13 @@
         />
       </div>
     {/if}
+    {@const progress = diff.getFileReviewProgress()}
+    {#if progress && progress.total > 0}
+      <div class="diff-files-progress" title="Files viewed in the current diff scope">
+        <span class="diff-files-progress__count">{progress.reviewed}/{progress.total}</span>
+        <span class="diff-files-progress__label">viewed</span>
+      </div>
+    {/if}
     {@const grouped = groupByDir(filteredDiffFiles)}
     {#each grouped as group, gi (gi)}
       {#if group.dir}
@@ -104,11 +111,15 @@
           class="diff-file-row"
           class:diff-file-row--active={diff.getActiveFile() === f.path}
           class:diff-file-row--nested={!!group.dir}
+          class:diff-file-row--viewed={diff.isFileReviewed(f.path)}
           onclick={() => diff.requestScrollToFile(f.path)}
           title={f.path}
         >
           <span class="diff-file-status" style="color: {statusColor(f.status)}">{statusLetter(f.status)}</span>
           <span class="diff-file-name" class:diff-file-name--deleted={f.status === "deleted"}>{filename(f.path)}</span>
+          {#if diff.isFileReviewed(f.path)}
+            <span class="diff-file-check" aria-hidden="true">&check;</span>
+          {/if}
         </button>
       {/each}
     {/each}
@@ -212,5 +223,31 @@
   .diff-file-name--deleted {
     text-decoration: line-through;
     opacity: 0.7;
+  }
+
+  .diff-files-progress {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    padding: 4px 12px 6px 24px;
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
+  .diff-files-progress__count {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    color: var(--accent-green);
+  }
+
+  .diff-file-row--viewed .diff-file-name {
+    color: var(--text-muted);
+  }
+
+  .diff-file-check {
+    margin-left: auto;
+    color: var(--accent-green);
+    font-size: 10px;
+    flex-shrink: 0;
   }
 </style>

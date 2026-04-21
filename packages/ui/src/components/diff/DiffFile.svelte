@@ -21,6 +21,29 @@
   const collapsed = $derived(diffStore.isFileCollapsed(owner, name, number, file.path));
   const lang = $derived(langFromPath(file.path));
   const layout = $derived(diffStore.getLayout());
+  const viewed = $derived(diffStore.isFileReviewed(file.path));
+
+  function toggleViewed(e: Event): void {
+    e.stopPropagation();
+    diffStore.markFileReviewed(file.path, !viewed);
+  }
+
+  // Auto-mark viewed when the file has been scrolled past (its bottom
+  // edge has moved above the viewport). Only fires AFTER the file has
+  // been in view at least once, so files that never enter the viewport
+  // do not auto-check. Never un-marks — removal is user-initiated.
+  let hasBeenSeen = $state(false);
+  $effect(() => {
+    if (inViewport) hasBeenSeen = true;
+  });
+  $effect(() => {
+    if (hasBeenSeen && !inViewport && !viewed) {
+      const rect = fileEl?.getBoundingClientRect();
+      if (rect && rect.bottom < 0) {
+        diffStore.markFileReviewed(file.path, true);
+      }
+    }
+  });
 
   // Track viewport visibility so off-screen files skip expensive tokenization
   // on whitespace toggles and theme switches. Starts false so the initial
@@ -176,19 +199,29 @@
   }
 </script>
 
-<div class="diff-file" data-file-path={file.path} bind:this={fileEl}>
-  <button class="file-header" onclick={toggle} title={collapsed ? "Expand file" : "Collapse file"}>
-    <svg class="collapse-chevron" class:collapse-chevron--collapsed={collapsed} width="12" height="12" viewBox="0 0 12 12" fill="none">
-      <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-    </svg>
-    <span class="file-path" class:file-path--deleted={file.status === "deleted"}>
-      {displayPath(file)}
-    </span>
-    <span class="file-stats">
-      <span class="stat" class:stat--add={file.additions > 0} class:stat--dim={file.additions === 0}>+{file.additions}</span>
-      <span class="stat" class:stat--del={file.deletions > 0} class:stat--dim={file.deletions === 0}>-{file.deletions}</span>
-    </span>
-  </button>
+<div class="diff-file" class:diff-file--viewed={viewed} data-file-path={file.path} bind:this={fileEl}>
+  <div class="file-header">
+    <button class="file-header__collapse" onclick={toggle} title={collapsed ? "Expand file" : "Collapse file"}>
+      <svg class="collapse-chevron" class:collapse-chevron--collapsed={collapsed} width="12" height="12" viewBox="0 0 12 12" fill="none">
+        <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span class="file-path" class:file-path--deleted={file.status === "deleted"}>
+        {displayPath(file)}
+      </span>
+      <span class="file-stats">
+        <span class="stat" class:stat--add={file.additions > 0} class:stat--dim={file.additions === 0}>+{file.additions}</span>
+        <span class="stat" class:stat--del={file.deletions > 0} class:stat--dim={file.deletions === 0}>-{file.deletions}</span>
+      </span>
+    </button>
+    <label class="file-header__viewed" title={viewed ? "Mark as not viewed" : "Mark as viewed"}>
+      <input
+        type="checkbox"
+        checked={viewed}
+        onclick={toggleViewed}
+      />
+      <span>Viewed</span>
+    </label>
+  </div>
   {#if !collapsed}
     <div class="file-content">
       {#if renderedFile.is_binary}
@@ -272,20 +305,62 @@
     top: 0;
     z-index: 2;
     display: flex;
-    align-items: center;
-    gap: 8px;
+    align-items: stretch;
+    gap: 0;
     width: 100%;
-    padding: 6px 12px;
     background: var(--diff-header-bg);
     border-bottom: 1px solid var(--diff-border);
     font-size: 12px;
-    text-align: left;
-    cursor: pointer;
     color: var(--diff-text);
   }
 
-  .file-header:hover {
+  .file-header__collapse {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    background: none;
+    border: none;
+    text-align: left;
+    cursor: pointer;
+    color: inherit;
+    min-width: 0;
+  }
+
+  .file-header__collapse:hover {
     background: var(--bg-surface-hover);
+  }
+
+  .file-header__viewed {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 12px;
+    border-left: 1px solid var(--diff-border);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 11px;
+    user-select: none;
+    flex-shrink: 0;
+  }
+
+  .file-header__viewed:hover {
+    background: var(--bg-surface-hover);
+    color: var(--text-primary);
+  }
+
+  .file-header__viewed input {
+    cursor: pointer;
+    margin: 0;
+  }
+
+  .diff-file--viewed > .file-header {
+    opacity: 0.6;
+  }
+
+  .diff-file--viewed > .file-header .file-path {
+    color: var(--text-muted);
   }
 
   .collapse-chevron {

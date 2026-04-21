@@ -9,10 +9,11 @@
     commit: CommitInfo;
     active: boolean;
     reviewed: boolean;
+    commentCount?: number;
     onclick: (sha: string, shiftKey: boolean) => void;
   }
 
-  const { commit, active, reviewed, onclick }: Props = $props();
+  const { commit, active, reviewed, commentCount = 0, onclick }: Props = $props();
 
   function relativeDate(iso: string): string {
     const diff = Date.now() - parseAPITimestamp(iso).getTime();
@@ -44,6 +45,14 @@
   {/if}
   <span class="commit-item__sha">{commit.sha.slice(0, 7)}</span>
   <span class="commit-item__msg">{commit.message}</span>
+  {#if commentCount > 0}
+    <span class="commit-item__comments" title="{commentCount} review comment{commentCount === 1 ? '' : 's'}">
+      <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+        <path d="M2.75 2.5h10.5c.966 0 1.75.784 1.75 1.75v6.5A1.75 1.75 0 0 1 13.25 12.5H9.78l-2.53 2.53a.75.75 0 0 1-1.28-.53v-2H2.75A1.75 1.75 0 0 1 1 10.75v-6.5C1 3.284 1.784 2.5 2.75 2.5z"/>
+      </svg>
+      <span>{commentCount}</span>
+    </span>
+  {/if}
   <span class="commit-item__date">{relativeDate(commit.authored_at)}</span>
 </button>
 
@@ -100,10 +109,21 @@
     text-align: center;
   }
 
+  /* .commit-item__msg already expands with flex:1, so pushing
+     date/comments to the right edge happens naturally. */
+
+  .commit-item__comments {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    flex-shrink: 0;
+    font-size: 10px;
+    color: var(--accent-purple);
+  }
+
   .commit-item__date {
     font-size: 10px;
     color: var(--text-muted);
     flex-shrink: 0;
-    margin-left: auto;
   }
 </style>

@@ -3,7 +3,7 @@
   import ScopePill from "./ScopePill.svelte";
   import CommitListItem from "./CommitListItem.svelte";
 
-  const { diff: diffStore } = getStores();
+  const { diff: diffStore, detail: detailStore } = getStores();
 
   let expanded = $state(false);
 
@@ -13,6 +13,7 @@
   const scope = $derived(diffStore.getScope());
   const commitIndex = $derived(diffStore.getCommitIndex());
   const reviewProgress = $derived(diffStore.getReviewProgress());
+  const commentCounts = $derived(detailStore.getCommitCommentCounts());
 
   let bodyEl: HTMLDivElement | undefined = $state();
 
@@ -22,7 +23,15 @@
   $effect(() => {
     const s = scope;
     if (!expanded || !bodyEl) return;
-    const sha = s.kind === "commit" ? s.sha : s.kind === "range" ? s.toSha : null;
+    let sha: string | null = null;
+    if (s.kind === "commit") sha = s.sha;
+    else if (s.kind === "range") sha = s.toSha;
+    else if (s.kind === "unreviewed" && commits) {
+      // Scroll to the newest unreviewed commit so the first highlighted
+      // row is in view.
+      const newest = commits.find((c) => !diffStore.isCommitReviewed(c.sha));
+      sha = newest?.sha ?? null;
+    }
     if (!sha) return;
     requestAnimationFrame(() => {
       const el = bodyEl?.querySelector<HTMLElement>(
@@ -67,6 +76,10 @@
       if (fromIdx === -1 || toIdx === -1 || idx === -1) return false;
       return idx >= toIdx && idx <= fromIdx;
     }
+    if (scope.kind === "unreviewed") {
+      // Highlight every commit that's part of the unreviewed range.
+      return !diffStore.isCommitReviewed(sha);
+    }
     return false;
   }
 
@@ -97,6 +110,14 @@
         {#if commitIndex}
           <span class="commit-section__pos">{commitIndex.current}/{commitIndex.total}</span>
         {/if}
+        <button
+          class="commit-section__nav-btn commit-section__nav-btn--wide"
+          onclick={() => diffStore.selectUnreviewed()}
+          title="Diff everything not yet reviewed"
+          disabled={!diffStore.hasUnreviewed() || scope.kind === "unreviewed"}
+        >
+          Unseen
+        </button>
         <button
           class="commit-section__nav-btn"
           onclick={() => diffStore.stepPrev()}
@@ -133,6 +154,7 @@
             {commit}
             active={isActive(commit.sha)}
             reviewed={diffStore.isCommitReviewed(commit.sha)}
+            commentCount={commentCounts.get(commit.sha) ?? 0}
             onclick={handleCommitClick}
           />
         {/each}
@@ -260,6 +282,14 @@
   .commit-section__nav-btn:disabled {
     opacity: 0.3;
     cursor: default;
+  }
+
+  .commit-section__nav-btn--wide {
+    width: auto;
+    padding: 0 8px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
   }
 
   .commit-section__progress {
