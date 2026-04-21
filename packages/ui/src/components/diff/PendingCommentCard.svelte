@@ -3,18 +3,41 @@
 
   interface Props {
     comment: DraftComment;
-    stale: boolean; // true when the comment's commit SHA is no longer the PR head
+    // The SHA the reviewer would publish against now. When it differs
+    // from comment.commitSha, the anchor chip switches to a warning
+    // colour to flag the reviewer that line numbers may have shifted
+    // since the draft was written. Empty string means "don't know
+    // yet" — render neutrally.
+    currentHeadSha: string;
     ondelete: () => void;
   }
 
-  const { comment, stale, ondelete }: Props = $props();
+  const { comment, currentHeadSha, ondelete }: Props = $props();
+
+  const drifted = $derived(
+    currentHeadSha !== "" &&
+      comment.commitSha !== "" &&
+      comment.commitSha !== currentHeadSha,
+  );
+
+  const chipTitle = $derived(
+    drifted
+      ? `Drafted against ${comment.commitSha.slice(0, 7)}. Publish will use ${currentHeadSha.slice(0, 7)} as the review's base; GitHub may reject this comment if line numbers have shifted.`
+      : `Drafted against ${comment.commitSha.slice(0, 7)}.`,
+  );
 </script>
 
-<div class="pending" class:pending--stale={stale}>
+<div class="pending">
   <div class="pending__header">
     <span class="pending__badge">Pending</span>
-    {#if stale}
-      <span class="pending__stale-badge" title="Pending against an older commit — may fail on publish">Stale</span>
+    {#if comment.commitSha}
+      <span
+        class="pending__commit"
+        class:pending__commit--drifted={drifted}
+        title={chipTitle}
+      >
+        @ {comment.commitSha.slice(0, 7)}
+      </span>
     {/if}
     <span class="pending__anchor">
       {comment.side === "LEFT" ? "−" : "+"}{comment.line}
@@ -38,12 +61,6 @@
     background: color-mix(in srgb, var(--accent-amber) 6%, var(--bg-surface));
   }
 
-  .pending--stale {
-    border-color: var(--accent-red);
-    border-left-color: var(--accent-red);
-    background: color-mix(in srgb, var(--accent-red) 6%, var(--bg-surface));
-  }
-
   .pending__header {
     display: flex;
     align-items: center;
@@ -62,15 +79,21 @@
     color: #000;
   }
 
-  .pending__stale-badge {
+  .pending__commit {
+    font-family: var(--font-mono);
     font-size: 10px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+    color: var(--text-muted);
     padding: 1px 6px;
     border-radius: 999px;
-    background: var(--accent-red);
-    color: #fff;
+    border: 1px solid var(--border-muted);
+    background: var(--bg-inset);
+    cursor: help;
+  }
+
+  .pending__commit--drifted {
+    color: var(--accent-amber);
+    border-color: var(--accent-amber);
+    background: color-mix(in srgb, var(--accent-amber) 12%, var(--bg-inset));
   }
 
   .pending__anchor {

@@ -87,14 +87,6 @@
     closeComposer();
   }
 
-  // Stale when the comment was written against a commit that is no
-  // longer the head we would publish against. Stale comments may fail
-  // to post — we warn but don't block.
-  function isStale(c: DraftComment): boolean {
-    const head = currentCommitSha();
-    return head !== "" && c.commitSha !== "" && c.commitSha !== head;
-  }
-
   // --- AI Q&A composer state ---
 
   // openAsk: key "line:side" of a line with an open Ask composer.
@@ -513,7 +505,7 @@
                   {#each pending as p (p.id)}
                     <PendingCommentCard
                       comment={p}
-                      stale={isStale(p)}
+                      currentHeadSha={currentCommitSha()}
                       ondelete={() => diffStore.removeDraftComment(p.id)}
                     />
                   {/each}
@@ -528,7 +520,7 @@
                   {#each pending as p (p.id)}
                     <PendingCommentCard
                       comment={p}
-                      stale={isStale(p)}
+                      currentHeadSha={currentCommitSha()}
                       ondelete={() => diffStore.removeDraftComment(p.id)}
                     />
                   {/each}
@@ -600,7 +592,7 @@
                   {#each pending as p (p.id)}
                     <PendingCommentCard
                       comment={p}
-                      stale={isStale(p)}
+                      currentHeadSha={currentCommitSha()}
                       ondelete={() => diffStore.removeDraftComment(p.id)}
                     />
                   {/each}
