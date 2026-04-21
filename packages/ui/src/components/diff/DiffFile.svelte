@@ -150,6 +150,47 @@
     return `lines ${sel.startLine}–${sel.endLine}`;
   }
 
+  // Floating toolbar position. When a multi-line selection is active
+  // we render a compact floating action bar next to the end of the
+  // selection so the reviewer doesn't need to find the hover-only
+  // + / ? buttons. Position updates on selection changes and on
+  // scroll so the toolbar tracks the selection.
+  let toolbarTop = $state(0);
+  let toolbarLeft = $state(0);
+
+  function updateToolbarPosition(): void {
+    if (typeof window === "undefined" || !liveSelection) return;
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const rect = sel.getRangeAt(0).getBoundingClientRect();
+    if (rect.width === 0 && rect.height === 0) return;
+    toolbarTop = rect.bottom + window.scrollY + 4;
+    toolbarLeft = rect.right + window.scrollX - 180;
+  }
+
+  $effect(() => {
+    // Reposition whenever liveSelection changes. `liveSelection`
+    // gates the effect so we only run when it's actually set.
+    if (liveSelection) updateToolbarPosition();
+  });
+
+  function openComposerFromToolbar(): void {
+    if (!liveSelection) return;
+    rangeSnapshot = liveSelection;
+    openComposer = `${liveSelection.endLine}:${liveSelection.side}`;
+  }
+
+  function openAskFromToolbar(): void {
+    if (!liveSelection) return;
+    rangeSnapshot = liveSelection;
+    const selText = typeof window !== "undefined"
+      ? (window.getSelection()?.toString() ?? "")
+      : "";
+    selectionSnapshot = selText.trim() || null;
+    askError = null;
+    openAsk = `${liveSelection.endLine}:${liveSelection.side}`;
+  }
+
   function nearestLineWrap(node: Node | null): HTMLElement | null {
     let el = node instanceof Element ? node : node?.parentElement ?? null;
     while (el) {
@@ -454,6 +495,40 @@
     return f.path;
   }
 </script>
+
+{#if liveSelection}
+  <div
+    class="selection-toolbar"
+    style="top: {toolbarTop}px; left: {toolbarLeft}px"
+    onmousedown={(e) => e.preventDefault()}
+    role="toolbar"
+    tabindex="-1"
+    aria-label="Selection actions"
+  >
+    <span class="selection-toolbar__label">
+      Lines {liveSelection.startLine}–{liveSelection.endLine}
+    </span>
+    <button
+      type="button"
+      class="selection-toolbar__btn selection-toolbar__btn--comment"
+      onclick={openComposerFromToolbar}
+      title="Comment on the selected lines"
+    >
+      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M5 2V8M2 5H8" stroke-linecap="round" />
+      </svg>
+      Comment
+    </button>
+    <button
+      type="button"
+      class="selection-toolbar__btn selection-toolbar__btn--ask"
+      onclick={openAskFromToolbar}
+      title="Ask Claude about the selected lines"
+    >
+      ? Ask
+    </button>
+  </div>
+{/if}
 
 <div class="diff-file" class:diff-file--viewed={viewed} data-file-path={file.path} bind:this={fileEl}>
   <div class="file-header">
@@ -982,6 +1057,55 @@
   .ask-ai-btn--range {
     outline: 2px solid var(--bg-surface);
     box-shadow: 0 0 0 3px currentColor;
+  }
+
+  /* Floating toolbar anchored to the end of a multi-line selection.
+     Fixed positioning relative to the document so it survives scroll
+     inside the diff container. mousedown preventDefault inside the
+     toolbar keeps the selection alive through the click. */
+  .selection-toolbar {
+    position: absolute;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
+    font-size: 11px;
+    z-index: 10;
+    user-select: none;
+  }
+
+  .selection-toolbar__label {
+    font-family: var(--font-mono);
+    color: var(--text-muted);
+  }
+
+  .selection-toolbar__btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: var(--radius-sm);
+    border: none;
+    cursor: pointer;
+    color: #fff;
+  }
+
+  .selection-toolbar__btn--comment {
+    background: var(--accent-blue);
+  }
+
+  .selection-toolbar__btn--ask {
+    background: var(--accent-purple);
+  }
+
+  .selection-toolbar__btn:hover {
+    filter: brightness(1.1);
   }
 
   .add-comment-btn,
