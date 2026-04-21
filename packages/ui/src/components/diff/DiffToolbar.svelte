@@ -60,8 +60,31 @@
       <span class="toggle-knob"></span>
     </button>
   </div>
+  <div class="toolbar-group toolbar-group--right">
+    <button
+      type="button"
+      class="refresh-btn"
+      onclick={() => void diff.refresh()}
+      disabled={diff.isRefreshing()}
+      title={diff.isRefreshing()
+        ? "Syncing with GitHub..."
+        : "Refresh the diff and commits from GitHub"}
+    >
+      <svg
+        width="12" height="12" viewBox="0 0 12 12" fill="none"
+        stroke="currentColor" stroke-width="1.5"
+        class:refresh-btn__icon--spinning={diff.isRefreshing()}
+      >
+        <path d="M10 3A4 4 0 1 1 6 3M10 3V1M10 3H8" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+      Refresh
+    </button>
+    {#if diff.getRefreshError()}
+      <span class="refresh-error" title={diff.getRefreshError()}>sync failed</span>
+    {/if}
+  </div>
   {#if onReviewClick}
-    <div class="toolbar-group toolbar-group--right">
+    <div class="toolbar-group">
       <button
         type="button"
         class="review-btn"
@@ -149,6 +172,43 @@
 
   .toolbar-group--right {
     margin-left: auto;
+  }
+
+  .refresh-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 10px;
+    font-size: 11px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-muted);
+    background: var(--bg-inset);
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+
+  .refresh-btn:hover:not(:disabled) {
+    background: var(--bg-surface-hover);
+    color: var(--text-primary);
+  }
+
+  .refresh-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+
+  .refresh-btn__icon--spinning {
+    animation: refresh-spin 0.9s linear infinite;
+  }
+
+  @keyframes refresh-spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .refresh-error {
+    font-size: 10px;
+    color: var(--accent-red);
+    font-style: italic;
   }
 
   .review-btn {

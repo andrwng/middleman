@@ -319,6 +319,51 @@ export function createDiffStore(opts?: DiffStoreOptions) {
     safeSetItem("diff-layout", v);
   }
 
+  // refresh triggers a server-side PR sync (fetches latest from
+  // GitHub) and then re-loads the diff, commits, and detail in the
+  // store so the Review surface reflects new pushes. The sync path
+  // is already exposed at POST /pulls/{n}/sync.
+  let refreshing = $state(false);
+  let refreshError = $state<string | null>(null);
+
+  async function refresh(): Promise<void> {
+    if (!currentOwner || refreshing) return;
+    refreshing = true;
+    refreshError = null;
+    try {
+      const basePath = getBasePath();
+      const syncURL =
+        `${basePath}api/v1/repos/` +
+        `${encodeURIComponent(currentOwner)}/` +
+        `${encodeURIComponent(currentName)}/` +
+        `pulls/${currentNumber}/sync`;
+      const res = await fetch(syncURL, { method: "POST" });
+      if (!res.ok) {
+        refreshError = `Sync failed: ${res.status} ${res.statusText}`;
+        return;
+      }
+    } catch (err) {
+      refreshError = err instanceof Error ? err.message : String(err);
+      return;
+    } finally {
+      refreshing = false;
+    }
+    // Clear the commit cache so loadCommits re-fetches against the
+    // new head SHAs that the sync just wrote to the DB.
+    commits = null;
+    commitsError = null;
+    void loadCommits();
+    void reloadDiffOnly();
+  }
+
+  function isRefreshing(): boolean {
+    return refreshing;
+  }
+
+  function getRefreshError(): string | null {
+    return refreshError;
+  }
+
   async function reloadDiffOnly(): Promise<void> {
     abortController?.abort();
     // Abort any in-flight /files request so a late response from a
@@ -928,6 +973,9 @@ export function createDiffStore(opts?: DiffStoreOptions) {
     isFileCollapsed,
     toggleFileCollapsed,
     loadDiff,
+    refresh,
+    isRefreshing,
+    getRefreshError,
     clearDiff,
     getScope,
     getCommits,
