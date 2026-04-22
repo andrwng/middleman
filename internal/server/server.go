@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -299,11 +300,22 @@ func newServer(
 	}
 
 	if clones != nil && options.WorktreeDir != "" {
+		// Look for a user-supplied brief prompt override beside the
+		// config file. When present, it replaces the built-in prompt
+		// on every brief generation — no restart needed to iterate.
+		briefPromptFile := ""
+		if cfg != nil && cfg.DataDir != "" {
+			briefPromptFile = filepath.Join(cfg.DataDir, "brief-prompt.md")
+			if _, err := os.Stat(briefPromptFile); err != nil {
+				briefPromptFile = ""
+			}
+		}
 		s.aiReview = aireview.New(aireview.RunnerConfig{
-			DB:          database,
-			Clones:      clones,
-			WorktreeDir: filepath.Join(options.WorktreeDir, "ai-review"),
-			HostFor:     syncer.HostForRepo,
+			DB:              database,
+			Clones:          clones,
+			WorktreeDir:     filepath.Join(options.WorktreeDir, "ai-review"),
+			HostFor:         syncer.HostForRepo,
+			BriefPromptFile: briefPromptFile,
 		})
 		// Best-effort: mark any questions left running from a prior
 		// process as failed. Runs synchronously here because it's

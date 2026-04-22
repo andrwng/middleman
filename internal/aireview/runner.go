@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -54,6 +55,8 @@ type Runner struct {
 	// by the sync engine.
 	hostFor func(owner, name string) string
 
+	briefPromptFile string
+
 	mu            sync.Mutex
 	running       map[int64]context.CancelFunc // questionID -> cancel
 	briefsRunning map[int64]context.CancelFunc // briefID -> cancel
@@ -65,16 +68,25 @@ type RunnerConfig struct {
 	Clones      *gitclone.Manager
 	WorktreeDir string
 	HostFor     func(owner, name string) string
+	// BriefPromptFile, when non-empty, is a filesystem path that
+	// middleman reads on every brief generation to use as the prompt
+	// template (replacing the built-in one). The file may contain
+	// the literal token {{CONTEXT}} where the per-PR context block
+	// (title, branches, commit log) should be interpolated; if the
+	// token is absent, context is appended to the end of the file.
+	// Read errors fall back to the built-in prompt with a log.
+	BriefPromptFile string
 }
 
 func New(cfg RunnerConfig) *Runner {
 	return &Runner{
-		db:            cfg.DB,
-		clones:        cfg.Clones,
-		rootDir:       cfg.WorktreeDir,
-		hostFor:       cfg.HostFor,
-		running:       make(map[int64]context.CancelFunc),
-		briefsRunning: make(map[int64]context.CancelFunc),
+		db:              cfg.DB,
+		clones:          cfg.Clones,
+		rootDir:         cfg.WorktreeDir,
+		hostFor:         cfg.HostFor,
+		briefPromptFile: cfg.BriefPromptFile,
+		running:         make(map[int64]context.CancelFunc),
+		briefsRunning:   make(map[int64]context.CancelFunc),
 	}
 }
 
@@ -524,7 +536,7 @@ func (r *Runner) spawnBrief(brief db.AIBrief, worktreePath string, in BriefInput
 }
 
 func (r *Runner) runBrief(ctx context.Context, brief db.AIBrief, worktreePath string, in BriefInput) {
-	prompt := buildBriefPrompt(in)
+	prompt := r.briefPrompt(in)
 
 	// Brief uses the same restricted tool set as Q&A. Deep mode gets
 	// the same tools — the difference is time budget / prompt wording,
@@ -585,56 +597,92 @@ func (r *Runner) runBrief(ctx context.Context, brief db.AIBrief, worktreePath st
 	}
 }
 
-// buildBriefPrompt assembles the structured-output prompt sent to
-// Claude. The strict Markdown structure lets the UI parse sections
-// deterministically.
-func buildBriefPrompt(in BriefInput) string {
-	var b strings.Builder
-	b.WriteString(
-		"You are generating a structural review brief for a pull request. " +
-			"Read the diff via git (the working directory is the PR head) and, as needed, " +
-			"read the repository files with your Read/Glob/Grep tools to understand context. " +
-			"You MUST produce output in the following Markdown structure exactly, with those " +
-			"section headings verbatim:\n\n",
-	)
-	b.WriteString("## Intent\n")
-	b.WriteString("1–2 sentences naming what this PR actually does, based on the code (not the PR title).\n\n")
-	b.WriteString("## Before\n")
-	b.WriteString("How the code was organised or how it flowed before this PR. Prose or bullets. For a pure addition write: \"Skipped: pure addition.\"\n\n")
-	b.WriteString("## After\n")
-	b.WriteString("How the code is organised or how it flows after this PR.\n\n")
-	b.WriteString("## Commits\n")
-	b.WriteString("For each commit in the PR, in order (oldest first), one bullet:\n")
-	b.WriteString("- `<sha>` **<one-line title>**\n")
-	b.WriteString("  - 1–3 bullets describing what this commit does, with file:line citations.\n")
-	b.WriteString("  - Suggested read depth: `read carefully`, `skim`, or `skip if trusted`.\n\n")
-	b.WriteString("## Observations\n")
-	b.WriteString("Neutral observations with file:line citations. Phrase concerns as questions, never as verdicts or recommendations.\n\n")
-	b.WriteString(
-		"Rules:\n" +
-			"- Every non-trivial claim MUST cite a file:line (e.g. `foo.go:42`).\n" +
-			"- Never produce review feedback. No 'should', no approvals, no verdicts.\n" +
-			"- Hedge when uncertain (\"appears to\", \"seems to\").\n" +
-			"- Keep prose tight. Bullets over paragraphs where it fits.\n",
-	)
-	if in.Depth == "quick" {
-		b.WriteString("- Quick mode: do not explore the repo deeply. Use the diff and commit log; one or two Grep/Read calls to disambiguate are fine.\n")
-	} else {
-		b.WriteString("- Deep mode: explore the repo to understand the before-state and cross-references. Use Read/Glob/Grep liberally.\n")
+// briefPrompt returns the prompt to send Claude for this brief. If a
+// BriefPromptFile is configured and readable, its contents are used
+// as the prompt template: {{CONTEXT}} (if present) gets replaced
+// with the per-PR context block, otherwise context is appended. On
+// any read error we log and fall back to the built-in prompt so the
+// brief still runs.
+func (r *Runner) briefPrompt(in BriefInput) string {
+	context := briefContextBlock(in)
+	if r.briefPromptFile != "" {
+		data, err := os.ReadFile(r.briefPromptFile)
+		if err == nil {
+			template := string(data)
+			if strings.Contains(template, "{{CONTEXT}}") {
+				return strings.ReplaceAll(template, "{{CONTEXT}}", context)
+			}
+			return strings.TrimRight(template, "\n") + "\n\n" + context
+		}
+		slog.Warn("read brief prompt override failed; using built-in",
+			"path", r.briefPromptFile, "err", err)
 	}
-	b.WriteString("\n")
+	return buildBriefPrompt(in)
+}
+
+// briefContextBlock renders just the dynamic per-PR context that
+// buildBriefPrompt appends to the static rules section. Kept separate
+// so user-supplied templates can interpolate it via {{CONTEXT}}.
+func briefContextBlock(in BriefInput) string {
+	var b strings.Builder
 	if in.PromptContext != "" {
 		b.WriteString("Context:\n")
 		b.WriteString(in.PromptContext)
 		b.WriteString("\n\n")
 	}
 	b.WriteString(fmt.Sprintf("Head SHA: %s\n", in.HeadSHA))
+	if in.Depth == "deep" {
+		b.WriteString("Depth: deep. Explore the repo to understand the before-state and cross-references. Use Read/Glob/Grep liberally.\n")
+	} else {
+		b.WriteString("Depth: quick. Do not explore the repo deeply. Use the diff and commit log; one or two Grep/Read calls to disambiguate are fine.\n")
+	}
+	return b.String()
+}
+
+// buildBriefPrompt assembles the structured-output prompt sent to
+// Claude. The strict Markdown structure lets the UI parse sections
+// deterministically.
+func buildBriefPrompt(in BriefInput) string {
+	var b strings.Builder
+	b.WriteString(briefPromptHeader)
+	b.WriteString("\n\n")
+	b.WriteString(briefContextBlock(in))
 	b.WriteString(
-		"\nTo see the commit log and diff, run the git CLI via your tools if needed (but you may not have Bash — in that case, read files directly from the working copy). " +
-			"The worktree is already checked out at the PR head.\n",
+		"\nBash is not available. Read files directly from the working copy — it is checked out at the PR head. " +
+			"The diff and commit log are pre-computed and included in the Context block above.\n",
 	)
 	return b.String()
 }
+
+// briefPromptHeader is the static rules portion of the prompt. Split
+// out so a user's override file can copy/paste this verbatim as a
+// starting point if they want to tweak only the rules.
+const briefPromptHeader = `You are generating a structural review brief for a pull request. Read the repository files with your Read/Glob/Grep tools as needed for context. You MUST produce output in the following Markdown structure exactly, with those section headings verbatim:
+
+## Intent
+1–2 sentences naming what this PR actually does, based on the code (not the PR title).
+
+## Before
+How the code was organised or how it flowed before this PR. Prose or bullets. For a pure addition write: "Skipped: pure addition."
+
+## After
+How the code is organised or how it flows after this PR.
+
+## Commits
+For each commit in the PR, in order (oldest first), one bullet:
+- ` + "`<sha>`" + ` **<one-line title>**
+  - 1–3 bullets describing what this commit does, with file:line citations.
+  - Suggested read depth: ` + "`read carefully`, `skim`, or `skip if trusted`" + `.
+
+## Observations
+Neutral observations with file:line citations. Phrase concerns as questions, never as verdicts or recommendations.
+
+Rules:
+- Every non-trivial claim MUST cite a file:line (e.g. ` + "`foo.go:42`" + `).
+- Never produce review feedback. No 'should', no approvals, no verdicts.
+- Hedge when uncertain ("appears to", "seems to").
+- Keep prose tight. Bullets over paragraphs where it fits.`
+
 
 func parseClaudeResult(raw []byte) (claudeResult, error) {
 	// Claude CLI emits a single JSON object with top-level fields

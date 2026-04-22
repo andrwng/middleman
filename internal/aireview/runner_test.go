@@ -63,6 +63,40 @@ func TestBuildPrompt(t *testing.T) {
 	assert.Contains(t, prompt, "Anchored line: 42")
 }
 
+func TestBriefPrompt_OverrideFile_WithPlaceholder(t *testing.T) {
+	tmp := t.TempDir()
+	path := tmp + "/brief-prompt.md"
+	require.NoError(t, os.WriteFile(path,
+		[]byte("MY CUSTOM RULES\n\n{{CONTEXT}}\n\nSignoff."), 0o644))
+
+	runner := New(RunnerConfig{BriefPromptFile: path})
+	got := runner.briefPrompt(BriefInput{HeadSHA: "abc1234", Depth: "quick"})
+	assert.Contains(t, got, "MY CUSTOM RULES")
+	assert.Contains(t, got, "Head SHA: abc1234")
+	assert.Contains(t, got, "Signoff.")
+	assert.NotContains(t, got, "You are generating a structural review brief")
+}
+
+func TestBriefPrompt_OverrideFile_WithoutPlaceholder(t *testing.T) {
+	tmp := t.TempDir()
+	path := tmp + "/brief-prompt.md"
+	require.NoError(t, os.WriteFile(path, []byte("RULES ONLY."), 0o644))
+
+	runner := New(RunnerConfig{BriefPromptFile: path})
+	got := runner.briefPrompt(BriefInput{HeadSHA: "abc1234", Depth: "quick"})
+	// Context block is appended at the end.
+	assert.Contains(t, got, "RULES ONLY.")
+	assert.Contains(t, got, "Head SHA: abc1234")
+}
+
+func TestBriefPrompt_FallbackOnReadError(t *testing.T) {
+	runner := New(RunnerConfig{BriefPromptFile: "/nonexistent/path/brief-prompt.md"})
+	got := runner.briefPrompt(BriefInput{HeadSHA: "abc1234", Depth: "quick"})
+	// Falls back to the built-in prompt.
+	assert.Contains(t, got, "You are generating a structural review brief")
+	assert.Contains(t, got, "Head SHA: abc1234")
+}
+
 func TestBuildPrompt_MultiLineRange(t *testing.T) {
 	start := 40
 	end := 43
