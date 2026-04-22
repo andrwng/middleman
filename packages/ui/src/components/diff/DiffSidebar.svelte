@@ -121,6 +121,14 @@
         >
           <span class="diff-file-status" style="color: {statusColor(f.status)}">{statusLetter(f.status)}</span>
           <span class="diff-file-name" class:diff-file-name--deleted={f.status === "deleted"}>{filename(f.path)}</span>
+          {#if f.is_binary}
+            <span class="diff-file-churn diff-file-churn--binary" title="Binary file">bin</span>
+          {:else}
+            <span class="diff-file-churn" title="+{f.additions} / -{f.deletions}">
+              <span class="diff-file-add">+{f.additions}</span>
+              <span class="diff-file-del">&minus;{f.deletions}</span>
+            </span>
+          {/if}
           {#if diff.isFileReviewed(f.path)}
             <span class="diff-file-check" aria-hidden="true">&check;</span>
           {/if}
@@ -249,9 +257,31 @@
   }
 
   .diff-file-check {
-    margin-left: auto;
     color: var(--accent-green);
     font-size: 10px;
     flex-shrink: 0;
+  }
+
+  .diff-file-churn {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    flex-shrink: 0;
+  }
+
+  .diff-file-churn--binary {
+    color: var(--accent-purple);
+    font-weight: 600;
+  }
+
+  .diff-file-add {
+    color: var(--diff-add-text, var(--accent-green));
+  }
+
+  .diff-file-del {
+    color: var(--diff-del-text, var(--accent-red));
   }
 </style>

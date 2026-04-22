@@ -5097,47 +5097,6 @@ func TestAPIGetCommits_NotFound(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, resp.StatusCode())
 }
 
-func TestAPIGetHeatmap(t *testing.T) {
-	require := require.New(t)
-	assert := Assert.New(t)
-
-	client, _, _, _, _ := setupTestServerWithClones(t)
-	resp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberHeatmapWithResponse(
-		context.Background(), "acme", "widget", 1,
-	)
-	require.NoError(err)
-	require.Equal(http.StatusOK, resp.StatusCode())
-	require.NotNil(resp.JSON200)
-	require.NotNil(resp.JSON200.Commits)
-	require.NotNil(resp.JSON200.Cells)
-
-	// setupTestServerWithClones makes 5 PR commits, each adding a
-	// single unique file; heatmap returns oldest-first.
-	commits := *resp.JSON200.Commits
-	cells := *resp.JSON200.Cells
-	require.Len(commits, 5)
-	assert.Equal("commit 1", commits[0].Title)
-	assert.Equal("commit 5", commits[4].Title)
-
-	require.Len(cells, 5)
-	paths := make(map[string]struct{})
-	for _, c := range cells {
-		paths[c.Path] = struct{}{}
-		assert.Equal(int64(1), c.Additions)
-		assert.Equal(int64(0), c.Deletions)
-	}
-	assert.Len(paths, 5, "each cell should reference a distinct file")
-}
-
-func TestAPIGetHeatmap_NotFound(t *testing.T) {
-	client, _, _, _, _ := setupTestServerWithClones(t)
-	resp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberHeatmapWithResponse(
-		context.Background(), "acme", "widget", 999,
-	)
-	require.NoError(t, err)
-	require.Equal(t, http.StatusNotFound, resp.StatusCode())
-}
-
 func TestAPIPRNotes_CRUD(t *testing.T) {
 	require := require.New(t)
 	assert := Assert.New(t)

@@ -135,26 +135,6 @@ type commitsResponse struct {
 	Commits []commitResponse `json:"commits" doc:"Commits in newest-first order"`
 }
 
-type heatmapCommit struct {
-	SHA   string `json:"sha"   doc:"Full commit SHA"`
-	Title string `json:"title" doc:"Commit subject"`
-}
-
-type heatmapCell struct {
-	CommitSHA string `json:"commit_sha"`
-	Path      string `json:"path"`
-	Additions int    `json:"additions"`
-	Deletions int    `json:"deletions"`
-	Binary    bool   `json:"binary,omitempty"`
-}
-
-type heatmapResponse struct {
-	// Commits in oldest-first order (same order the heatmap grid
-	// renders columns).
-	Commits []heatmapCommit `json:"commits"`
-	Cells   []heatmapCell   `json:"cells" doc:"One cell per (commit, changed file)"`
-}
-
 // prNotesResponse is the reviewer-local scratchpad for a PR. The
 // UpdatedAt field is zero when the user has never written a note.
 type prNotesResponse struct {
