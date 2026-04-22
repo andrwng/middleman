@@ -10,6 +10,7 @@
   import DiffSidebar from "../components/diff/DiffSidebar.svelte";
   import ReviewCoverBanner from "../components/detail/ReviewCoverBanner.svelte";
   import ReviewBriefCard from "../components/detail/ReviewBriefCard.svelte";
+  import HeatmapSection from "../components/detail/HeatmapSection.svelte";
   import StackSidebar
     from "../components/detail/StackSidebar.svelte";
 
@@ -122,6 +123,7 @@
               name={selectedPR.name}
               number={selectedPR.number}
             />
+            <HeatmapSection />
             <DiffView
               owner={selectedPR.owner}
               name={selectedPR.name}

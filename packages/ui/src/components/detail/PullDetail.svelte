@@ -20,6 +20,7 @@
   import CIStatus from "./CIStatus.svelte";
   import ReviewCoverBanner from "./ReviewCoverBanner.svelte";
   import ReviewBriefCard from "./ReviewBriefCard.svelte";
+  import HeatmapSection from "./HeatmapSection.svelte";
 
   const { detail: detailStore, pulls, activity } = getStores();
   const client = getClient();
@@ -365,6 +366,7 @@
           <div class="files-main">
             <ReviewCoverBanner {pr} {owner} {name} />
             <ReviewBriefCard {owner} {name} {number} />
+            <HeatmapSection />
             <DiffView {owner} {name} {number} />
           </div>
         </div>

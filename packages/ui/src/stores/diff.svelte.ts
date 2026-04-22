@@ -6,6 +6,19 @@ export type DiffScope =
   | { kind: "range"; fromSha: string; toSha: string }
   | { kind: "unreviewed" };
 
+export interface HeatmapCommit { sha: string; title: string }
+export interface HeatmapCell {
+  commit_sha: string;
+  path: string;
+  additions: number;
+  deletions: number;
+  binary?: boolean;
+}
+export interface HeatmapData {
+  commits: HeatmapCommit[];
+  cells: HeatmapCell[];
+}
+
 export interface DiffStoreOptions {
   getBasePath?: () => string;
 }
@@ -213,6 +226,9 @@ export function createDiffStore(opts?: DiffStoreOptions) {
   let commits = $state<CommitInfo[] | null>(null);
   let commitsLoading = $state(false);
   let commitsError = $state<string | null>(null);
+  let heatmap = $state<HeatmapData | null>(null);
+  let heatmapLoading = $state(false);
+  let heatmapError = $state<string | null>(null);
   let scope = $state<DiffScope>({ kind: "head" });
 
   let currentOwner = $state("");
@@ -349,9 +365,12 @@ export function createDiffStore(opts?: DiffStoreOptions) {
       refreshing = false;
     }
     // Clear the commit cache so loadCommits re-fetches against the
-    // new head SHAs that the sync just wrote to the DB.
+    // new head SHAs that the sync just wrote to the DB. Heatmap
+    // shares the same SHA window, so invalidate it too.
     commits = null;
     commitsError = null;
+    heatmap = null;
+    heatmapError = null;
     void loadCommits();
     void reloadDiffOnly();
   }
@@ -471,6 +490,9 @@ export function createDiffStore(opts?: DiffStoreOptions) {
       commits = null;
       commitsLoading = false;
       commitsError = null;
+      heatmap = null;
+      heatmapLoading = false;
+      heatmapError = null;
     }
 
     abortController?.abort();
@@ -566,6 +588,9 @@ export function createDiffStore(opts?: DiffStoreOptions) {
     commits = null;
     commitsLoading = false;
     commitsError = null;
+    heatmap = null;
+    heatmapLoading = false;
+    heatmapError = null;
     scope = { kind: "head" };
     currentOwner = "";
     currentName = "";
@@ -611,6 +636,45 @@ export function createDiffStore(opts?: DiffStoreOptions) {
     }
   }
 
+  async function loadHeatmap(): Promise<void> {
+    if (heatmap || heatmapLoading) return;
+    if (!currentOwner || !currentName || !currentNumber) return;
+
+    heatmapLoading = true;
+    heatmapError = null;
+    const owner = currentOwner;
+    const name = currentName;
+    const number = currentNumber;
+    try {
+      const basePath = getBasePath();
+      const url =
+        `${basePath}api/v1/repos/` +
+        `${encodeURIComponent(owner)}/` +
+        `${encodeURIComponent(name)}/` +
+        `pulls/${number}/heatmap`;
+      const response = await fetch(url);
+      if (currentOwner !== owner || currentName !== name || currentNumber !== number) return;
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(
+          (body as Record<string, string>).detail ??
+            (body as Record<string, string>).title ??
+            `HTTP ${response.status}`,
+        );
+      }
+      const data = (await response.json()) as HeatmapData;
+      if (currentOwner !== owner || currentName !== name || currentNumber !== number) return;
+      heatmap = data;
+    } catch (err) {
+      if (currentOwner !== owner || currentName !== name || currentNumber !== number) return;
+      heatmapError = err instanceof Error ? err.message : String(err);
+    } finally {
+      if (currentOwner === owner && currentName === name && currentNumber === number) {
+        heatmapLoading = false;
+      }
+    }
+  }
+
   function getScope(): DiffScope {
     return scope;
   }
@@ -625,6 +689,18 @@ export function createDiffStore(opts?: DiffStoreOptions) {
 
   function getCommitsError(): string | null {
     return commitsError;
+  }
+
+  function getHeatmap(): HeatmapData | null {
+    return heatmap;
+  }
+
+  function isHeatmapLoading(): boolean {
+    return heatmapLoading;
+  }
+
+  function getHeatmapError(): string | null {
+    return heatmapError;
   }
 
   /** Returns the 1-based index and total for the active commit. */
@@ -997,6 +1073,10 @@ export function createDiffStore(opts?: DiffStoreOptions) {
     getDraftCommentsForPath,
     clearDraft,
     loadCommits,
+    loadHeatmap,
+    getHeatmap,
+    isHeatmapLoading,
+    getHeatmapError,
     selectCommit,
     selectRange,
     resetToHead,

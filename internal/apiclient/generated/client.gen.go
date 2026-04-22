@@ -323,6 +323,34 @@ type GithubStateOutputBody struct {
 	State  string  `json:"state"`
 }
 
+// HeatmapCell defines model for HeatmapCell.
+type HeatmapCell struct {
+	Additions int64  `json:"additions"`
+	Binary    *bool  `json:"binary,omitempty"`
+	CommitSha string `json:"commit_sha"`
+	Deletions int64  `json:"deletions"`
+	Path      string `json:"path"`
+}
+
+// HeatmapCommit defines model for HeatmapCommit.
+type HeatmapCommit struct {
+	// Sha Full commit SHA
+	Sha string `json:"sha"`
+
+	// Title Commit subject
+	Title string `json:"title"`
+}
+
+// HeatmapResponse defines model for HeatmapResponse.
+type HeatmapResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+
+	// Cells One cell per (commit, changed file)
+	Cells   *[]HeatmapCell   `json:"cells"`
+	Commits *[]HeatmapCommit `json:"commits"`
+}
+
 // Hunk defines model for Hunk.
 type Hunk struct {
 	Lines    *[]Line `json:"lines"`
@@ -1091,6 +1119,9 @@ type ClientInterface interface {
 
 	SetPrGithubState(ctx context.Context, owner string, name string, number int64, body SetPrGithubStateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetReposByOwnerByNamePullsByNumberHeatmap request
+	GetReposByOwnerByNamePullsByNumberHeatmap(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetReposByOwnerByNamePullsByNumberImportMetadata request
 	GetReposByOwnerByNamePullsByNumberImportMetadata(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1610,6 +1641,18 @@ func (c *Client) SetPrGithubStateWithBody(ctx context.Context, owner string, nam
 
 func (c *Client) SetPrGithubState(ctx context.Context, owner string, name string, number int64, body SetPrGithubStateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetPrGithubStateRequest(c.Server, owner, name, number, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetReposByOwnerByNamePullsByNumberHeatmap(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetReposByOwnerByNamePullsByNumberHeatmapRequest(c.Server, owner, name, number)
 	if err != nil {
 		return nil, err
 	}
@@ -3809,6 +3852,54 @@ func NewSetPrGithubStateRequestWithBody(server string, owner string, name string
 	return req, nil
 }
 
+// NewGetReposByOwnerByNamePullsByNumberHeatmapRequest generates requests for GetReposByOwnerByNamePullsByNumberHeatmap
+func NewGetReposByOwnerByNamePullsByNumberHeatmapRequest(server string, owner string, name string, number int64) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s/heatmap", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetReposByOwnerByNamePullsByNumberImportMetadataRequest generates requests for GetReposByOwnerByNamePullsByNumberImportMetadata
 func NewGetReposByOwnerByNamePullsByNumberImportMetadataRequest(server string, owner string, name string, number int64) (*http.Request, error) {
 	var err error
@@ -4675,6 +4766,9 @@ type ClientWithResponsesInterface interface {
 
 	SetPrGithubStateWithResponse(ctx context.Context, owner string, name string, number int64, body SetPrGithubStateJSONRequestBody, reqEditors ...RequestEditorFn) (*SetPrGithubStateResponse, error)
 
+	// GetReposByOwnerByNamePullsByNumberHeatmapWithResponse request
+	GetReposByOwnerByNamePullsByNumberHeatmapWithResponse(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberHeatmapResponse, error)
+
 	// GetReposByOwnerByNamePullsByNumberImportMetadataWithResponse request
 	GetReposByOwnerByNamePullsByNumberImportMetadataWithResponse(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberImportMetadataResponse, error)
 
@@ -5423,6 +5517,29 @@ func (r SetPrGithubStateResponse) StatusCode() int {
 	return 0
 }
 
+type GetReposByOwnerByNamePullsByNumberHeatmapResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *HeatmapResponse
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r GetReposByOwnerByNamePullsByNumberHeatmapResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetReposByOwnerByNamePullsByNumberHeatmapResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type GetReposByOwnerByNamePullsByNumberImportMetadataResponse struct {
 	Body                          []byte
 	HTTPResponse                  *http.Response
@@ -6126,6 +6243,15 @@ func (c *ClientWithResponses) SetPrGithubStateWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseSetPrGithubStateResponse(rsp)
+}
+
+// GetReposByOwnerByNamePullsByNumberHeatmapWithResponse request returning *GetReposByOwnerByNamePullsByNumberHeatmapResponse
+func (c *ClientWithResponses) GetReposByOwnerByNamePullsByNumberHeatmapWithResponse(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberHeatmapResponse, error) {
+	rsp, err := c.GetReposByOwnerByNamePullsByNumberHeatmap(ctx, owner, name, number, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetReposByOwnerByNamePullsByNumberHeatmapResponse(rsp)
 }
 
 // GetReposByOwnerByNamePullsByNumberImportMetadataWithResponse request returning *GetReposByOwnerByNamePullsByNumberImportMetadataResponse
@@ -7272,6 +7398,39 @@ func ParseSetPrGithubStateResponse(rsp *http.Response) (*SetPrGithubStateRespons
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest GithubStateOutputBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetReposByOwnerByNamePullsByNumberHeatmapResponse parses an HTTP response from a GetReposByOwnerByNamePullsByNumberHeatmapWithResponse call
+func ParseGetReposByOwnerByNamePullsByNumberHeatmapResponse(rsp *http.Response) (*GetReposByOwnerByNamePullsByNumberHeatmapResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetReposByOwnerByNamePullsByNumberHeatmapResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest HeatmapResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

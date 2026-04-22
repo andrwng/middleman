@@ -426,6 +426,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/repos/{owner}/{name}/pulls/{number}/heatmap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get repos by owner by name pulls by number heatmap */
+        get: operations["get-repos-by-owner-by-name-pulls-by-number-heatmap"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/repos/{owner}/{name}/pulls/{number}/import-metadata": {
         parameters: {
             query?: never;
@@ -1012,6 +1029,32 @@ export interface components {
              */
             readonly $schema?: string;
             state: string;
+        };
+        HeatmapCell: {
+            /** Format: int64 */
+            additions: number;
+            binary?: boolean;
+            commit_sha: string;
+            /** Format: int64 */
+            deletions: number;
+            path: string;
+        };
+        HeatmapCommit: {
+            /** @description Full commit SHA */
+            sha: string;
+            /** @description Commit subject */
+            title: string;
+        };
+        HeatmapResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/HeatmapResponse.json
+             */
+            readonly $schema?: string;
+            /** @description One cell per (commit, changed file) */
+            cells: components["schemas"]["HeatmapCell"][] | null;
+            commits: components["schemas"]["HeatmapCommit"][] | null;
         };
         Hunk: {
             lines: components["schemas"]["Line"][] | null;
@@ -2625,6 +2668,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GithubStateOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-repos-by-owner-by-name-pulls-by-number-heatmap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HeatmapResponse"];
                 };
             };
             /** @description Error */

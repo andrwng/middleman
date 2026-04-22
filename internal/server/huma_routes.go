@@ -402,6 +402,7 @@ func (s *Server) registerAPI(api huma.API) {
 	huma.Get(api, "/sync/status", s.syncStatus)
 	huma.Get(api, "/rate-limits", s.getRateLimits)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/commits", s.getCommits)
+	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/heatmap", s.getHeatmap)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/diff", s.getDiff)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/files", s.getFiles)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/ai-threads", s.createAIThread)
@@ -1989,6 +1990,56 @@ func (s *Server) getCommits(ctx context.Context, input *repoNumberInput) (*getCo
 		}
 	}
 	return &getCommitsOutput{Body: resp}, nil
+}
+
+// --- Heatmap ---
+
+type getHeatmapOutput struct {
+	Body heatmapResponse
+}
+
+// getHeatmap computes a file×commit change grid for the PR series.
+// Used by the UI's "change map" view to visualise where effort
+// concentrated across the series — hot files touched by many commits
+// pop out immediately.
+func (s *Server) getHeatmap(ctx context.Context, input *repoNumberInput) (*getHeatmapOutput, error) {
+	if s.clones == nil {
+		return nil, huma.Error503ServiceUnavailable("heatmap not available: clone manager not configured")
+	}
+	shas, err := s.db.GetDiffSHAs(ctx, input.Owner, input.Name, input.Number)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to look up PR")
+	}
+	if shas == nil {
+		return nil, huma.Error404NotFound("pull request not found")
+	}
+	if shas.DiffHeadSHA == "" || shas.MergeBaseSHA == "" {
+		return nil, huma.Error404NotFound("heatmap not available for this pull request")
+	}
+
+	host := s.syncer.HostForRepo(input.Owner, input.Name)
+	data, err := s.clones.Heatmap(ctx, host, input.Owner, input.Name, shas.MergeBaseSHA, shas.DiffHeadSHA)
+	if err != nil {
+		if errors.Is(err, gitclone.ErrNotFound) {
+			return nil, huma.Error404NotFound("heatmap not available: referenced commit not found")
+		}
+		return nil, huma.Error502BadGateway("compute heatmap: " + err.Error())
+	}
+
+	resp := heatmapResponse{
+		Commits: make([]heatmapCommit, len(data.Commits)),
+		Cells:   make([]heatmapCell, len(data.Cells)),
+	}
+	for i, c := range data.Commits {
+		resp.Commits[i] = heatmapCommit{SHA: c.SHA, Title: c.Title}
+	}
+	for i, c := range data.Cells {
+		resp.Cells[i] = heatmapCell{
+			CommitSHA: c.CommitSHA, Path: c.Path,
+			Additions: c.Additions, Deletions: c.Deletions, Binary: c.Binary,
+		}
+	}
+	return &getHeatmapOutput{Body: resp}, nil
 }
 
 // --- Diff ---
