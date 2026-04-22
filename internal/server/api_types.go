@@ -155,6 +155,13 @@ type heatmapResponse struct {
 	Cells   []heatmapCell   `json:"cells" doc:"One cell per (commit, changed file)"`
 }
 
+// prNotesResponse is the reviewer-local scratchpad for a PR. The
+// UpdatedAt field is zero when the user has never written a note.
+type prNotesResponse struct {
+	Content   string `json:"content"`
+	UpdatedAt string `json:"updated_at,omitempty" doc:"UTC RFC3339 timestamp of last save (empty when never saved)"`
+}
+
 type workspaceResponse struct {
 	ID               string  `json:"id"`
 	PlatformHost     string  `json:"platform_host"`

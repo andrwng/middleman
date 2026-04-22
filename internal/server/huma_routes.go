@@ -405,6 +405,8 @@ func (s *Server) registerAPI(api huma.API) {
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/heatmap", s.getHeatmap)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/diff", s.getDiff)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/files", s.getFiles)
+	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/notes", s.getPRNotes)
+	huma.Put(api, "/repos/{owner}/{name}/pulls/{number}/notes", s.putPRNotes)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/ai-threads", s.createAIThread)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/ai-threads", s.listAIThreads)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/ai-threads/{thread_id}", s.getAIThread)
@@ -2040,6 +2042,63 @@ func (s *Server) getHeatmap(ctx context.Context, input *repoNumberInput) (*getHe
 		}
 	}
 	return &getHeatmapOutput{Body: resp}, nil
+}
+
+// --- PR scratchpad notes ---
+
+// prNotesMaxBytes caps the scratchpad payload. A reviewer's private
+// notes should fit comfortably; the limit prevents accidental paste
+// bombs from filling SQLite.
+const prNotesMaxBytes = 65_536
+
+type getPRNotesOutput struct {
+	Body prNotesResponse
+}
+
+type putPRNotesInput struct {
+	Owner  string `path:"owner"`
+	Name   string `path:"name"`
+	Number int    `path:"number"`
+	Body   struct {
+		Content string `json:"content"`
+	}
+}
+
+func (s *Server) getPRNotes(ctx context.Context, input *repoNumberInput) (*getPRNotesOutput, error) {
+	mrID, err := s.lookupMRID(ctx, repoNumberPathRef{owner: input.Owner, name: input.Name, number: input.Number})
+	if err != nil {
+		return nil, huma.Error404NotFound("pull request not found")
+	}
+	notes, err := s.db.GetPRNotes(ctx, mrID)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("load notes: " + err.Error())
+	}
+	return &getPRNotesOutput{Body: toPRNotesResponse(notes)}, nil
+}
+
+func (s *Server) putPRNotes(ctx context.Context, input *putPRNotesInput) (*getPRNotesOutput, error) {
+	if len(input.Body.Content) > prNotesMaxBytes {
+		return nil, huma.Error413RequestEntityTooLarge(fmt.Sprintf(
+			"notes too large: %d bytes (max %d)", len(input.Body.Content), prNotesMaxBytes,
+		))
+	}
+	mrID, err := s.lookupMRID(ctx, repoNumberPathRef{owner: input.Owner, name: input.Name, number: input.Number})
+	if err != nil {
+		return nil, huma.Error404NotFound("pull request not found")
+	}
+	notes, err := s.db.UpsertPRNotes(ctx, mrID, input.Body.Content)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("save notes: " + err.Error())
+	}
+	return &getPRNotesOutput{Body: toPRNotesResponse(notes)}, nil
+}
+
+func toPRNotesResponse(n db.PRNotes) prNotesResponse {
+	r := prNotesResponse{Content: n.Content}
+	if !n.UpdatedAt.IsZero() {
+		r.UpdatedAt = n.UpdatedAt.UTC().Format(time.RFC3339)
+	}
+	return r
 }
 
 // --- Diff ---

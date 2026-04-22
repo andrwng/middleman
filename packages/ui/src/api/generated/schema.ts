@@ -477,6 +477,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/repos/{owner}/{name}/pulls/{number}/notes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get repos by owner by name pulls by number notes */
+        get: operations["get-repos-by-owner-by-name-pulls-by-number-notes"];
+        /** Put repos by owner by name pulls by number notes */
+        put: operations["put-repos-by-owner-by-name-pulls-by-number-notes"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/repos/{owner}/{name}/pulls/{number}/ready-for-review": {
         parameters: {
             query?: never;
@@ -1380,6 +1398,26 @@ export interface components {
              */
             readonly $schema?: string;
             body: string;
+        };
+        PrNotesResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/PrNotesResponse.json
+             */
+            readonly $schema?: string;
+            content: string;
+            /** @description UTC RFC3339 timestamp of last save (empty when never saved) */
+            updated_at?: string;
+        };
+        PutPRNotesInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/PutPRNotesInputBody.json
+             */
+            readonly $schema?: string;
+            content: string;
         };
         RateLimitHostStatus: {
             /** Format: int64 */
@@ -2771,6 +2809,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MergePRBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-repos-by-owner-by-name-pulls-by-number-notes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrNotesResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "put-repos-by-owner-by-name-pulls-by-number-notes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutPRNotesInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrNotesResponse"];
                 };
             };
             /** @description Error */

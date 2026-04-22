@@ -5138,6 +5138,85 @@ func TestAPIGetHeatmap_NotFound(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, resp.StatusCode())
 }
 
+func TestAPIPRNotes_CRUD(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+
+	client, _, _, _, _ := setupTestServerWithClones(t)
+	ctx := context.Background()
+
+	// Cold start: GET on an untouched PR returns an empty note.
+	getResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberNotesWithResponse(
+		ctx, "acme", "widget", 1,
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, getResp.StatusCode())
+	require.NotNil(getResp.JSON200)
+	assert.Empty(getResp.JSON200.Content)
+	assert.Nil(getResp.JSON200.UpdatedAt)
+
+	// PUT persists content + stamps UpdatedAt.
+	putResp, err := client.HTTP.PutReposByOwnerByNamePullsByNumberNotesWithResponse(
+		ctx, "acme", "widget", 1,
+		generated.PutReposByOwnerByNamePullsByNumberNotesJSONRequestBody{
+			Content: "first draft",
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, putResp.StatusCode())
+	require.NotNil(putResp.JSON200)
+	assert.Equal("first draft", putResp.JSON200.Content)
+	require.NotNil(putResp.JSON200.UpdatedAt)
+	firstStamp := *putResp.JSON200.UpdatedAt
+	assert.NotEmpty(firstStamp)
+
+	// Re-GET reflects the persisted content.
+	getResp, err = client.HTTP.GetReposByOwnerByNamePullsByNumberNotesWithResponse(
+		ctx, "acme", "widget", 1,
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, getResp.StatusCode())
+	require.NotNil(getResp.JSON200)
+	assert.Equal("first draft", getResp.JSON200.Content)
+	require.NotNil(getResp.JSON200.UpdatedAt)
+	assert.Equal(firstStamp, *getResp.JSON200.UpdatedAt)
+
+	// Second PUT replaces content.
+	putResp, err = client.HTTP.PutReposByOwnerByNamePullsByNumberNotesWithResponse(
+		ctx, "acme", "widget", 1,
+		generated.PutReposByOwnerByNamePullsByNumberNotesJSONRequestBody{
+			Content: "edited",
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, putResp.StatusCode())
+	require.NotNil(putResp.JSON200)
+	assert.Equal("edited", putResp.JSON200.Content)
+}
+
+func TestAPIPRNotes_NotFound(t *testing.T) {
+	client, _, _, _, _ := setupTestServerWithClones(t)
+	resp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberNotesWithResponse(
+		context.Background(), "acme", "widget", 999,
+	)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusNotFound, resp.StatusCode())
+}
+
+func TestAPIPRNotes_TooLarge(t *testing.T) {
+	require := require.New(t)
+	client, _, _, _, _ := setupTestServerWithClones(t)
+
+	resp, err := client.HTTP.PutReposByOwnerByNamePullsByNumberNotesWithResponse(
+		context.Background(), "acme", "widget", 1,
+		generated.PutReposByOwnerByNamePullsByNumberNotesJSONRequestBody{
+			Content: strings.Repeat("x", 70_000),
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusRequestEntityTooLarge, resp.StatusCode())
+}
+
 func TestAPIGetDiff_SingleCommit(t *testing.T) {
 	require := require.New(t)
 

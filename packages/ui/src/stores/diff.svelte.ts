@@ -229,6 +229,20 @@ export function createDiffStore(opts?: DiffStoreOptions) {
   let heatmap = $state<HeatmapData | null>(null);
   let heatmapLoading = $state(false);
   let heatmapError = $state<string | null>(null);
+
+  // Reviewer-local scratchpad per PR. `notesLoaded` distinguishes
+  // "not yet fetched" from "empty on purpose" so the UI doesn't
+  // flash an empty textarea before the GET returns.
+  let notesContent = $state("");
+  let notesUpdatedAt = $state<string | null>(null);
+  let notesLoaded = $state(false);
+  let notesLoading = $state(false);
+  let notesSaving = $state(false);
+  let notesError = $state<string | null>(null);
+  let notesSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  // Generation counter so late responses from a previous PR don't
+  // overwrite state after the user has switched away.
+  let notesGen = 0;
   let scope = $state<DiffScope>({ kind: "head" });
 
   let currentOwner = $state("");
@@ -493,6 +507,7 @@ export function createDiffStore(opts?: DiffStoreOptions) {
       heatmap = null;
       heatmapLoading = false;
       heatmapError = null;
+      resetNotes();
     }
 
     abortController?.abort();
@@ -591,10 +606,25 @@ export function createDiffStore(opts?: DiffStoreOptions) {
     heatmap = null;
     heatmapLoading = false;
     heatmapError = null;
+    resetNotes();
     scope = { kind: "head" };
     currentOwner = "";
     currentName = "";
     currentNumber = 0;
+  }
+
+  function resetNotes(): void {
+    notesGen += 1;
+    if (notesSaveTimer) {
+      clearTimeout(notesSaveTimer);
+      notesSaveTimer = null;
+    }
+    notesContent = "";
+    notesUpdatedAt = null;
+    notesLoaded = false;
+    notesLoading = false;
+    notesSaving = false;
+    notesError = null;
   }
 
   async function loadCommits(): Promise<void> {
@@ -701,6 +731,130 @@ export function createDiffStore(opts?: DiffStoreOptions) {
 
   function getHeatmapError(): string | null {
     return heatmapError;
+  }
+
+  // --- PR scratchpad notes ---
+
+  const NOTES_DEBOUNCE_MS = 800;
+
+  function notesPrefix(owner: string, name: string, number: number): string {
+    return (
+      `${getBasePath()}api/v1/repos/` +
+      `${encodeURIComponent(owner)}/` +
+      `${encodeURIComponent(name)}/` +
+      `pulls/${number}/notes`
+    );
+  }
+
+  async function loadNotes(): Promise<void> {
+    if (notesLoaded || notesLoading) return;
+    if (!currentOwner || !currentName || !currentNumber) return;
+    const gen = notesGen;
+    notesLoading = true;
+    notesError = null;
+    try {
+      const response = await fetch(
+        notesPrefix(currentOwner, currentName, currentNumber),
+      );
+      if (gen !== notesGen) return;
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(
+          (body as Record<string, string>).detail ??
+            (body as Record<string, string>).title ??
+            `HTTP ${response.status}`,
+        );
+      }
+      const data = (await response.json()) as { content: string; updated_at?: string };
+      if (gen !== notesGen) return;
+      notesContent = data.content ?? "";
+      notesUpdatedAt = data.updated_at ?? null;
+      notesLoaded = true;
+    } catch (err) {
+      if (gen !== notesGen) return;
+      notesError = err instanceof Error ? err.message : String(err);
+    } finally {
+      if (gen === notesGen) notesLoading = false;
+    }
+  }
+
+  // updateNotes is called from the UI on every keystroke. It updates
+  // local state immediately and debounces the PUT so we don't write
+  // to SQLite on every character.
+  function updateNotes(next: string): void {
+    notesContent = next;
+    notesError = null;
+    if (notesSaveTimer) clearTimeout(notesSaveTimer);
+    const owner = currentOwner;
+    const name = currentName;
+    const number = currentNumber;
+    const gen = notesGen;
+    if (!owner || !number) return;
+    notesSaveTimer = setTimeout(() => {
+      void flushNotes(owner, name, number, gen);
+    }, NOTES_DEBOUNCE_MS);
+  }
+
+  // flushNotes runs immediately (used on blur and before PR switch)
+  // so the user doesn't lose the tail of what they just typed.
+  async function flushNotes(
+    owner = currentOwner,
+    name = currentName,
+    number = currentNumber,
+    gen = notesGen,
+  ): Promise<void> {
+    if (!owner || !number) return;
+    if (notesSaveTimer) {
+      clearTimeout(notesSaveTimer);
+      notesSaveTimer = null;
+    }
+    const content = notesContent;
+    notesSaving = true;
+    notesError = null;
+    try {
+      const response = await fetch(notesPrefix(owner, name, number), {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content }),
+      });
+      if (gen !== notesGen) return;
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(
+          (body as Record<string, string>).detail ??
+            (body as Record<string, string>).title ??
+            `HTTP ${response.status}`,
+        );
+      }
+      const data = (await response.json()) as { content: string; updated_at?: string };
+      if (gen !== notesGen) return;
+      notesUpdatedAt = data.updated_at ?? null;
+    } catch (err) {
+      if (gen !== notesGen) return;
+      notesError = err instanceof Error ? err.message : String(err);
+    } finally {
+      if (gen === notesGen) notesSaving = false;
+    }
+  }
+
+  function getNotes(): string {
+    return notesContent;
+  }
+
+  function getNotesUpdatedAt(): string | null {
+    return notesUpdatedAt;
+  }
+
+  function isNotesLoaded(): boolean {
+    return notesLoaded;
+  }
+
+  function isNotesSaving(): boolean {
+    return notesSaving;
+  }
+
+  function getNotesError(): string | null {
+    return notesError;
   }
 
   /** Returns the 1-based index and total for the active commit. */
@@ -1077,6 +1231,14 @@ export function createDiffStore(opts?: DiffStoreOptions) {
     getHeatmap,
     isHeatmapLoading,
     getHeatmapError,
+    loadNotes,
+    updateNotes,
+    flushNotes,
+    getNotes,
+    getNotesUpdatedAt,
+    isNotesLoaded,
+    isNotesSaving,
+    getNotesError,
     selectCommit,
     selectRange,
     resetToHead,

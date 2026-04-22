@@ -611,6 +611,23 @@ type PostIssueCommentInputBody struct {
 	Body   string  `json:"body"`
 }
 
+// PrNotesResponse defines model for PrNotesResponse.
+type PrNotesResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema  *string `json:"$schema,omitempty"`
+	Content string  `json:"content"`
+
+	// UpdatedAt UTC RFC3339 timestamp of last save (empty when never saved)
+	UpdatedAt *string `json:"updated_at,omitempty"`
+}
+
+// PutPRNotesInputBody defines model for PutPRNotesInputBody.
+type PutPRNotesInputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema  *string `json:"$schema,omitempty"`
+	Content string  `json:"content"`
+}
+
 // RateLimitHostStatus defines model for RateLimitHostStatus.
 type RateLimitHostStatus struct {
 	BudgetLimit        int64  `json:"budget_limit"`
@@ -923,6 +940,9 @@ type SetPrGithubStateJSONRequestBody = GithubStateInputBody
 // PostReposByOwnerByNamePullsByNumberMergeJSONRequestBody defines body for PostReposByOwnerByNamePullsByNumberMerge for application/json ContentType.
 type PostReposByOwnerByNamePullsByNumberMergeJSONRequestBody = MergePRInputBody
 
+// PutReposByOwnerByNamePullsByNumberNotesJSONRequestBody defines body for PutReposByOwnerByNamePullsByNumberNotes for application/json ContentType.
+type PutReposByOwnerByNamePullsByNumberNotesJSONRequestBody = PutPRNotesInputBody
+
 // PostReposByOwnerByNamePullsByNumberReviewJSONRequestBody defines body for PostReposByOwnerByNamePullsByNumberReview for application/json ContentType.
 type PostReposByOwnerByNamePullsByNumberReviewJSONRequestBody = SubmitReviewInputBody
 
@@ -1129,6 +1149,14 @@ type ClientInterface interface {
 	PostReposByOwnerByNamePullsByNumberMergeWithBody(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	PostReposByOwnerByNamePullsByNumberMerge(ctx context.Context, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberMergeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetReposByOwnerByNamePullsByNumberNotes request
+	GetReposByOwnerByNamePullsByNumberNotes(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PutReposByOwnerByNamePullsByNumberNotesWithBody request with any body
+	PutReposByOwnerByNamePullsByNumberNotesWithBody(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	PutReposByOwnerByNamePullsByNumberNotes(ctx context.Context, owner string, name string, number int64, body PutReposByOwnerByNamePullsByNumberNotesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PostReposByOwnerByNamePullsByNumberReadyForReview request
 	PostReposByOwnerByNamePullsByNumberReadyForReview(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1689,6 +1717,42 @@ func (c *Client) PostReposByOwnerByNamePullsByNumberMergeWithBody(ctx context.Co
 
 func (c *Client) PostReposByOwnerByNamePullsByNumberMerge(ctx context.Context, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberMergeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPostReposByOwnerByNamePullsByNumberMergeRequest(c.Server, owner, name, number, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetReposByOwnerByNamePullsByNumberNotes(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetReposByOwnerByNamePullsByNumberNotesRequest(c.Server, owner, name, number)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PutReposByOwnerByNamePullsByNumberNotesWithBody(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutReposByOwnerByNamePullsByNumberNotesRequestWithBody(c.Server, owner, name, number, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PutReposByOwnerByNamePullsByNumberNotes(ctx context.Context, owner string, name string, number int64, body PutReposByOwnerByNamePullsByNumberNotesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutReposByOwnerByNamePullsByNumberNotesRequest(c.Server, owner, name, number, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4009,6 +4073,115 @@ func NewPostReposByOwnerByNamePullsByNumberMergeRequestWithBody(server string, o
 	return req, nil
 }
 
+// NewGetReposByOwnerByNamePullsByNumberNotesRequest generates requests for GetReposByOwnerByNamePullsByNumberNotes
+func NewGetReposByOwnerByNamePullsByNumberNotesRequest(server string, owner string, name string, number int64) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s/notes", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPutReposByOwnerByNamePullsByNumberNotesRequest calls the generic PutReposByOwnerByNamePullsByNumberNotes builder with application/json body
+func NewPutReposByOwnerByNamePullsByNumberNotesRequest(server string, owner string, name string, number int64, body PutReposByOwnerByNamePullsByNumberNotesJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPutReposByOwnerByNamePullsByNumberNotesRequestWithBody(server, owner, name, number, "application/json", bodyReader)
+}
+
+// NewPutReposByOwnerByNamePullsByNumberNotesRequestWithBody generates requests for PutReposByOwnerByNamePullsByNumberNotes with any type of body
+func NewPutReposByOwnerByNamePullsByNumberNotesRequestWithBody(server string, owner string, name string, number int64, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s/notes", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewPostReposByOwnerByNamePullsByNumberReadyForReviewRequest generates requests for PostReposByOwnerByNamePullsByNumberReadyForReview
 func NewPostReposByOwnerByNamePullsByNumberReadyForReviewRequest(server string, owner string, name string, number int64) (*http.Request, error) {
 	var err error
@@ -4776,6 +4949,14 @@ type ClientWithResponsesInterface interface {
 	PostReposByOwnerByNamePullsByNumberMergeWithBodyWithResponse(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberMergeResponse, error)
 
 	PostReposByOwnerByNamePullsByNumberMergeWithResponse(ctx context.Context, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberMergeJSONRequestBody, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberMergeResponse, error)
+
+	// GetReposByOwnerByNamePullsByNumberNotesWithResponse request
+	GetReposByOwnerByNamePullsByNumberNotesWithResponse(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberNotesResponse, error)
+
+	// PutReposByOwnerByNamePullsByNumberNotesWithBodyWithResponse request with any body
+	PutReposByOwnerByNamePullsByNumberNotesWithBodyWithResponse(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutReposByOwnerByNamePullsByNumberNotesResponse, error)
+
+	PutReposByOwnerByNamePullsByNumberNotesWithResponse(ctx context.Context, owner string, name string, number int64, body PutReposByOwnerByNamePullsByNumberNotesJSONRequestBody, reqEditors ...RequestEditorFn) (*PutReposByOwnerByNamePullsByNumberNotesResponse, error)
 
 	// PostReposByOwnerByNamePullsByNumberReadyForReviewWithResponse request
 	PostReposByOwnerByNamePullsByNumberReadyForReviewWithResponse(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberReadyForReviewResponse, error)
@@ -5586,6 +5767,52 @@ func (r PostReposByOwnerByNamePullsByNumberMergeResponse) StatusCode() int {
 	return 0
 }
 
+type GetReposByOwnerByNamePullsByNumberNotesResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *PrNotesResponse
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r GetReposByOwnerByNamePullsByNumberNotesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetReposByOwnerByNamePullsByNumberNotesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type PutReposByOwnerByNamePullsByNumberNotesResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *PrNotesResponse
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r PutReposByOwnerByNamePullsByNumberNotesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PutReposByOwnerByNamePullsByNumberNotesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type PostReposByOwnerByNamePullsByNumberReadyForReviewResponse struct {
 	Body                          []byte
 	HTTPResponse                  *http.Response
@@ -6278,6 +6505,32 @@ func (c *ClientWithResponses) PostReposByOwnerByNamePullsByNumberMergeWithRespon
 		return nil, err
 	}
 	return ParsePostReposByOwnerByNamePullsByNumberMergeResponse(rsp)
+}
+
+// GetReposByOwnerByNamePullsByNumberNotesWithResponse request returning *GetReposByOwnerByNamePullsByNumberNotesResponse
+func (c *ClientWithResponses) GetReposByOwnerByNamePullsByNumberNotesWithResponse(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberNotesResponse, error) {
+	rsp, err := c.GetReposByOwnerByNamePullsByNumberNotes(ctx, owner, name, number, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetReposByOwnerByNamePullsByNumberNotesResponse(rsp)
+}
+
+// PutReposByOwnerByNamePullsByNumberNotesWithBodyWithResponse request with arbitrary body returning *PutReposByOwnerByNamePullsByNumberNotesResponse
+func (c *ClientWithResponses) PutReposByOwnerByNamePullsByNumberNotesWithBodyWithResponse(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutReposByOwnerByNamePullsByNumberNotesResponse, error) {
+	rsp, err := c.PutReposByOwnerByNamePullsByNumberNotesWithBody(ctx, owner, name, number, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutReposByOwnerByNamePullsByNumberNotesResponse(rsp)
+}
+
+func (c *ClientWithResponses) PutReposByOwnerByNamePullsByNumberNotesWithResponse(ctx context.Context, owner string, name string, number int64, body PutReposByOwnerByNamePullsByNumberNotesJSONRequestBody, reqEditors ...RequestEditorFn) (*PutReposByOwnerByNamePullsByNumberNotesResponse, error) {
+	rsp, err := c.PutReposByOwnerByNamePullsByNumberNotes(ctx, owner, name, number, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutReposByOwnerByNamePullsByNumberNotesResponse(rsp)
 }
 
 // PostReposByOwnerByNamePullsByNumberReadyForReviewWithResponse request returning *PostReposByOwnerByNamePullsByNumberReadyForReviewResponse
@@ -7497,6 +7750,72 @@ func ParsePostReposByOwnerByNamePullsByNumberMergeResponse(rsp *http.Response) (
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest MergePRBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetReposByOwnerByNamePullsByNumberNotesResponse parses an HTTP response from a GetReposByOwnerByNamePullsByNumberNotesWithResponse call
+func ParseGetReposByOwnerByNamePullsByNumberNotesResponse(rsp *http.Response) (*GetReposByOwnerByNamePullsByNumberNotesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetReposByOwnerByNamePullsByNumberNotesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PrNotesResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePutReposByOwnerByNamePullsByNumberNotesResponse parses an HTTP response from a PutReposByOwnerByNamePullsByNumberNotesWithResponse call
+func ParsePutReposByOwnerByNamePullsByNumberNotesResponse(rsp *http.Response) (*PutReposByOwnerByNamePullsByNumberNotesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PutReposByOwnerByNamePullsByNumberNotesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PrNotesResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
