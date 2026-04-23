@@ -178,10 +178,10 @@
   .ai-thread {
     margin: 4px 12px 8px 68px;
     padding: 8px 10px;
-    border: 1px solid var(--accent-purple);
-    border-left: 3px solid var(--accent-purple);
+    border: 1px solid var(--accent-claude);
+    border-left: 3px solid var(--accent-claude);
     border-radius: var(--radius-sm);
-    background: color-mix(in srgb, var(--accent-purple) 6%, var(--bg-surface));
+    background: color-mix(in srgb, var(--accent-claude) 6%, var(--bg-surface));
   }
 
   .ai-thread__header {
@@ -198,7 +198,7 @@
     letter-spacing: 0.05em;
     padding: 1px 6px;
     border-radius: 999px;
-    background: var(--accent-purple);
+    background: var(--accent-claude);
     color: #fff;
   }
 
@@ -381,15 +381,15 @@
 
   .ai-thread__followup-input:focus {
     outline: none;
-    border-color: var(--accent-purple);
+    border-color: var(--accent-claude);
   }
 
   .ai-thread__send {
     font-size: 12px;
     padding: 4px 12px;
     border-radius: var(--radius-sm);
-    border: 1px solid var(--accent-purple);
-    background: var(--accent-purple);
+    border: 1px solid var(--accent-claude);
+    background: var(--accent-claude);
     color: #fff;
     cursor: pointer;
     align-self: flex-end;

@@ -1238,7 +1238,7 @@
   }
 
   .selection-toolbar__btn--ask {
-    background: var(--accent-purple);
+    background: var(--accent-claude);
   }
 
   .selection-toolbar__btn:hover {
@@ -1267,7 +1267,7 @@
   }
 
   .ask-ai-btn {
-    background: var(--accent-purple);
+    background: var(--accent-claude);
   }
 
   .add-comment-btn:hover,

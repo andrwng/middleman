@@ -18,6 +18,10 @@
   --accent-green: #059669;
   --accent-red: #dc2626;
   --accent-teal: #0d9488;
+  /* Anthropic's "Claude" brand orange. Used for AI-surfaced
+     UI (brief generation, inline Q&A) so it's distinct from
+     the purple we use for upstream review comments. */
+  --accent-claude: #c15f3c;
   --budget-green: #4ade80;
   --budget-yellow: #fbbf24;
   --budget-red: #f87171;
@@ -94,6 +98,7 @@
   --accent-green: #4ade80;
   --accent-red: #f87171;
   --accent-teal: #2dd4bf;
+  --accent-claude: #d97757;
   --budget-green: #4ade80;
   --budget-yellow: #fbbf24;
   --budget-red: #f87171;

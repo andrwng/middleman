@@ -265,7 +265,7 @@
   .brief {
     margin: 0;
     padding: 8px 16px;
-    background: color-mix(in srgb, var(--accent-purple) 4%, var(--bg-surface));
+    background: color-mix(in srgb, var(--accent-claude) 4%, var(--bg-surface));
     border-bottom: 1px solid var(--diff-border);
   }
 
@@ -319,7 +319,7 @@
     letter-spacing: 0.05em;
     padding: 2px 8px;
     border-radius: 999px;
-    background: var(--accent-purple);
+    background: var(--accent-claude);
     color: #fff;
   }
 
@@ -419,8 +419,8 @@
   }
 
   .brief__btn--primary {
-    border-color: var(--accent-purple);
-    background: var(--accent-purple);
+    border-color: var(--accent-claude);
+    background: var(--accent-claude);
     color: #fff;
   }
 
@@ -457,7 +457,7 @@
   }
 
   .brief__section {
-    border: 1px dashed color-mix(in srgb, var(--accent-purple) 40%, transparent);
+    border: 1px dashed color-mix(in srgb, var(--accent-claude) 40%, transparent);
     border-radius: var(--radius-sm);
     padding: 8px 12px;
     background: var(--bg-surface);
@@ -473,7 +473,7 @@
   }
 
   .brief__half {
-    border: 1px dashed color-mix(in srgb, var(--accent-purple) 40%, transparent);
+    border: 1px dashed color-mix(in srgb, var(--accent-claude) 40%, transparent);
     border-radius: var(--radius-sm);
     padding: 8px 12px;
     background: var(--bg-surface);
