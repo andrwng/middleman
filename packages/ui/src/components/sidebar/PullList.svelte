@@ -300,6 +300,45 @@
       </button>
       {#if authorPopoverOpen}
         <div class="author-popover">
+          {#if authorFilterActive}
+            {#if showSaveForm}
+              <div class="author-popover__save-form">
+                <input
+                  class="author-popover__save-input"
+                  placeholder="Group name"
+                  bind:value={saveName}
+                  onkeydown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void saveCurrentAsGroup();
+                    } else if (e.key === "Escape") {
+                      e.preventDefault();
+                      resetSaveForm();
+                    }
+                  }}
+                />
+                <button
+                  class="author-popover__save-btn"
+                  onclick={() => void saveCurrentAsGroup()}
+                  disabled={savingGroup || saveName.trim() === ""}
+                >Save</button>
+                <button
+                  class="author-popover__cancel-btn"
+                  onclick={resetSaveForm}
+                >Cancel</button>
+              </div>
+              {#if groupError}
+                <div class="author-popover__error">{groupError}</div>
+              {/if}
+            {:else}
+              <button
+                class="author-popover__save-as"
+                onclick={() => { showSaveForm = true; groupError = null; }}
+              >Save selection as group</button>
+            {/if}
+            <div class="author-popover__divider"></div>
+          {/if}
+
           {#if groupList.length > 0}
             <div class="author-popover__section-head">Groups</div>
             {#each groupList as g (g.id)}
@@ -352,49 +391,14 @@
           {:else}
             <div class="author-popover__empty">No authors</div>
           {/each}
-          <div class="author-popover__divider"></div>
-
           {#if authorFilterActive}
-            {#if showSaveForm}
-              <div class="author-popover__save-form">
-                <input
-                  class="author-popover__save-input"
-                  placeholder="Group name"
-                  bind:value={saveName}
-                  onkeydown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      void saveCurrentAsGroup();
-                    } else if (e.key === "Escape") {
-                      e.preventDefault();
-                      resetSaveForm();
-                    }
-                  }}
-                />
-                <button
-                  class="author-popover__save-btn"
-                  onclick={() => void saveCurrentAsGroup()}
-                  disabled={savingGroup || saveName.trim() === ""}
-                >Save</button>
-                <button
-                  class="author-popover__cancel-btn"
-                  onclick={resetSaveForm}
-                >Cancel</button>
-              </div>
-              {#if groupError}
-                <div class="author-popover__error">{groupError}</div>
-              {/if}
-            {:else}
-              <button
-                class="author-popover__save-as"
-                onclick={() => { showSaveForm = true; groupError = null; }}
-              >Save selection as group</button>
-            {/if}
+            <div class="author-popover__divider"></div>
             <button
               class="author-popover__reset"
               onclick={clearActiveGroup}
             >Clear filter</button>
           {:else if groupList.length === 0}
+            <div class="author-popover__divider"></div>
             <div class="author-popover__hint">Pick authors, then save as a group</div>
           {/if}
         </div>
