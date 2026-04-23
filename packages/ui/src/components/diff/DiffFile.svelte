@@ -617,8 +617,18 @@
           {#each renderedFile.hunks as hunk, hunkIdx}
             {#if hunkIdx > 0}
               {@const gap = computeCollapsedLines(renderedFile.hunks, hunkIdx)}
-              {#if gap > 0}
-                <CollapsedRegion lineCount={gap} />
+              {@const prev = renderedFile.hunks[hunkIdx - 1]}
+              {#if gap > 0 && prev}
+                <CollapsedRegion
+                  lineCount={gap}
+                  path={renderedFile.path}
+                  sha={currentCommitSha()}
+                  {owner}
+                  {name}
+                  {number}
+                  gapOldStart={prev.old_start + prev.old_count}
+                  gapNewStart={prev.new_start + prev.new_count}
+                />
               {/if}
             {/if}
             {#if layout === "split"}

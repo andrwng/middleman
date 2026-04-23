@@ -138,6 +138,13 @@ type ApprovePRInputBody struct {
 	Body   string  `json:"body"`
 }
 
+// BlobRangeResponse defines model for BlobRangeResponse.
+type BlobRangeResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string   `json:"$schema,omitempty"`
+	Lines  *[]string `json:"lines"`
+}
+
 // CommentAutocompleteReference defines model for CommentAutocompleteReference.
 type CommentAutocompleteReference struct {
 	Kind   string `json:"kind"`
@@ -861,6 +868,21 @@ type GetReposByOwnerByNamePullsByNumberAiThreadsParams struct {
 	SinceId *int64 `form:"since_id,omitempty" json:"since_id,omitempty"`
 }
 
+// GetReposByOwnerByNamePullsByNumberBlobRangeParams defines parameters for GetReposByOwnerByNamePullsByNumberBlobRange.
+type GetReposByOwnerByNamePullsByNumberBlobRangeParams struct {
+	// Path File path within the repo
+	Path *string `form:"path,omitempty" json:"path,omitempty"`
+
+	// Sha Commit SHA whose blob to read
+	Sha *string `form:"sha,omitempty" json:"sha,omitempty"`
+
+	// Start 1-based start line (inclusive)
+	Start *int64 `form:"start,omitempty" json:"start,omitempty"`
+
+	// End 1-based end line (inclusive)
+	End *int64 `form:"end,omitempty" json:"end,omitempty"`
+}
+
 // GetReposByOwnerByNamePullsByNumberDiffParams defines parameters for GetReposByOwnerByNamePullsByNumberDiff.
 type GetReposByOwnerByNamePullsByNumberDiffParams struct {
 	Whitespace *string `form:"whitespace,omitempty" json:"whitespace,omitempty"`
@@ -1094,6 +1116,9 @@ type ClientInterface interface {
 
 	// PostReposByOwnerByNamePullsByNumberApproveWorkflows request
 	PostReposByOwnerByNamePullsByNumberApproveWorkflows(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetReposByOwnerByNamePullsByNumberBlobRange request
+	GetReposByOwnerByNamePullsByNumberBlobRange(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberBlobRangeParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PostPrCommentWithBody request with any body
 	PostPrCommentWithBody(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1557,6 +1582,18 @@ func (c *Client) PostReposByOwnerByNamePullsByNumberApprove(ctx context.Context,
 
 func (c *Client) PostReposByOwnerByNamePullsByNumberApproveWorkflows(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPostReposByOwnerByNamePullsByNumberApproveWorkflowsRequest(c.Server, owner, name, number)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetReposByOwnerByNamePullsByNumberBlobRange(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberBlobRangeParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetReposByOwnerByNamePullsByNumberBlobRangeRequest(c.Server, owner, name, number, params)
 	if err != nil {
 		return nil, err
 	}
@@ -3540,6 +3577,124 @@ func NewPostReposByOwnerByNamePullsByNumberApproveWorkflowsRequest(server string
 	return req, nil
 }
 
+// NewGetReposByOwnerByNamePullsByNumberBlobRangeRequest generates requests for GetReposByOwnerByNamePullsByNumberBlobRange
+func NewGetReposByOwnerByNamePullsByNumberBlobRangeRequest(server string, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberBlobRangeParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s/blob-range", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Path != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "path", *params.Path, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Sha != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "sha", *params.Sha, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Start != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "start", *params.Start, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.End != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "end", *params.End, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewPostPrCommentRequest calls the generic PostPrComment builder with application/json body
 func NewPostPrCommentRequest(server string, owner string, name string, number int64, body PostPrCommentJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -4832,6 +4987,9 @@ type ClientWithResponsesInterface interface {
 	// PostReposByOwnerByNamePullsByNumberApproveWorkflowsWithResponse request
 	PostReposByOwnerByNamePullsByNumberApproveWorkflowsWithResponse(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberApproveWorkflowsResponse, error)
 
+	// GetReposByOwnerByNamePullsByNumberBlobRangeWithResponse request
+	GetReposByOwnerByNamePullsByNumberBlobRangeWithResponse(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberBlobRangeParams, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberBlobRangeResponse, error)
+
 	// PostPrCommentWithBodyWithResponse request with any body
 	PostPrCommentWithBodyWithResponse(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostPrCommentResponse, error)
 
@@ -5486,6 +5644,29 @@ func (r PostReposByOwnerByNamePullsByNumberApproveWorkflowsResponse) Status() st
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r PostReposByOwnerByNamePullsByNumberApproveWorkflowsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetReposByOwnerByNamePullsByNumberBlobRangeResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *BlobRangeResponse
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r GetReposByOwnerByNamePullsByNumberBlobRangeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetReposByOwnerByNamePullsByNumberBlobRangeResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -6295,6 +6476,15 @@ func (c *ClientWithResponses) PostReposByOwnerByNamePullsByNumberApproveWorkflow
 		return nil, err
 	}
 	return ParsePostReposByOwnerByNamePullsByNumberApproveWorkflowsResponse(rsp)
+}
+
+// GetReposByOwnerByNamePullsByNumberBlobRangeWithResponse request returning *GetReposByOwnerByNamePullsByNumberBlobRangeResponse
+func (c *ClientWithResponses) GetReposByOwnerByNamePullsByNumberBlobRangeWithResponse(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberBlobRangeParams, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberBlobRangeResponse, error) {
+	rsp, err := c.GetReposByOwnerByNamePullsByNumberBlobRange(ctx, owner, name, number, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetReposByOwnerByNamePullsByNumberBlobRangeResponse(rsp)
 }
 
 // PostPrCommentWithBodyWithResponse request with arbitrary body returning *PostPrCommentResponse
@@ -7363,6 +7553,39 @@ func ParsePostReposByOwnerByNamePullsByNumberApproveWorkflowsResponse(rsp *http.
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest ActionStatusBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetReposByOwnerByNamePullsByNumberBlobRangeResponse parses an HTTP response from a GetReposByOwnerByNamePullsByNumberBlobRangeWithResponse call
+func ParseGetReposByOwnerByNamePullsByNumberBlobRangeResponse(rsp *http.Response) (*GetReposByOwnerByNamePullsByNumberBlobRangeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetReposByOwnerByNamePullsByNumberBlobRangeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BlobRangeResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

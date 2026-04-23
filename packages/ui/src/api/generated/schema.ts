@@ -343,6 +343,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/repos/{owner}/{name}/pulls/{number}/blob-range": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get repos by owner by name pulls by number blob range */
+        get: operations["get-repos-by-owner-by-name-pulls-by-number-blob-range"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/repos/{owner}/{name}/pulls/{number}/comments": {
         parameters: {
             query?: never;
@@ -819,6 +836,15 @@ export interface components {
              */
             readonly $schema?: string;
             body: string;
+        };
+        BlobRangeResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/BlobRangeResponse.json
+             */
+            readonly $schema?: string;
+            lines: string[] | null;
         };
         CommentAutocompleteReference: {
             kind: string;
@@ -2487,6 +2513,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ActionStatusBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-repos-by-owner-by-name-pulls-by-number-blob-range": {
+        parameters: {
+            query?: {
+                /** @description File path within the repo */
+                path?: string;
+                /** @description Commit SHA whose blob to read */
+                sha?: string;
+                /** @description 1-based start line (inclusive) */
+                start?: number;
+                /** @description 1-based end line (inclusive) */
+                end?: number;
+            };
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BlobRangeResponse"];
                 };
             };
             /** @description Error */

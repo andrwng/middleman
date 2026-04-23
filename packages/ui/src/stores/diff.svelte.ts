@@ -675,6 +675,39 @@ export function createDiffStore(opts?: DiffStoreOptions) {
     );
   }
 
+  // loadBlobRange fetches a slice of a file blob for context
+  // expansion. Callers supply absolute 1-based [start, end] line
+  // numbers in the NEW-side numbering of the diff scope; `sha`
+  // must match what the caller used to render the hunks.
+  async function loadBlobRange(
+    path: string,
+    sha: string,
+    start: number,
+    end: number,
+  ): Promise<string[]> {
+    if (!currentOwner || !currentName || !currentNumber) return [];
+    const basePath = getBasePath();
+    const url =
+      `${basePath}api/v1/repos/` +
+      `${encodeURIComponent(currentOwner)}/` +
+      `${encodeURIComponent(currentName)}/` +
+      `pulls/${currentNumber}/blob-range` +
+      `?path=${encodeURIComponent(path)}` +
+      `&sha=${encodeURIComponent(sha)}` +
+      `&start=${start}&end=${end}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(
+        (body as Record<string, string>).detail ??
+          (body as Record<string, string>).title ??
+          `HTTP ${res.status}`,
+      );
+    }
+    const data = (await res.json()) as { lines: string[] };
+    return data.lines ?? [];
+  }
+
   async function loadNotes(): Promise<void> {
     if (notesLoaded || notesLoading) return;
     if (!currentOwner || !currentName || !currentNumber) return;
@@ -1203,6 +1236,7 @@ export function createDiffStore(opts?: DiffStoreOptions) {
     getDraftCommentsForPath,
     clearDraft,
     loadCommits,
+    loadBlobRange,
     loadNotes,
     updateNotes,
     flushNotes,

@@ -405,6 +405,7 @@ func (s *Server) registerAPI(api huma.API) {
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/commits", s.getCommits)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/diff", s.getDiff)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/files", s.getFiles)
+	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/blob-range", s.getBlobRange)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/notes", s.getPRNotes)
 	huma.Put(api, "/repos/{owner}/{name}/pulls/{number}/notes", s.putPRNotes)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/ai-threads", s.createAIThread)
@@ -2000,6 +2001,70 @@ func (s *Server) getCommits(ctx context.Context, input *repoNumberInput) (*getCo
 		}
 	}
 	return &getCommitsOutput{Body: resp}, nil
+}
+
+// --- Blob range (context expansion) ---
+
+// blobRangeMaxLines caps how many lines a single expansion request
+// can pull from a blob. Huge jumps should go through the "expand
+// all" path which we'll answer with whatever fits up to this cap.
+const blobRangeMaxLines = 2000
+
+type getBlobRangeInput struct {
+	Owner  string `path:"owner"`
+	Name   string `path:"name"`
+	Number int    `path:"number"`
+	Path   string `query:"path"   doc:"File path within the repo"`
+	SHA    string `query:"sha"    doc:"Commit SHA whose blob to read"`
+	Start  int    `query:"start"  doc:"1-based start line (inclusive)"`
+	End    int    `query:"end"    doc:"1-based end line (inclusive)"`
+}
+
+type getBlobRangeOutput struct {
+	Body blobRangeResponse
+}
+
+// getBlobRange serves a chunk of a file blob so the diff viewer
+// can show context lines outside the hunks (GitHub's "+N lines"
+// affordance). We scope by PR to keep the auth model coherent
+// with /diff, even though the underlying clone is already
+// publicly readable.
+func (s *Server) getBlobRange(ctx context.Context, input *getBlobRangeInput) (*getBlobRangeOutput, error) {
+	if s.clones == nil {
+		return nil, huma.Error503ServiceUnavailable("blob range not available: clone manager not configured")
+	}
+	if input.Path == "" {
+		return nil, huma.Error400BadRequest("path is required")
+	}
+	if input.SHA == "" {
+		return nil, huma.Error400BadRequest("sha is required")
+	}
+	if input.Start < 1 {
+		return nil, huma.Error400BadRequest("start must be >= 1")
+	}
+	if input.End < input.Start {
+		return nil, huma.Error400BadRequest("end must be >= start")
+	}
+	if input.End-input.Start+1 > blobRangeMaxLines {
+		return nil, huma.Error400BadRequest(fmt.Sprintf("requested range too large (max %d lines)", blobRangeMaxLines))
+	}
+
+	// Validate the PR exists so arbitrary repos aren't probed
+	// through this endpoint. We don't verify the sha is reachable
+	// — cat-file will fail cleanly if it isn't.
+	if _, err := s.db.GetMRIDByRepoAndNumber(ctx, input.Owner, input.Name, input.Number); err != nil {
+		return nil, huma.Error404NotFound("pull request not found")
+	}
+
+	host := s.syncer.HostForRepo(input.Owner, input.Name)
+	lines, err := s.clones.BlobRange(ctx, host, input.Owner, input.Name, input.SHA, input.Path, input.Start, input.End)
+	if err != nil {
+		if errors.Is(err, gitclone.ErrNotFound) {
+			return nil, huma.Error404NotFound("blob not found: " + err.Error())
+		}
+		return nil, huma.Error502BadGateway("read blob: " + err.Error())
+	}
+	return &getBlobRangeOutput{Body: blobRangeResponse{Lines: lines}}, nil
 }
 
 // --- PR scratchpad notes ---

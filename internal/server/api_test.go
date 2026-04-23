@@ -5159,6 +5159,65 @@ func TestAPIGetCommits_NotFound(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, resp.StatusCode())
 }
 
+func TestAPIBlobRange(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+
+	client, _, _, headSHA, _ := setupTestServerWithClones(t)
+	ctx := context.Background()
+
+	// setupTestServerWithClones adds file1.txt..file5.txt each with
+	// a single "content N" line, so we can read them back via the
+	// blob endpoint at the PR head.
+	start := int64(1)
+	end := int64(1)
+	path := "file3.txt"
+	resp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberBlobRangeWithResponse(
+		ctx, "acme", "widget", 1,
+		&generated.GetReposByOwnerByNamePullsByNumberBlobRangeParams{
+			Path:  &path,
+			Sha:   &headSHA,
+			Start: &start,
+			End:   &end,
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, resp.StatusCode())
+	require.NotNil(resp.JSON200)
+	require.NotNil(resp.JSON200.Lines)
+	assert.Equal([]string{"content 3"}, *resp.JSON200.Lines)
+}
+
+func TestAPIBlobRange_RejectsBadRange(t *testing.T) {
+	client, _, _, headSHA, _ := setupTestServerWithClones(t)
+	start := int64(5)
+	end := int64(1)
+	path := "file1.txt"
+	resp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberBlobRangeWithResponse(
+		context.Background(), "acme", "widget", 1,
+		&generated.GetReposByOwnerByNamePullsByNumberBlobRangeParams{
+			Path: &path, Sha: &headSHA, Start: &start, End: &end,
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode())
+}
+
+func TestAPIBlobRange_NotFoundPR(t *testing.T) {
+	client, _, _, headSHA, _ := setupTestServerWithClones(t)
+	start := int64(1)
+	end := int64(1)
+	path := "file1.txt"
+	resp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberBlobRangeWithResponse(
+		context.Background(), "acme", "widget", 999,
+		&generated.GetReposByOwnerByNamePullsByNumberBlobRangeParams{
+			Path: &path, Sha: &headSHA, Start: &start, End: &end,
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusNotFound, resp.StatusCode())
+}
+
 func TestAPIPRNotes_CRUD(t *testing.T) {
 	require := require.New(t)
 	assert := Assert.New(t)

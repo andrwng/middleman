@@ -135,6 +135,14 @@ type commitsResponse struct {
 	Commits []commitResponse `json:"commits" doc:"Commits in newest-first order"`
 }
 
+// blobRangeResponse serves a slice of the file blob at a given
+// sha so the diff viewer can expand context around hunks. Lines
+// are returned as-is (no trailing newline); callers re-insert
+// line separators when rendering.
+type blobRangeResponse struct {
+	Lines []string `json:"lines"`
+}
+
 // prNotesResponse is the reviewer-local scratchpad for a PR. The
 // UpdatedAt field is zero when the user has never written a note.
 type prNotesResponse struct {
