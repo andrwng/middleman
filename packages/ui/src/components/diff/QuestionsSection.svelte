@@ -65,11 +65,17 @@
   }
 
   async function cancel(thread: AIThread, q: AIQuestion): Promise<void> {
-    await aiStore.deleteQuestion(thread.id, q.id);
+    const ok = await aiStore.deleteQuestion(thread.id, q.id);
+    if (!ok) {
+      alert(aiStore.getError() ?? "Cancel failed");
+    }
   }
 
   async function closeThread(thread: AIThread): Promise<void> {
-    await aiStore.deleteThread(thread.id);
+    const ok = await aiStore.deleteThread(thread.id);
+    if (!ok) {
+      alert(aiStore.getError() ?? "Close failed");
+    }
   }
 
   function truncate(text: string, n: number): string {

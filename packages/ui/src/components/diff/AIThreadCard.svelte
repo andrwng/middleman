@@ -41,7 +41,10 @@
   }
 
   async function cancelQuestion(q: AIQuestion): Promise<void> {
-    await aiStore.deleteQuestion(thread.id, q.id);
+    const ok = await aiStore.deleteQuestion(thread.id, q.id);
+    if (!ok) {
+      alert(aiStore.getError() ?? "Cancel failed");
+    }
   }
 
   // Promote the latest completed answer into a draft review comment
