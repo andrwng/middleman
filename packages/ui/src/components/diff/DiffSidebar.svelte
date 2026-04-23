@@ -6,9 +6,8 @@
   import PendingCommentsSection from "./PendingCommentsSection.svelte";
 
   // Reusable file-tree + commit-list panel for the diff Files view.
-  // Used by PullList (inlined under the selected PR row in the
-  // standalone PR browser) and by PullDetail (as the left pane of
-  // the Files tab inside the activity/kanban drawers).
+  // Mounted by PRListView and PullDetail as the left pane of the
+  // Files tab.
   const { diff, pulls } = getStores();
 
   function filename(path: string): string {

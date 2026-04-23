@@ -1,7 +1,6 @@
 <script lang="ts">
   import { getStores, getNavigate, getSidebar, getActions, getHostState } from "../../context.js";
   import { groupByWorkflow } from "../../stores/workflow.svelte.js";
-  import DiffSidebar from "../diff/DiffSidebar.svelte";
   import PullItem from "./PullItem.svelte";
 
   const { pulls, sync, grouping, collapsedRepos, settings, authorGroups, viewer } = getStores();
@@ -125,12 +124,6 @@
 
   const isDiffFocus = $derived(
     _getDetailTab() === "files" && selectedVisiblePR !== null,
-  );
-
-  // True when in files tab and selected PR isn't actually rendered in sidebar
-  // (either filtered out of list, or in user-collapsed repo group).
-  const needsFallbackFileList = $derived(
-    _getDetailTab() === "files" && pulls.getSelectedPR() !== null && selectedVisiblePR === null,
   );
 
   const isSelectedActiveWorktree = $derived.by(() => {
@@ -493,11 +486,6 @@
                   {importAction}
                   onclick={() => handleSelect(pr.repo_owner ?? "", pr.repo_name ?? "", pr.Number)}
                 />
-                {#if prSelected && _getDetailTab() === "files"}
-                  <div class="diff-files-wrap">
-                  <DiffSidebar />
-                </div>
-                {/if}
               {/each}
             {/if}
           </div>
@@ -515,11 +503,6 @@
                 {importAction}
                 onclick={() => handleSelect(pr.repo_owner ?? "", pr.repo_name ?? "", pr.Number)}
               />
-              {#if prSelected && _getDetailTab() === "files"}
-                <div class="diff-files-wrap">
-                  <DiffSidebar />
-                </div>
-              {/if}
             {/each}
           </div>
         {/each}
@@ -533,20 +516,10 @@
             {importAction}
             onclick={() => handleSelect(pr.repo_owner ?? "", pr.repo_name ?? "", pr.Number)}
           />
-          {#if prSelected && _getDetailTab() === "files"}
-            <div class="diff-files-wrap">
-                  <DiffSidebar />
-                </div>
-          {/if}
         {/each}
       {/if}
     {/if}
   </div>
-  {#if needsFallbackFileList}
-    <div class="diff-files-wrap">
-                  <DiffSidebar />
-                </div>
-  {/if}
   <div class="sidebar-footer">
     {#if !isEmbedded()}
       <button class="add-repo-link" onclick={() => navigate("/settings")}>
@@ -957,14 +930,6 @@
     color: var(--text-secondary);
   }
 
-  .list-body--diff-focus .diff-files-wrap {
-    border-left: 3px solid var(--accent-blue);
-  }
-
-  .list-body--diff-focus-worktree .diff-files-wrap {
-    border-left-color: var(--accent-teal, var(--accent-green));
-  }
-
   .state-message {
     padding: 24px 16px;
     font-size: 13px;
@@ -1138,10 +1103,5 @@
     background: var(--bg-surface);
     color: var(--text-primary);
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
-  }
-
-  .diff-files-wrap {
-    max-height: 40vh;
-    overflow-y: auto;
   }
 </style>
