@@ -90,8 +90,9 @@ type gqlPR struct {
 }
 
 // gqlReviewRequest captures one outstanding review ask on a PR.
-// The requested reviewer is polymorphic (User, Team, Mannequin) —
-// we only surface logins/slugs and ignore the rest.
+// The requested reviewer is a GraphQL union — declaring every
+// variant that the API can return is required; shurcooL/graphql
+// fails to unmarshal fields like "login" if no branch claims them.
 type gqlReviewRequest struct {
 	RequestedReviewer struct {
 		User *struct {
@@ -100,6 +101,11 @@ type gqlReviewRequest struct {
 		Team *struct {
 			Slug string `graphql:"slug"`
 		} `graphql:"... on Team"`
+		// Mannequins are ex-contributors or placeholders from
+		// an import; they carry a login like a User.
+		Mannequin *struct {
+			Login string `graphql:"login"`
+		} `graphql:"... on Mannequin"`
 	}
 }
 
@@ -243,13 +249,20 @@ func adaptPR(gql *gqlPR) *gh.PullRequest {
 		})
 	}
 	for _, rr := range gql.ReviewRequests.Nodes {
-		if rr.RequestedReviewer.User != nil {
+		switch {
+		case rr.RequestedReviewer.User != nil:
 			pr.RequestedReviewers = append(pr.RequestedReviewers, &gh.User{
 				Login: new(rr.RequestedReviewer.User.Login),
 			})
-		} else if rr.RequestedReviewer.Team != nil {
+		case rr.RequestedReviewer.Team != nil:
 			pr.RequestedTeams = append(pr.RequestedTeams, &gh.Team{
 				Slug: new(rr.RequestedReviewer.Team.Slug),
+			})
+		case rr.RequestedReviewer.Mannequin != nil:
+			// Mannequins don't fit the User/Team split cleanly.
+			// Treat them as users — the UI just compares logins.
+			pr.RequestedReviewers = append(pr.RequestedReviewers, &gh.User{
+				Login: new(rr.RequestedReviewer.Mannequin.Login),
 			})
 		}
 	}
