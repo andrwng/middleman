@@ -96,7 +96,8 @@
       type="button"
       class="ai-thread__close"
       onclick={removeThread}
-      title="Close this question thread (not sent to the PR author)"
+      title="Close thread and remove worktree (cancels any in-flight question; never posted to the PR)"
+      aria-label="Close thread and remove worktree"
     >
       <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6">
         <path d="M2 2L8 8M8 2L2 8" stroke-linecap="round" />
