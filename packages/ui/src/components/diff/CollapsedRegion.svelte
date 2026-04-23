@@ -37,7 +37,7 @@
   }: Props = $props();
 
   const STEP = 10;                    // lines per row click
-  const SCRUB_PIXELS_PER_LINE = 18;   // wheel deltaY threshold per line
+  const SCRUB_PIXELS_PER_LINE = 10;   // wheel deltaY threshold per line
 
   // topCount = lines revealed extending the previous hunk downward.
   // bottomCount = lines revealed extending the next hunk upward.
@@ -51,6 +51,15 @@
   // lines are left below the last hunk; a short/empty response
   // tells us we hit EOF.
   let bottomExhausted = $state(false);
+
+  // Pending line counts for the coalescing scrub path. The scrub
+  // handler can fire dozens of wheel events per second — instead
+  // of issuing one fetch per tick (and having most drop because
+  // `loading` is set), accumulate here and issue a single bulk
+  // fetch that catches up whenever the in-flight one returns.
+  let pendingTop = 0;
+  let pendingBottom = 0;
+  let flushing = false;
 
   const { diff: diffStore } = getStores();
 
@@ -117,6 +126,46 @@
       errorMsg = err instanceof Error ? err.message : String(err);
     } finally {
       loading = false;
+    }
+  }
+
+  // requestExpandTop / requestExpandBottom queue scrub-driven line
+  // reveals without blocking on the network. The flush loop
+  // coalesces bursts of wheel events into a single fetch.
+  function requestExpandTop(n: number): void {
+    if (fullyExpanded) return;
+    pendingTop += n;
+    void flushPending();
+  }
+
+  function requestExpandBottom(n: number): void {
+    if (fullyExpanded || position === "bottom") return;
+    pendingBottom += n;
+    void flushPending();
+  }
+
+  async function flushPending(): Promise<void> {
+    if (flushing) return;
+    flushing = true;
+    try {
+      while ((pendingTop > 0 || pendingBottom > 0) && !fullyExpanded) {
+        if (pendingTop > 0) {
+          const n = pendingTop;
+          pendingTop = 0;
+          await expandTop(n);
+          if (errorMsg) break;
+        }
+        if (pendingBottom > 0) {
+          const n = pendingBottom;
+          pendingBottom = 0;
+          await expandBottom(n);
+          if (errorMsg) break;
+        }
+      }
+    } finally {
+      flushing = false;
+      pendingTop = 0;
+      pendingBottom = 0;
     }
   }
 
@@ -250,21 +299,18 @@
 
     if (dy > 0) {
       topPixelBuf += dy;
-      while (topPixelBuf >= SCRUB_PIXELS_PER_LINE && !fullyExpanded) {
-        topPixelBuf -= SCRUB_PIXELS_PER_LINE;
-        void expandTop(1);
+      const lines = Math.floor(topPixelBuf / SCRUB_PIXELS_PER_LINE);
+      if (lines > 0) {
+        topPixelBuf -= lines * SCRUB_PIXELS_PER_LINE;
+        requestExpandTop(lines);
       }
     } else if (dy < 0) {
+      if (position === "bottom") return;
       bottomPixelBuf += -dy;
-      while (bottomPixelBuf >= SCRUB_PIXELS_PER_LINE && !fullyExpanded) {
-        bottomPixelBuf -= SCRUB_PIXELS_PER_LINE;
-        if (position === "bottom") {
-          // No bottom anchor; treat an upward scroll as a
-          // no-op for end-of-file regions rather than surprise
-          // the reviewer with phantom context.
-          break;
-        }
-        void expandBottom(1);
+      const lines = Math.floor(bottomPixelBuf / SCRUB_PIXELS_PER_LINE);
+      if (lines > 0) {
+        bottomPixelBuf -= lines * SCRUB_PIXELS_PER_LINE;
+        requestExpandBottom(lines);
       }
     }
   }
