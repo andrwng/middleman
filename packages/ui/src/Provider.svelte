@@ -78,6 +78,7 @@
   import {
     createAuthorGroupsStore,
   } from "./stores/authorGroups.svelte.js";
+  import { createViewerStore } from "./stores/viewer.svelte.js";
 
   interface Props {
     client: MiddlemanClient;
@@ -223,6 +224,9 @@
     const authorGroupsStore = createAuthorGroupsStore({ client: cl });
     void authorGroupsStore.load();
 
+    const viewerStore = createViewerStore({ client: cl });
+    void viewerStore.load();
+
     const si: StoreInstances = {
       pulls: pullsStore,
       issues: issuesStore,
@@ -237,6 +241,7 @@
       ai: aiStore,
       brief: briefStore,
       authorGroups: authorGroupsStore,
+      viewer: viewerStore,
     };
 
     if (roborevBase) {

@@ -76,6 +76,14 @@ type Server struct {
 	activeWorktreeKey string
 	activeWorktreeSet bool
 
+	// viewer caches the authenticated user's login + display name
+	// after the first /me call. Lookup is a single round-trip so
+	// caching until restart is fine; a token swap would need a
+	// restart anyway.
+	viewerMu    sync.Mutex
+	viewerLogin string
+	viewerName  string
+
 	// bg tracks short-lived goroutines that HTTP handlers spawn
 	// outside of the Syncer's own wait group (e.g. mergePR's
 	// post-failure refresh). Shutdown waits on bg before the

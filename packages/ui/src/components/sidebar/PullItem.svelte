@@ -6,7 +6,25 @@
   import { repoColor } from "../../utils/repo-color.js";
   import GitHubLabels from "../shared/GitHubLabels.svelte";
 
-  const { pulls } = getStores();
+  const { pulls, viewer } = getStores();
+
+  // True when the viewer is on the PR's requested-reviewers list.
+  // `requested_reviewers` is flat: individual logins + "team:<slug>"
+  // for team asks. We ignore team asks here since there's no
+  // cheap way to know whether the viewer is in the team; the UI
+  // will light up as soon as the individual assignment is added.
+  const awaitingMyReview = $derived.by<boolean>(() => {
+    const login = viewer.getLogin();
+    if (!login) return false;
+    const reviewers = pr.requested_reviewers ?? [];
+    if (reviewers.length === 0) return false;
+    const needle = login.toLowerCase();
+    for (const r of reviewers) {
+      if (!r || r.startsWith("team:")) continue;
+      if (r.toLowerCase() === needle) return true;
+    }
+    return false;
+  });
   const hostState = getHostState();
 
   interface Props {
@@ -114,6 +132,9 @@
 >
   <p class="title">
     <span class="state-dot" style="background: {stateColors[prState]}"></span>
+    {#if awaitingMyReview}
+      <span class="review-chip" title="You're on the reviewer list">review</span>
+    {/if}
     {pr.Title}
   </p>
   {#if labels.length > 0}
@@ -257,6 +278,20 @@
     width: 8px;
     height: 8px;
     border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .review-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 6px;
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #fff;
+    background: var(--accent-blue);
+    border-radius: 999px;
     flex-shrink: 0;
   }
 

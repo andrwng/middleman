@@ -411,6 +411,7 @@ func (s *Server) registerAPI(api huma.API) {
 		DefaultStatus: http.StatusAccepted,
 	}, s.triggerSync)
 	huma.Get(api, "/sync/status", s.syncStatus)
+	huma.Get(api, "/me", s.getViewer)
 	huma.Get(api, "/rate-limits", s.getRateLimits)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/commits", s.getCommits)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/diff", s.getDiff)
@@ -2011,6 +2012,46 @@ func (s *Server) getCommits(ctx context.Context, input *repoNumberInput) (*getCo
 		}
 	}
 	return &getCommitsOutput{Body: resp}, nil
+}
+
+// --- Viewer ---
+
+type getViewerOutput struct {
+	Body viewerResponse
+}
+
+// getViewer returns the GitHub login of the user whose token is
+// configured in middleman. Cached after the first call so this is
+// effectively free on subsequent hits.
+func (s *Server) getViewer(ctx context.Context, _ *struct{}) (*getViewerOutput, error) {
+	s.viewerMu.Lock()
+	if s.viewerLogin != "" {
+		resp := viewerResponse{Login: s.viewerLogin, Name: s.viewerName}
+		s.viewerMu.Unlock()
+		return &getViewerOutput{Body: resp}, nil
+	}
+	s.viewerMu.Unlock()
+
+	client, err := s.syncer.PrimaryClient()
+	if err != nil {
+		return nil, huma.Error503ServiceUnavailable("viewer not available: " + err.Error())
+	}
+	user, err := client.GetUser(ctx, "")
+	if err != nil {
+		return nil, huma.Error502BadGateway("fetch viewer: " + err.Error())
+	}
+	login := user.GetLogin()
+	if login == "" {
+		return nil, huma.Error502BadGateway("viewer response missing login")
+	}
+	name := user.GetName()
+
+	s.viewerMu.Lock()
+	s.viewerLogin = login
+	s.viewerName = name
+	s.viewerMu.Unlock()
+
+	return &getViewerOutput{Body: viewerResponse{Login: login, Name: name}}, nil
 }
 
 // --- Blob range (context expansion) ---

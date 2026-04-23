@@ -75,6 +75,11 @@ type MergeRequest struct {
 	KanbanStatus      string
 	Starred           bool
 	Labels            []Label `json:"labels,omitempty"`
+	// RequestedReviewers is the list of GitHub logins (and "team:slug"
+	// entries for team reviewers) currently asked to review this PR.
+	// Nil means the column wasn't populated by this sync — distinct
+	// from an explicitly empty list.
+	RequestedReviewers []string `json:"requested_reviewers"`
 }
 
 // CICheck represents a single CI check run.

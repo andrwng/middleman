@@ -503,37 +503,38 @@ type MergePRInputBody struct {
 
 // MergeRequest defines model for MergeRequest.
 type MergeRequest struct {
-	Additions         int64      `json:"Additions"`
-	Author            string     `json:"Author"`
-	AuthorDisplayName string     `json:"AuthorDisplayName"`
-	BaseBranch        string     `json:"BaseBranch"`
-	Body              string     `json:"Body"`
-	CIChecksJSON      string     `json:"CIChecksJSON"`
-	CIHadPending      bool       `json:"CIHadPending"`
-	CIStatus          string     `json:"CIStatus"`
-	ClosedAt          *time.Time `json:"ClosedAt"`
-	CommentCount      int64      `json:"CommentCount"`
-	CreatedAt         time.Time  `json:"CreatedAt"`
-	Deletions         int64      `json:"Deletions"`
-	DetailFetchedAt   *time.Time `json:"DetailFetchedAt"`
-	HeadBranch        string     `json:"HeadBranch"`
-	HeadRepoCloneURL  string     `json:"HeadRepoCloneURL"`
-	ID                int64      `json:"ID"`
-	IsDraft           bool       `json:"IsDraft"`
-	KanbanStatus      string     `json:"KanbanStatus"`
-	LastActivityAt    time.Time  `json:"LastActivityAt"`
-	MergeableState    string     `json:"MergeableState"`
-	MergedAt          *time.Time `json:"MergedAt"`
-	Number            int64      `json:"Number"`
-	PlatformID        int64      `json:"PlatformID"`
-	RepoID            int64      `json:"RepoID"`
-	ReviewDecision    string     `json:"ReviewDecision"`
-	Starred           bool       `json:"Starred"`
-	State             string     `json:"State"`
-	Title             string     `json:"Title"`
-	URL               string     `json:"URL"`
-	UpdatedAt         time.Time  `json:"UpdatedAt"`
-	Labels            *[]Label   `json:"labels,omitempty"`
+	Additions          int64      `json:"Additions"`
+	Author             string     `json:"Author"`
+	AuthorDisplayName  string     `json:"AuthorDisplayName"`
+	BaseBranch         string     `json:"BaseBranch"`
+	Body               string     `json:"Body"`
+	CIChecksJSON       string     `json:"CIChecksJSON"`
+	CIHadPending       bool       `json:"CIHadPending"`
+	CIStatus           string     `json:"CIStatus"`
+	ClosedAt           *time.Time `json:"ClosedAt"`
+	CommentCount       int64      `json:"CommentCount"`
+	CreatedAt          time.Time  `json:"CreatedAt"`
+	Deletions          int64      `json:"Deletions"`
+	DetailFetchedAt    *time.Time `json:"DetailFetchedAt"`
+	HeadBranch         string     `json:"HeadBranch"`
+	HeadRepoCloneURL   string     `json:"HeadRepoCloneURL"`
+	ID                 int64      `json:"ID"`
+	IsDraft            bool       `json:"IsDraft"`
+	KanbanStatus       string     `json:"KanbanStatus"`
+	LastActivityAt     time.Time  `json:"LastActivityAt"`
+	MergeableState     string     `json:"MergeableState"`
+	MergedAt           *time.Time `json:"MergedAt"`
+	Number             int64      `json:"Number"`
+	PlatformID         int64      `json:"PlatformID"`
+	RepoID             int64      `json:"RepoID"`
+	ReviewDecision     string     `json:"ReviewDecision"`
+	Starred            bool       `json:"Starred"`
+	State              string     `json:"State"`
+	Title              string     `json:"Title"`
+	URL                string     `json:"URL"`
+	UpdatedAt          time.Time  `json:"UpdatedAt"`
+	Labels             *[]Label   `json:"labels,omitempty"`
+	RequestedReviewers *[]string  `json:"requested_reviewers"`
 }
 
 // MergeRequestDetailResponse defines model for MergeRequestDetailResponse.
@@ -555,42 +556,43 @@ type MergeRequestDetailResponse struct {
 
 // MergeRequestResponse defines model for MergeRequestResponse.
 type MergeRequestResponse struct {
-	Additions         int64                   `json:"Additions"`
-	Author            string                  `json:"Author"`
-	AuthorDisplayName string                  `json:"AuthorDisplayName"`
-	BaseBranch        string                  `json:"BaseBranch"`
-	Body              string                  `json:"Body"`
-	CIChecksJSON      string                  `json:"CIChecksJSON"`
-	CIHadPending      bool                    `json:"CIHadPending"`
-	CIStatus          string                  `json:"CIStatus"`
-	ClosedAt          *time.Time              `json:"ClosedAt"`
-	CommentCount      int64                   `json:"CommentCount"`
-	CreatedAt         time.Time               `json:"CreatedAt"`
-	Deletions         int64                   `json:"Deletions"`
-	HeadBranch        string                  `json:"HeadBranch"`
-	HeadRepoCloneURL  string                  `json:"HeadRepoCloneURL"`
-	ID                int64                   `json:"ID"`
-	IsDraft           bool                    `json:"IsDraft"`
-	KanbanStatus      string                  `json:"KanbanStatus"`
-	LastActivityAt    time.Time               `json:"LastActivityAt"`
-	MergeableState    string                  `json:"MergeableState"`
-	MergedAt          *time.Time              `json:"MergedAt"`
-	Number            int64                   `json:"Number"`
-	PlatformID        int64                   `json:"PlatformID"`
-	RepoID            int64                   `json:"RepoID"`
-	ReviewDecision    string                  `json:"ReviewDecision"`
-	Starred           bool                    `json:"Starred"`
-	State             string                  `json:"State"`
-	Title             string                  `json:"Title"`
-	URL               string                  `json:"URL"`
-	UpdatedAt         time.Time               `json:"UpdatedAt"`
-	DetailFetchedAt   *string                 `json:"detail_fetched_at,omitempty"`
-	DetailLoaded      bool                    `json:"detail_loaded"`
-	Labels            *[]Label                `json:"labels,omitempty"`
-	PlatformHost      string                  `json:"platform_host"`
-	RepoName          string                  `json:"repo_name"`
-	RepoOwner         string                  `json:"repo_owner"`
-	WorktreeLinks     *[]WorktreeLinkResponse `json:"worktree_links"`
+	Additions          int64                   `json:"Additions"`
+	Author             string                  `json:"Author"`
+	AuthorDisplayName  string                  `json:"AuthorDisplayName"`
+	BaseBranch         string                  `json:"BaseBranch"`
+	Body               string                  `json:"Body"`
+	CIChecksJSON       string                  `json:"CIChecksJSON"`
+	CIHadPending       bool                    `json:"CIHadPending"`
+	CIStatus           string                  `json:"CIStatus"`
+	ClosedAt           *time.Time              `json:"ClosedAt"`
+	CommentCount       int64                   `json:"CommentCount"`
+	CreatedAt          time.Time               `json:"CreatedAt"`
+	Deletions          int64                   `json:"Deletions"`
+	HeadBranch         string                  `json:"HeadBranch"`
+	HeadRepoCloneURL   string                  `json:"HeadRepoCloneURL"`
+	ID                 int64                   `json:"ID"`
+	IsDraft            bool                    `json:"IsDraft"`
+	KanbanStatus       string                  `json:"KanbanStatus"`
+	LastActivityAt     time.Time               `json:"LastActivityAt"`
+	MergeableState     string                  `json:"MergeableState"`
+	MergedAt           *time.Time              `json:"MergedAt"`
+	Number             int64                   `json:"Number"`
+	PlatformID         int64                   `json:"PlatformID"`
+	RepoID             int64                   `json:"RepoID"`
+	ReviewDecision     string                  `json:"ReviewDecision"`
+	Starred            bool                    `json:"Starred"`
+	State              string                  `json:"State"`
+	Title              string                  `json:"Title"`
+	URL                string                  `json:"URL"`
+	UpdatedAt          time.Time               `json:"UpdatedAt"`
+	DetailFetchedAt    *string                 `json:"detail_fetched_at,omitempty"`
+	DetailLoaded       bool                    `json:"detail_loaded"`
+	Labels             *[]Label                `json:"labels,omitempty"`
+	PlatformHost       string                  `json:"platform_host"`
+	RepoName           string                  `json:"repo_name"`
+	RepoOwner          string                  `json:"repo_owner"`
+	RequestedReviewers *[]string               `json:"requested_reviewers"`
+	WorktreeLinks      *[]WorktreeLinkResponse `json:"worktree_links"`
 }
 
 // MrImportMetadataResponse defines model for MrImportMetadataResponse.
@@ -818,6 +820,14 @@ type UpdateAuthorGroupInputBody struct {
 	Schema  *string   `json:"$schema,omitempty"`
 	Members *[]string `json:"members"`
 	Name    string    `json:"name"`
+}
+
+// ViewerResponse defines model for ViewerResponse.
+type ViewerResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+	Login  string  `json:"login"`
+	Name   *string `json:"name,omitempty"`
 }
 
 // WorkflowApprovalResponse defines model for WorkflowApprovalResponse.
@@ -1094,6 +1104,9 @@ type ClientInterface interface {
 	// ListIssues request
 	ListIssues(ctx context.Context, params *ListIssuesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetMe request
+	GetMe(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListPulls request
 	ListPulls(ctx context.Context, params *ListPullsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1354,6 +1367,18 @@ func (c *Client) PutAuthorGroupsById(ctx context.Context, id int64, body PutAuth
 
 func (c *Client) ListIssues(ctx context.Context, params *ListIssuesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListIssuesRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetMe(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetMeRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -2500,6 +2525,33 @@ func NewListIssuesRequest(server string, params *ListIssuesParams) (*http.Reques
 		}
 
 		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetMeRequest generates requests for GetMe
+func NewGetMeRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/me")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
 	}
 
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
@@ -5200,6 +5252,9 @@ type ClientWithResponsesInterface interface {
 	// ListIssuesWithResponse request
 	ListIssuesWithResponse(ctx context.Context, params *ListIssuesParams, reqEditors ...RequestEditorFn) (*ListIssuesResponse, error)
 
+	// GetMeWithResponse request
+	GetMeWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetMeResponse, error)
+
 	// ListPullsWithResponse request
 	ListPullsWithResponse(ctx context.Context, params *ListPullsParams, reqEditors ...RequestEditorFn) (*ListPullsResponse, error)
 
@@ -5505,6 +5560,29 @@ func (r ListIssuesResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r ListIssuesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetMeResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *ViewerResponse
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r GetMeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetMeResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -6654,6 +6732,15 @@ func (c *ClientWithResponses) ListIssuesWithResponse(ctx context.Context, params
 	return ParseListIssuesResponse(rsp)
 }
 
+// GetMeWithResponse request returning *GetMeResponse
+func (c *ClientWithResponses) GetMeWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetMeResponse, error) {
+	rsp, err := c.GetMe(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetMeResponse(rsp)
+}
+
 // ListPullsWithResponse request returning *ListPullsResponse
 func (c *ClientWithResponses) ListPullsWithResponse(ctx context.Context, params *ListPullsParams, reqEditors ...RequestEditorFn) (*ListPullsResponse, error) {
 	rsp, err := c.ListPulls(ctx, params, reqEditors...)
@@ -7379,6 +7466,39 @@ func ParseListIssuesResponse(rsp *http.Response) (*ListIssuesResponse, error) {
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest []IssueResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetMeResponse parses an HTTP response from a GetMeWithResponse call
+func ParseGetMeResponse(rsp *http.Response) (*GetMeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetMeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ViewerResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

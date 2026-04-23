@@ -5218,6 +5218,42 @@ func TestAPIBlobRange_NotFoundPR(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, resp.StatusCode())
 }
 
+func TestAPIGetViewer(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+
+	mock := &mockGH{
+		getUserFn: func(_ context.Context, login string) (*gh.User, error) {
+			// go-github's Users.Get with an empty login returns
+			// the authenticated user; our middleman wrapper
+			// relies on that convention.
+			require.Empty(login, "viewer lookup uses an empty login")
+			name := "Ada Lovelace"
+			userLogin := "ada"
+			return &gh.User{Login: &userLogin, Name: &name}, nil
+		},
+	}
+	srv, _ := setupTestServerWithMock(t, mock)
+	client := setupTestClient(t, srv)
+
+	resp, err := client.HTTP.GetMeWithResponse(context.Background())
+	require.NoError(err)
+	require.Equal(http.StatusOK, resp.StatusCode())
+	require.NotNil(resp.JSON200)
+	assert.Equal("ada", resp.JSON200.Login)
+	require.NotNil(resp.JSON200.Name)
+	assert.Equal("Ada Lovelace", *resp.JSON200.Name)
+
+	// Second call: cached on the server, no additional mock
+	// invocation should occur. We can't introspect mock hit count
+	// here directly, but the response should be consistent.
+	resp2, err := client.HTTP.GetMeWithResponse(context.Background())
+	require.NoError(err)
+	require.Equal(http.StatusOK, resp2.StatusCode())
+	require.NotNil(resp2.JSON200)
+	assert.Equal("ada", resp2.JSON200.Login)
+}
+
 func TestAPIAuthorGroupsCRUD(t *testing.T) {
 	require := require.New(t)
 	assert := Assert.New(t)

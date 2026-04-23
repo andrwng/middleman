@@ -3,11 +3,43 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 )
+
+// marshalReviewers serialises a slice of requested-reviewer logins
+// for storage. Nil becomes "[]" so the column's NOT NULL default
+// is respected.
+func marshalReviewers(reviewers []string) (string, error) {
+	if reviewers == nil {
+		return "[]", nil
+	}
+	raw, err := json.Marshal(reviewers)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+// unmarshalReviewers inverts marshalReviewers. An empty or
+// malformed column value returns an empty slice (never nil) so the
+// API layer always emits a real JSON array.
+func unmarshalReviewers(s string) []string {
+	if s == "" {
+		return []string{}
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(s), &out); err != nil {
+		return []string{}
+	}
+	if out == nil {
+		return []string{}
+	}
+	return out
+}
 
 func sqlPlaceholders(count int) string {
 	parts := make([]string, count)
@@ -589,7 +621,11 @@ func (d *DB) UpdateRepoSettings(
 // UpsertMergeRequest inserts or updates a merge request, returning its internal ID.
 // On conflict (repo_id, number), stale snapshots are ignored wholesale.
 func (d *DB) UpsertMergeRequest(ctx context.Context, mr *MergeRequest) (int64, error) {
-	_, err := d.rw.ExecContext(ctx, `
+	reviewersJSON, err := marshalReviewers(mr.RequestedReviewers)
+	if err != nil {
+		return 0, fmt.Errorf("marshal reviewers: %w", err)
+	}
+	_, err = d.rw.ExecContext(ctx, `
 		INSERT INTO middleman_merge_requests
 		    (repo_id, platform_id, number, url, title, author, author_display_name,
 		     state, is_draft, body, head_branch, base_branch,
@@ -599,8 +635,9 @@ func (d *DB) UpsertMergeRequest(ctx context.Context, mr *MergeRequest) (int64, e
 		     review_decision, ci_status, ci_checks_json,
 		     detail_fetched_at, ci_had_pending,
 		     created_at, updated_at,
-		     last_activity_at, merged_at, closed_at, mergeable_state)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		     last_activity_at, merged_at, closed_at, mergeable_state,
+		     requested_reviewers_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(repo_id, number) DO UPDATE SET
 		    platform_id          = excluded.platform_id,
 		    url                  = excluded.url,
@@ -627,7 +664,8 @@ func (d *DB) UpsertMergeRequest(ctx context.Context, mr *MergeRequest) (int64, e
 		    last_activity_at     = excluded.last_activity_at,
 		    merged_at            = excluded.merged_at,
 		    closed_at            = excluded.closed_at,
-		    mergeable_state      = excluded.mergeable_state
+		    mergeable_state      = excluded.mergeable_state,
+		    requested_reviewers_json = excluded.requested_reviewers_json
 		WHERE excluded.updated_at >= middleman_merge_requests.updated_at`,
 		mr.RepoID, mr.PlatformID, mr.Number, mr.URL, mr.Title,
 		mr.Author, mr.AuthorDisplayName,
@@ -639,6 +677,7 @@ func (d *DB) UpsertMergeRequest(ctx context.Context, mr *MergeRequest) (int64, e
 		mr.DetailFetchedAt, mr.CIHadPending,
 		mr.CreatedAt, mr.UpdatedAt,
 		mr.LastActivityAt, mr.MergedAt, mr.ClosedAt, mr.MergeableState,
+		reviewersJSON,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("upsert merge request: %w", err)
@@ -658,6 +697,7 @@ func (d *DB) UpsertMergeRequest(ctx context.Context, mr *MergeRequest) (int64, e
 func (d *DB) GetMergeRequest(ctx context.Context, owner, name string, number int) (*MergeRequest, error) {
 	_, owner, name = canonicalRepoIdentifier("", owner, name)
 	var mr MergeRequest
+	var reviewersRaw string
 	err := d.ro.QueryRowContext(ctx, `
 		SELECT p.id, p.repo_id, p.platform_id, p.number, p.url, p.title,
 		       p.author, p.author_display_name, p.state, p.is_draft,
@@ -671,7 +711,8 @@ func (d *DB) GetMergeRequest(ctx context.Context, owner, name string, number int
 		       p.merged_at, p.closed_at, p.mergeable_state,
 		       p.detail_fetched_at, p.ci_had_pending,
 		       COALESCE(k.status, '') AS kanban_status,
-		       (s.number IS NOT NULL) AS starred
+		       (s.number IS NOT NULL) AS starred,
+		       COALESCE(p.requested_reviewers_json, '[]') AS requested_reviewers_json
 		FROM middleman_merge_requests p
 		JOIN middleman_repos r ON r.id = p.repo_id
 		LEFT JOIN middleman_kanban_state k ON k.merge_request_id = p.id
@@ -692,6 +733,7 @@ func (d *DB) GetMergeRequest(ctx context.Context, owner, name string, number int
 		&mr.MergedAt, &mr.ClosedAt, &mr.MergeableState,
 		&mr.DetailFetchedAt, &mr.CIHadPending,
 		&mr.KanbanStatus, &mr.Starred,
+		&reviewersRaw,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -699,6 +741,7 @@ func (d *DB) GetMergeRequest(ctx context.Context, owner, name string, number int
 	if err != nil {
 		return nil, fmt.Errorf("get merge request: %w", err)
 	}
+	mr.RequestedReviewers = unmarshalReviewers(reviewersRaw)
 	labelsByMR, err := d.loadLabelsForMergeRequests(ctx, []int64{mr.ID})
 	if err != nil {
 		return nil, fmt.Errorf("load merge request labels: %w", err)
@@ -710,6 +753,7 @@ func (d *DB) GetMergeRequest(ctx context.Context, owner, name string, number int
 // GetMergeRequestByRepoIDAndNumber returns a merge request by repo ID and number.
 func (d *DB) GetMergeRequestByRepoIDAndNumber(ctx context.Context, repoID int64, number int) (*MergeRequest, error) {
 	var mr MergeRequest
+	var reviewersRaw string
 	err := d.ro.QueryRowContext(ctx, `
 		SELECT p.id, p.repo_id, p.platform_id, p.number, p.url, p.title,
 		       p.author, p.author_display_name, p.state, p.is_draft,
@@ -723,7 +767,8 @@ func (d *DB) GetMergeRequestByRepoIDAndNumber(ctx context.Context, repoID int64,
 		       p.merged_at, p.closed_at, p.mergeable_state,
 		       p.detail_fetched_at, p.ci_had_pending,
 		       COALESCE(k.status, '') AS kanban_status,
-		       (s.number IS NOT NULL) AS starred
+		       (s.number IS NOT NULL) AS starred,
+		       COALESCE(p.requested_reviewers_json, '[]') AS requested_reviewers_json
 		FROM middleman_merge_requests p
 		LEFT JOIN middleman_kanban_state k ON k.merge_request_id = p.id
 		LEFT JOIN middleman_starred_items s
@@ -743,6 +788,7 @@ func (d *DB) GetMergeRequestByRepoIDAndNumber(ctx context.Context, repoID int64,
 		&mr.MergedAt, &mr.ClosedAt, &mr.MergeableState,
 		&mr.DetailFetchedAt, &mr.CIHadPending,
 		&mr.KanbanStatus, &mr.Starred,
+		&reviewersRaw,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -750,6 +796,7 @@ func (d *DB) GetMergeRequestByRepoIDAndNumber(ctx context.Context, repoID int64,
 	if err != nil {
 		return nil, fmt.Errorf("get merge request by repo id: %w", err)
 	}
+	mr.RequestedReviewers = unmarshalReviewers(reviewersRaw)
 	labelsByMR, err := d.loadLabelsForMergeRequests(ctx, []int64{mr.ID})
 	if err != nil {
 		return nil, fmt.Errorf("load merge request labels: %w", err)
@@ -814,7 +861,8 @@ func (d *DB) ListMergeRequests(ctx context.Context, opts ListMergeRequestsOpts) 
 		       p.merged_at, p.closed_at, p.mergeable_state,
 		       p.detail_fetched_at, p.ci_had_pending,
 		       COALESCE(k.status, '') AS kanban_status,
-		       (s.number IS NOT NULL) AS starred
+		       (s.number IS NOT NULL) AS starred,
+		       COALESCE(p.requested_reviewers_json, '[]') AS requested_reviewers_json
 		FROM middleman_merge_requests p
 		JOIN middleman_repos r ON r.id = p.repo_id
 		LEFT JOIN middleman_kanban_state k ON k.merge_request_id = p.id
@@ -833,6 +881,7 @@ func (d *DB) ListMergeRequests(ctx context.Context, opts ListMergeRequestsOpts) 
 	var mrIDs []int64
 	for rows.Next() {
 		var mr MergeRequest
+		var reviewersRaw string
 		if err := rows.Scan(
 			&mr.ID, &mr.RepoID, &mr.PlatformID, &mr.Number, &mr.URL, &mr.Title,
 			&mr.Author, &mr.AuthorDisplayName, &mr.State, &mr.IsDraft,
@@ -846,9 +895,11 @@ func (d *DB) ListMergeRequests(ctx context.Context, opts ListMergeRequestsOpts) 
 			&mr.MergedAt, &mr.ClosedAt, &mr.MergeableState,
 			&mr.DetailFetchedAt, &mr.CIHadPending,
 			&mr.KanbanStatus, &mr.Starred,
+			&reviewersRaw,
 		); err != nil {
 			return nil, fmt.Errorf("scan merge request: %w", err)
 		}
+		mr.RequestedReviewers = unmarshalReviewers(reviewersRaw)
 		mrs = append(mrs, mr)
 		mrIDs = append(mrIDs, mr.ID)
 	}

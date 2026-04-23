@@ -73,6 +73,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get me */
+        get: operations["get-me"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/pulls": {
         parameters: {
             query?: never;
@@ -1348,6 +1365,7 @@ export interface components {
             /** Format: date-time */
             UpdatedAt: string;
             labels?: components["schemas"]["Label"][] | null;
+            requested_reviewers: string[] | null;
         };
         MergeRequestDetailResponse: {
             /**
@@ -1416,6 +1434,7 @@ export interface components {
             platform_host: string;
             repo_name: string;
             repo_owner: string;
+            requested_reviewers: string[] | null;
             worktree_links: components["schemas"]["WorktreeLinkResponse"][] | null;
         };
         MrImportMetadataResponse: {
@@ -1696,6 +1715,16 @@ export interface components {
             members: string[] | null;
             name: string;
         };
+        ViewerResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/ViewerResponse.json
+             */
+            readonly $schema?: string;
+            login: string;
+            name?: string;
+        };
         WorkflowApprovalResponse: {
             checked: boolean;
             /** Format: int64 */
@@ -1933,6 +1962,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IssueResponse"][] | null;
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ViewerResponse"];
                 };
             };
             /** @description Error */

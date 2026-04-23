@@ -135,6 +135,14 @@ type commitsResponse struct {
 	Commits []commitResponse `json:"commits" doc:"Commits in newest-first order"`
 }
 
+// viewerResponse identifies the authenticated reviewer as seen by
+// the configured GitHub token. The UI uses Login to highlight PRs
+// where the viewer is a requested reviewer.
+type viewerResponse struct {
+	Login string `json:"login"`
+	Name  string `json:"name,omitempty"`
+}
+
 // authorGroupResponse is the wire shape for an author group; it
 // flattens db.AuthorGroup's Members slice + timestamps into the
 // JSON form the dashboard consumes.

@@ -60,6 +60,9 @@ type gqlPR struct {
 	Labels struct {
 		Nodes []gqlLabel
 	} `graphql:"labels(first: 100)"`
+	ReviewRequests struct {
+		Nodes []gqlReviewRequest
+	} `graphql:"reviewRequests(first: 50)"`
 	Comments struct {
 		Nodes    []gqlComment
 		PageInfo pageInfo
@@ -84,6 +87,20 @@ type gqlPR struct {
 			}
 		}
 	} `graphql:"lastCommit: commits(last: 1)"`
+}
+
+// gqlReviewRequest captures one outstanding review ask on a PR.
+// The requested reviewer is polymorphic (User, Team, Mannequin) —
+// we only surface logins/slugs and ignore the rest.
+type gqlReviewRequest struct {
+	RequestedReviewer struct {
+		User *struct {
+			Login string `graphql:"login"`
+		} `graphql:"... on User"`
+		Team *struct {
+			Slug string `graphql:"slug"`
+		} `graphql:"... on Team"`
+	}
 }
 
 type gqlComment struct {
@@ -224,6 +241,17 @@ func adaptPR(gql *gqlPR) *gh.PullRequest {
 			Description: new(l.Description),
 			Default:     new(l.IsDefault),
 		})
+	}
+	for _, rr := range gql.ReviewRequests.Nodes {
+		if rr.RequestedReviewer.User != nil {
+			pr.RequestedReviewers = append(pr.RequestedReviewers, &gh.User{
+				Login: new(rr.RequestedReviewer.User.Login),
+			})
+		} else if rr.RequestedReviewer.Team != nil {
+			pr.RequestedTeams = append(pr.RequestedTeams, &gh.Team{
+				Slug: new(rr.RequestedReviewer.Team.Slug),
+			})
+		}
 	}
 
 	if gql.HeadRepository != nil {

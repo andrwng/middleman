@@ -89,6 +89,33 @@ func NormalizePR(repoID int64, ghPR *gh.PullRequest) (*db.MergeRequest, error) {
 	mr.MergeableState = ghPR.GetMergeableState()
 	mr.Labels = normalizeLabels(ghPR.Labels, itemLabelUpdatedAt(mr.UpdatedAt, mr.CreatedAt))
 
+	// Flatten requested user-reviewers + teams into a single slice
+	// of strings. Teams are stored as "team:<slug>" so the UI can
+	// tell them apart without another column; callers that only
+	// care about individuals can filter by the prefix.
+	reviewers := make([]string, 0, len(ghPR.RequestedReviewers)+len(ghPR.RequestedTeams))
+	for _, u := range ghPR.RequestedReviewers {
+		if u == nil {
+			continue
+		}
+		login := u.GetLogin()
+		if login == "" {
+			continue
+		}
+		reviewers = append(reviewers, login)
+	}
+	for _, t := range ghPR.RequestedTeams {
+		if t == nil {
+			continue
+		}
+		slug := t.GetSlug()
+		if slug == "" {
+			continue
+		}
+		reviewers = append(reviewers, "team:"+slug)
+	}
+	mr.RequestedReviewers = reviewers
+
 	return mr, nil
 }
 

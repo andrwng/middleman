@@ -532,6 +532,22 @@ func (s *Syncer) ClientForHost(
 	)
 }
 
+// PrimaryClient returns an arbitrary configured GitHub client,
+// preferring github.com when present. Used by the /me endpoint
+// and other "look up the viewer" paths that don't care which
+// host they ask as long as the token is the reviewer's own.
+func (s *Syncer) PrimaryClient() (Client, error) {
+	if c, ok := s.clients["github.com"]; ok && c != nil {
+		return c, nil
+	}
+	for _, c := range s.clients {
+		if c != nil {
+			return c, nil
+		}
+	}
+	return nil, fmt.Errorf("no GitHub clients configured")
+}
+
 // hostFor returns the platform host for a repo identified by
 // owner/name. Returns "github.com" if not found. Thread-safe.
 func (s *Syncer) hostFor(owner, name string) string {
