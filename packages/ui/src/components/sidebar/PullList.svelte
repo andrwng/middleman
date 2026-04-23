@@ -69,22 +69,32 @@
     // event-based subscribeSyncComplete instead, and debounce it
     // so a flapping sync (e.g. rapid fail/retry) can't still
     // swamp /pulls.
+    // eslint-disable-next-line no-console
+    console.debug("[PullList] effect mount");
     void pulls.loadPulls();
 
     refreshHandle = setInterval(() => {
+      // eslint-disable-next-line no-console
+      console.debug("[PullList] 15s interval tick");
       void pulls.loadPulls();
     }, 15_000);
 
     let syncDebounce: ReturnType<typeof setTimeout> | null = null;
     const unsub = sync.subscribeSyncComplete(() => {
+      // eslint-disable-next-line no-console
+      console.debug("[PullList] sync-complete event (debouncing)");
       if (syncDebounce !== null) clearTimeout(syncDebounce);
       syncDebounce = setTimeout(() => {
         syncDebounce = null;
+        // eslint-disable-next-line no-console
+        console.debug("[PullList] sync-complete debounce fired");
         void pulls.loadPulls();
       }, 2_000);
     });
 
     return () => {
+      // eslint-disable-next-line no-console
+      console.debug("[PullList] effect teardown");
       if (refreshHandle !== null) clearInterval(refreshHandle);
       if (syncDebounce !== null) clearTimeout(syncDebounce);
       unsub();

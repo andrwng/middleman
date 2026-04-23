@@ -396,9 +396,17 @@ export function createPullsStore(opts: PullsStoreOptions) {
     }
   }
 
+  // Trace every loadPulls call so we can see where the spam
+  // is coming from. Caller inferred from the JS stack. Remove
+  // once the request rate is confirmed sane.
+  let loadPullsCount = 0;
   async function loadPulls(
     params?: PullsParams,
   ): Promise<void> {
+    loadPullsCount += 1;
+    const stack = new Error().stack?.split("\n").slice(2, 5).join(" <- ") ?? "unknown";
+    // eslint-disable-next-line no-console
+    console.debug(`[pulls] loadPulls #${loadPullsCount} from ${stack}`);
     loading = true;
     storeError = null;
     try {
