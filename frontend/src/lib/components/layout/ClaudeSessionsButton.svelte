@@ -109,7 +109,19 @@
         <span class="claude-popover__title">Claude sessions</span>
         {#if total > 0}
           <span class="claude-popover__sub">
-            {running > 0 ? `${running} running` : "idle"} · {threads.length} {threads.length === 1 ? "thread" : "threads"}{briefs.length > 0 ? ` · ${briefs.length} ${briefs.length === 1 ? "brief" : "briefs"}` : ""}
+            {#if briefs.length > 0}
+              <span class="claude-popover__sub-chip claude-popover__sub-chip--brief">
+                {briefs.length} {briefs.length === 1 ? "brief" : "briefs"}
+              </span>
+            {/if}
+            {#if threads.length > 0}
+              <span class="claude-popover__sub-chip claude-popover__sub-chip--ask">
+                {threads.length} {threads.length === 1 ? "thread" : "threads"}
+              </span>
+            {/if}
+            {#if running > 0}
+              <span class="claude-popover__sub-running">· {running} running</span>
+            {/if}
           </span>
         {/if}
       </div>
@@ -125,14 +137,25 @@
         </div>
       {:else}
         {#if briefs.length > 0}
-          <div class="claude-popover__section-head">Briefs</div>
+          <div class="claude-popover__section-head">
+            Review briefs
+            <span class="claude-popover__section-hint">auto-generated summaries</span>
+          </div>
           {#each briefs as b (b.id)}
-            <div class="claude-row">
+            <div class="claude-row claude-row--brief">
               <button
                 class="claude-row__main"
                 onclick={() => goToPR(b.repoOwner, b.repoName, b.mrNumber, "files")}
               >
                 <div class="claude-row__title">
+                  <span class="claude-row__type claude-row__type--brief">
+                    <svg width="9" height="9" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
+                      <rect x="2" y="2" width="8" height="1.4" rx="0.4" />
+                      <rect x="2" y="5.3" width="8" height="1.4" rx="0.4" />
+                      <rect x="2" y="8.6" width="5" height="1.4" rx="0.4" />
+                    </svg>
+                    Brief
+                  </span>
                   <span class="claude-row__repo">{b.repoOwner}/{b.repoName}#{b.mrNumber}</span>
                   <span class="claude-row__status claude-row__status--{b.status}">{b.status}</span>
                 </div>
@@ -140,7 +163,7 @@
                   {b.mrTitle || ""}
                 </div>
                 <div class="claude-row__meta">
-                  Brief · {b.depth} · started {timeAgo(b.startedAt || b.createdAt)}
+                  {b.depth} · started {timeAgo(b.startedAt || b.createdAt)}
                 </div>
               </button>
               <button
@@ -159,14 +182,24 @@
         {/if}
 
         {#if threads.length > 0}
-          <div class="claude-popover__section-head">Threads</div>
+          <div class="claude-popover__section-head">
+            Q&amp;A threads
+            <span class="claude-popover__section-hint">questions you asked</span>
+          </div>
           {#each threads as t (t.id)}
-            <div class="claude-row">
+            <div class="claude-row claude-row--ask">
               <button
                 class="claude-row__main"
                 onclick={() => goToPR(t.repoOwner, t.repoName, t.mrNumber, "files")}
               >
                 <div class="claude-row__title">
+                  <span class="claude-row__type claude-row__type--ask">
+                    <svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                      <path d="M4 4.5a2 2 0 1 1 2.4 1.95c-.4.1-.4.35-.4.55v.5" stroke-linecap="round" stroke-linejoin="round" />
+                      <circle cx="6" cy="9.5" r="0.6" fill="currentColor" stroke="none" />
+                    </svg>
+                    Ask
+                  </span>
                   <span class="claude-row__repo">{t.repoOwner}/{t.repoName}#{t.mrNumber}</span>
                   {#if t.openQuestionCount > 0}
                     <span class="claude-row__status claude-row__status--running">running</span>
@@ -287,17 +320,56 @@
   }
 
   .claude-popover__sub {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
     font-size: 10px;
     color: var(--text-muted);
   }
 
+  .claude-popover__sub-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 6px;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: 10px;
+  }
+
+  .claude-popover__sub-chip--brief {
+    background: var(--accent-claude);
+    color: #fff;
+  }
+
+  .claude-popover__sub-chip--ask {
+    border: 1px solid var(--accent-claude);
+    color: var(--accent-claude);
+    background: transparent;
+  }
+
+  .claude-popover__sub-running {
+    color: var(--text-muted);
+  }
+
   .claude-popover__section-head {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
     padding: 6px 12px 2px;
     font-size: 10px;
     color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.05em;
     font-weight: 600;
+  }
+
+  .claude-popover__section-hint {
+    font-size: 9px;
+    font-weight: 500;
+    color: var(--text-muted);
+    text-transform: none;
+    letter-spacing: 0;
   }
 
   .claude-popover__empty {
@@ -317,11 +389,44 @@
     display: flex;
     align-items: stretch;
     gap: 4px;
-    padding: 0 4px 0 12px;
+    padding: 0 4px 0 8px;
+    border-left: 3px solid transparent;
+  }
+
+  .claude-row--brief {
+    border-left-color: var(--accent-claude);
+  }
+
+  .claude-row--ask {
+    border-left-color: color-mix(in srgb, var(--accent-claude) 50%, transparent);
   }
 
   .claude-row:hover {
     background: var(--bg-surface-hover);
+  }
+
+  .claude-row__type {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 1px 6px;
+    border-radius: 999px;
+    flex-shrink: 0;
+  }
+
+  .claude-row__type--brief {
+    background: var(--accent-claude);
+    color: #fff;
+  }
+
+  .claude-row__type--ask {
+    border: 1px solid var(--accent-claude);
+    color: var(--accent-claude);
+    background: transparent;
   }
 
   .claude-row__main {
