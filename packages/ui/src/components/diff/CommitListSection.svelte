@@ -5,7 +5,10 @@
 
   const { diff: diffStore } = getStores();
 
-  let expanded = $state(false);
+  // Open by default — the commit list is the main way reviewers
+  // navigate a PR, so it's more annoying to hide it than to show
+  // an empty "Loading..." placeholder briefly on PR switch.
+  let expanded = $state(true);
 
   const commits = $derived(diffStore.getCommits());
   const commitsLoading = $derived(diffStore.isCommitsLoading());
@@ -40,11 +43,14 @@
     });
   });
 
-  // Reset expand state when selected PR changes so section doesn't stay open
-  // with stale/empty commit list after PR switch.
+  // On PR switch, keep the section open and trigger a fresh
+  // load. The body shows "Loading..." while the new commits
+  // arrive so the reviewer sees the section expand-and-fill
+  // rather than having to click to reveal it every time.
   $effect(() => {
     diffStore.getCurrentPR();
-    expanded = false;
+    expanded = true;
+    void diffStore.loadCommits();
   });
 
   // Auto-expand when user steps into commit mode (via [ / ] keys)
