@@ -1177,10 +1177,15 @@ dispatch:
 
 // syncRepo syncs one repository: open PRs, timeline events, and stale closures.
 func (s *Syncer) syncRepo(ctx context.Context, repo RepoRef) error {
+	repoLabel := repo.Owner + "/" + repo.Name
+	slog.Info("syncRepo: begin", "repo", repoLabel)
+	defer slog.Info("syncRepo: end", "repo", repoLabel)
+
 	repoID, err := s.db.UpsertRepo(ctx, repo.PlatformHost, repo.Owner, repo.Name)
 	if err != nil {
 		return fmt.Errorf("upsert repo %s/%s: %w", repo.Owner, repo.Name, err)
 	}
+	slog.Info("syncRepo: upserted repo", "repo", repoLabel, "repoID", repoID)
 
 	client, err := s.clientFor(repo)
 	if err != nil {
@@ -1211,6 +1216,7 @@ func (s *Syncer) syncRepo(ctx context.Context, repo RepoRef) error {
 	}
 	cloneFetchOK := false
 	if s.clones != nil {
+		slog.Info("syncRepo: ensure clone begin", "repo", repoLabel)
 		remoteURL := fmt.Sprintf("https://%s/%s/%s.git", host, repo.Owner, repo.Name)
 		if err := s.clones.EnsureClone(ctx, host, repo.Owner, repo.Name, remoteURL); err != nil {
 			slog.Warn("bare clone fetch failed",
@@ -1219,9 +1225,12 @@ func (s *Syncer) syncRepo(ctx context.Context, repo RepoRef) error {
 		} else {
 			cloneFetchOK = true
 		}
+		slog.Info("syncRepo: ensure clone end", "repo", repoLabel, "ok", cloneFetchOK)
 	}
 
+	slog.Info("syncRepo: indexSyncRepo begin", "repo", repoLabel)
 	syncErr := s.indexSyncRepo(ctx, repo, repoID, cloneFetchOK)
+	slog.Info("syncRepo: indexSyncRepo end", "repo", repoLabel, "err", syncErr)
 
 	syncErrStr := ""
 	if syncErr != nil {
@@ -1299,8 +1308,15 @@ func (s *Syncer) indexSyncRepo(
 		graphQLDone := false
 		if fetcher := s.fetcherFor(repo); fetcher != nil {
 			if backoff, _ := fetcher.ShouldBackoff(); !backoff {
+				slog.Info("indexSyncRepo: GraphQL FetchRepoPRs begin",
+					"repo", repo.Owner+"/"+repo.Name,
+				)
 				result, gqlErr := fetcher.FetchRepoPRs(
 					ctx, repo.Owner, repo.Name,
+				)
+				slog.Info("indexSyncRepo: GraphQL FetchRepoPRs end",
+					"repo", repo.Owner+"/"+repo.Name,
+					"err", gqlErr,
 				)
 				if gqlErr != nil {
 					slog.Warn("GraphQL fetch failed, falling back to REST index",
@@ -1308,11 +1324,17 @@ func (s *Syncer) indexSyncRepo(
 						"err", gqlErr,
 					)
 				} else {
+					slog.Info("indexSyncRepo: doSyncRepoGraphQL begin",
+						"repo", repo.Owner+"/"+repo.Name,
+					)
 					if err := s.doSyncRepoGraphQL(
 						ctx, repo, repoID, result, cloneFetchOK,
 					); err != nil {
 						failedScope |= failMR
 					}
+					slog.Info("indexSyncRepo: doSyncRepoGraphQL end",
+						"repo", repo.Owner+"/"+repo.Name,
+					)
 					graphQLDone = true
 				}
 			}
