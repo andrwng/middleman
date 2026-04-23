@@ -61,19 +61,27 @@
   let refreshHandle: ReturnType<typeof setInterval> | null = null;
 
   $effect(() => {
+    // Initial load + 15s background refresh. Intentionally does not
+    // read any reactive sync state — earlier versions called
+    // sync.getSyncState() here, which made $effect re-run on every
+    // /sync/status poll (~every 2s while sync is running), which
+    // in turn fired another loadPulls() per tick. Effectively gave
+    // us ~1 req/s of pulls traffic under load. Use the event-based
+    // subscribeSyncComplete so we only refresh when a sync actually
+    // finishes.
     void pulls.loadPulls();
 
     refreshHandle = setInterval(() => {
       void pulls.loadPulls();
     }, 15_000);
 
-    // If sync is currently running on first load, refresh when it completes
-    if (sync.getSyncState()?.running) {
-      sync.onNextSyncComplete(() => void pulls.loadPulls());
-    }
+    const unsub = sync.subscribeSyncComplete(() => {
+      void pulls.loadPulls();
+    });
 
     return () => {
       if (refreshHandle !== null) clearInterval(refreshHandle);
+      unsub();
     };
   });
 

@@ -58,18 +58,19 @@
       }
     }, 15_000);
 
-    if (sync.getSyncState()?.running) {
-      sync.onNextSyncComplete(() => {
-        if (listType === "mrs") {
-          void pulls.loadPulls(repoParams);
-        } else {
-          void issues.loadIssues(repoParams);
-        }
-      });
-    }
+    // Event-based subscription — reading reactive sync state here
+    // would re-run this effect on every /sync/status poll.
+    const unsub = sync.subscribeSyncComplete(() => {
+      if (listType === "mrs") {
+        void pulls.loadPulls(repoParams);
+      } else {
+        void issues.loadIssues(repoParams);
+      }
+    });
 
     return () => {
       if (refreshHandle !== null) clearInterval(refreshHandle);
+      unsub();
     };
   });
 

@@ -11,18 +11,23 @@
   let refreshHandle: ReturnType<typeof setInterval> | null = null;
 
   $effect(() => {
+    // Avoid reading reactive sync state here — it would re-run
+    // this effect (and restart the interval + refire loadIssues)
+    // on every /sync/status poll. Use the event-based
+    // subscribeSyncComplete instead.
     void issues.loadIssues();
 
     refreshHandle = setInterval(() => {
       void issues.loadIssues();
     }, 15_000);
 
-    if (sync.getSyncState()?.running) {
-      sync.onNextSyncComplete(() => void issues.loadIssues());
-    }
+    const unsub = sync.subscribeSyncComplete(() => {
+      void issues.loadIssues();
+    });
 
     return () => {
       if (refreshHandle !== null) clearInterval(refreshHandle);
+      unsub();
     };
   });
 
