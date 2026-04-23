@@ -106,6 +106,11 @@ type gqlReviewRequest struct {
 		Mannequin *struct {
 			Login string `graphql:"login"`
 		} `graphql:"... on Mannequin"`
+		// Bots (dependabot, renovate, etc.) can be review
+		// requested too and also carry a login.
+		Bot *struct {
+			Login string `graphql:"login"`
+		} `graphql:"... on Bot"`
 	}
 }
 
@@ -263,6 +268,10 @@ func adaptPR(gql *gqlPR) *gh.PullRequest {
 			// Treat them as users — the UI just compares logins.
 			pr.RequestedReviewers = append(pr.RequestedReviewers, &gh.User{
 				Login: new(rr.RequestedReviewer.Mannequin.Login),
+			})
+		case rr.RequestedReviewer.Bot != nil:
+			pr.RequestedReviewers = append(pr.RequestedReviewers, &gh.User{
+				Login: new(rr.RequestedReviewer.Bot.Login),
 			})
 		}
 	}
