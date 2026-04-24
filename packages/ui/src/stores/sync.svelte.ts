@@ -142,7 +142,11 @@ export function createSyncStore(opts: SyncStoreOptions) {
   }
 
   function adjustPollingSpeed(running: boolean): void {
-    const targetMs = running ? 2_000 : 30_000;
+    // While sync is running, poll a little faster so the spinner
+    // goes away promptly on completion; but not too fast — at 2s
+    // cadence the network tab fills up with status + rate-limits
+    // during a multi-second sync.
+    const targetMs = running ? 5_000 : 30_000;
     if (targetMs === currentIntervalMs) return;
     currentIntervalMs = targetMs;
     if (pollingHandle !== null) {

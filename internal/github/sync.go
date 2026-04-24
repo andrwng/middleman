@@ -1579,23 +1579,48 @@ func (s *Syncer) doSyncRepoGraphQL(
 ) error {
 	var failedScope failScope
 	stillOpen := make(map[int]bool, len(result.PullRequests))
+	for i := range result.PullRequests {
+		stillOpen[result.PullRequests[i].PR.GetNumber()] = true
+	}
 
+	// Process PRs in parallel. Each PR is a git merge-base shell-out
+	// plus ~10 SQLite round-trips; sequentially that ran 30-60s on
+	// a monorepo with 65+ open PRs even when the GraphQL fetch was
+	// cheap. A bounded worker pool with 8 slots keeps the git child
+	// processes off each other's toes and caps DB contention.
+	perPRStart := time.Now()
+	sem := make(chan struct{}, 8)
+	var perPRFailures atomic.Int32
+	var wg sync.WaitGroup
 	for i := range result.PullRequests {
 		bulk := &result.PullRequests[i]
-		number := bulk.PR.GetNumber()
-		stillOpen[number] = true
-
-		if err := s.syncOpenMRFromBulk(
-			ctx, repo, repoID, bulk, cloneFetchOK,
-		); err != nil {
-			slog.Error("GraphQL sync MR failed",
-				"repo", repo.Owner+"/"+repo.Name,
-				"number", number,
-				"err", err,
-			)
-			failedScope |= failMR
-		}
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(bulk *BulkPR) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if err := s.syncOpenMRFromBulk(
+				ctx, repo, repoID, bulk, cloneFetchOK,
+			); err != nil {
+				slog.Error("GraphQL sync MR failed",
+					"repo", repo.Owner+"/"+repo.Name,
+					"number", bulk.PR.GetNumber(),
+					"err", err,
+				)
+				perPRFailures.Add(1)
+			}
+		}(bulk)
 	}
+	wg.Wait()
+	if perPRFailures.Load() > 0 {
+		failedScope |= failMR
+	}
+	slog.Debug("doSyncRepoGraphQL per-PR phase",
+		"repo", repo.Owner+"/"+repo.Name,
+		"count", len(result.PullRequests),
+		"failures", perPRFailures.Load(),
+		"duration", time.Since(perPRStart),
+	)
 
 	// Detect closed PRs — same as REST path. Constrained to the
 	// same window we used for the fetch, so PRs outside the
