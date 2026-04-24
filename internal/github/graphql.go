@@ -580,15 +580,8 @@ func (g *GraphQLFetcher) fetchRepoPRsWithPageSize(
 	// a PR older than `since`, we keep the recent prefix of that
 	// page and stop paginating — everything below it is older
 	// still.
-	slog.Info("FetchRepoPRs: begin",
-		"owner", owner, "name", name,
-		"since", since.Format(time.RFC3339),
-		"unlimited", since.IsZero(),
-	)
 	var gqlPRs []gqlPR
 	var cursor *string
-	cutByWindow := false
-	pages := 0
 	for {
 		var q gqlPRQuery
 		vars := map[string]any{
@@ -602,7 +595,6 @@ func (g *GraphQLFetcher) fetchRepoPRsWithPageSize(
 		}
 		nodes := q.Repository.PullRequests.Nodes
 		pi := q.Repository.PullRequests.PageInfo
-		pages++
 
 		if !since.IsZero() {
 			cut := -1
@@ -614,7 +606,6 @@ func (g *GraphQLFetcher) fetchRepoPRsWithPageSize(
 			}
 			if cut >= 0 {
 				gqlPRs = append(gqlPRs, nodes[:cut]...)
-				cutByWindow = true
 				break
 			}
 		}
@@ -637,23 +628,6 @@ func (g *GraphQLFetcher) fetchRepoPRsWithPageSize(
 		c := pi.EndCursor
 		cursor = &c
 	}
-
-	var oldestUpdated, newestUpdated time.Time
-	for _, pr := range gqlPRs {
-		if oldestUpdated.IsZero() || pr.UpdatedAt.Before(oldestUpdated) {
-			oldestUpdated = pr.UpdatedAt
-		}
-		if pr.UpdatedAt.After(newestUpdated) {
-			newestUpdated = pr.UpdatedAt
-		}
-	}
-	slog.Info("FetchRepoPRs: end",
-		"owner", owner, "name", name,
-		"pages", pages, "count", len(gqlPRs),
-		"cutByWindow", cutByWindow,
-		"oldestUpdated", oldestUpdated.Format(time.RFC3339),
-		"newestUpdated", newestUpdated.Format(time.RFC3339),
-	)
 
 	result := &RepoBulkResult{
 		PullRequests: make([]BulkPR, 0, len(gqlPRs)),
