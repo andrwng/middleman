@@ -147,8 +147,14 @@ export function createDetailStore(
         if (!path) continue;
         const side = meta.side === "LEFT" ? "LEFT" : "RIGHT";
         const list = out.get(path) ?? [];
+        // e.ID is our local DB row id; the PR review-comment API
+        // expects the GitHub comment id, which we store as
+        // PlatformID. Mixing these up made "reply to a comment"
+        // send our autoincrement, which GitHub doesn't recognize.
+        const ghID = (e.PlatformID ?? 0) as number;
+        if (!ghID) continue;
         list.push({
-          id: e.ID,
+          id: ghID,
           author: e.Author,
           body: e.Body,
           createdAt: e.CreatedAt,
