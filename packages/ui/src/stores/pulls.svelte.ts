@@ -54,6 +54,30 @@ function saveAuthorFilter(authors: string[]): void {
   }
 }
 
+// UI-side "updated in the last N days" filter. Stored as the raw
+// N (7, 30, or null=unlimited). Persisted so a reload keeps the
+// reviewer's view the same.
+function loadRecencyFilter(): number | null {
+  try {
+    const raw = localStorage.getItem("pr-recency-days");
+    if (!raw) return null;
+    const n = Number.parseInt(raw, 10);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return n;
+  } catch {
+    return null;
+  }
+}
+
+function saveRecencyFilter(days: number | null): void {
+  try {
+    if (days === null) localStorage.removeItem("pr-recency-days");
+    else localStorage.setItem("pr-recency-days", String(days));
+  } catch {
+    /* ignore */
+  }
+}
+
 export function createPullsStore(opts: PullsStoreOptions) {
   const apiClient = opts.client;
   const getGlobalRepo = opts.getGlobalRepo ?? (() => undefined);
@@ -70,6 +94,7 @@ export function createPullsStore(opts: PullsStoreOptions) {
   let filterState = $state<string>("open");
   let searchQuery = $state<string | undefined>(undefined);
   let filterAuthors = $state<string[]>(loadAuthorFilter());
+  let filterRecencyDays = $state<number | null>(loadRecencyFilter());
   let selectedPR = $state<
     { owner: string; name: string; number: number } | null
   >(null);
@@ -80,6 +105,20 @@ export function createPullsStore(opts: PullsStoreOptions) {
     if (filterAuthors.length === 0) return prs;
     const set = new Set(filterAuthors);
     return prs.filter((pr) => set.has(pr.Author ?? ""));
+  }
+
+  function applyRecencyFilter(prs: PullRequest[]): PullRequest[] {
+    if (filterRecencyDays === null) return prs;
+    const cutoff = Date.now() - filterRecencyDays * 24 * 60 * 60 * 1000;
+    return prs.filter((pr) => {
+      // UpdatedAt is an RFC3339 string. Parse once per row.
+      const t = pr.UpdatedAt ? Date.parse(pr.UpdatedAt) : NaN;
+      // Items without a parseable timestamp pass through rather
+      // than hide silently — better to show a harmless row than
+      // to make a real PR vanish because of a bad field.
+      if (!Number.isFinite(t)) return true;
+      return t >= cutoff;
+    });
   }
 
   /** Returns all unique authors from the unfiltered PR list. */
@@ -110,8 +149,17 @@ export function createPullsStore(opts: PullsStoreOptions) {
     saveAuthorFilter(filterAuthors);
   }
 
+  function getFilterRecencyDays(): number | null {
+    return filterRecencyDays;
+  }
+
+  function setFilterRecencyDays(days: number | null): void {
+    filterRecencyDays = days;
+    saveRecencyFilter(days);
+  }
+
   function getPulls(): PullRequest[] {
-    return applyAuthorFilter(pulls);
+    return applyRecencyFilter(applyAuthorFilter(pulls));
   }
 
   function isLoading(): boolean {
@@ -133,7 +181,7 @@ export function createPullsStore(opts: PullsStoreOptions) {
   /** Groups pulls by "owner/name" into a Map. */
   function pullsByRepo(): Map<string, PullRequest[]> {
     const map = new Map<string, PullRequest[]>();
-    for (const pr of applyAuthorFilter(pulls)) {
+    for (const pr of applyRecencyFilter(applyAuthorFilter(pulls))) {
       const key =
         `${pr.repo_owner ?? ""}/${pr.repo_name ?? ""}`;
       const existing = map.get(key);
@@ -450,6 +498,8 @@ export function createPullsStore(opts: PullsStoreOptions) {
     toggleFilterAuthor,
     getFilterState,
     setFilterState,
+    getFilterRecencyDays,
+    setFilterRecencyDays,
     getDisplayOrderPRs,
     selectNextPR,
     selectPrevPR,

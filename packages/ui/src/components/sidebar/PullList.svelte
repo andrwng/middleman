@@ -273,6 +273,18 @@
         >{s === "open" ? "Open" : s === "closed" ? "Closed" : "All"}</button>
       {/each}
     </div>
+    <div class="state-toggle" title="Filter by how recently the PR was updated">
+      {#each [null, 30, 7] as d (d ?? "all")}
+        <button
+          class="state-btn"
+          class:state-btn--active={pulls.getFilterRecencyDays() === d}
+          onclick={() => pulls.setFilterRecencyDays(d)}
+          title={d === null
+            ? "Show all open PRs"
+            : `Show only PRs updated in the last ${d} days`}
+        >{d === null ? "Any" : `${d}d`}</button>
+      {/each}
+    </div>
     <div class="group-toggle">
       <button
         class="group-btn"
