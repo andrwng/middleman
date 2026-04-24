@@ -1926,6 +1926,20 @@ func (s *Syncer) syncOpenMRFromBulk(
 	if repoHost == "" {
 		repoHost = "github.com"
 	}
+	// Record a patchset row for this observation before merge-base
+	// computation so the UI can show PS numbers immediately; the
+	// merge-base update below refreshes the same row in place.
+	if headSHA := normalized.PlatformHeadSHA; headSHA != "" {
+		if _, _, psErr := s.db.RecordPatchset(ctx, mrID, db.RecordPatchsetOpts{
+			HeadSHA: headSHA,
+			BaseSHA: normalized.PlatformBaseSHA,
+		}); psErr != nil {
+			slog.Warn("record patchset failed",
+				"repo", repo.Owner+"/"+repo.Name,
+				"number", number, "err", psErr,
+			)
+		}
+	}
 	if s.clones != nil && cloneFetchOK {
 		headSHA := normalized.PlatformHeadSHA
 		baseSHA := normalized.PlatformBaseSHA
@@ -1947,6 +1961,19 @@ func (s *Syncer) syncOpenMRFromBulk(
 					slog.Warn("update diff SHAs failed",
 						"repo", repo.Owner+"/"+repo.Name,
 						"number", number, "err", dbErr,
+					)
+				}
+				// Fill in the merge-base on the patchset we
+				// just recorded, so later "rebase-subtracted"
+				// diffs have the anchor they need.
+				if _, _, psErr := s.db.RecordPatchset(ctx, mrID, db.RecordPatchsetOpts{
+					HeadSHA:      headSHA,
+					BaseSHA:      baseSHA,
+					MergeBaseSHA: mb,
+				}); psErr != nil {
+					slog.Warn("record patchset merge-base failed",
+						"repo", repo.Owner+"/"+repo.Name,
+						"number", number, "err", psErr,
 					)
 				}
 			}
