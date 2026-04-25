@@ -64,6 +64,10 @@ export interface DiffResult {
   stale: boolean;
   whitespace_only_count: number;
   files: DiffFile[];
+  // Populated only for patchset-pair scopes. Values: "clean", "conflicted",
+  // "unrelated". Missing or empty means this is a regular (non-interdiff) diff.
+  interdiff_kind?: string;
+  interdiff_reason?: string;
 }
 
 export interface FilesResult {

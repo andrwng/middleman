@@ -2,52 +2,96 @@
   import { getStores } from "../../context.js";
   import { timeAgo } from "../../utils/time.js";
 
-  // Phase 2 surface: shows the PSn chip strip plus a "compare to"
-  // dropdown so the reviewer can pick a baseline patchset. Loads
-  // lazily on first mount so PRs with one push (the common case)
-  // never pay the round-trip when nothing's interesting yet.
-  //
-  // No diff wiring yet — selection is captured locally and will be
-  // consumed by Phase 3 when the rebase-subtracted diff lands.
+  // Gerrit-style patchset picker. Chip strip of PS1..PSn with click
+  // to view a specific patchset (via the interdiff endpoint) and
+  // shift-click to set a compare base — that pair drives the diff
+  // store's "patchsets" scope, producing a rebase-subtracted diff.
+  // Loads lazily on first mount so single-push PRs never pay the
+  // round-trip.
 
   const { diff } = getStores();
 
   const patchsets = $derived(diff.getPatchsets());
   const loading = $derived(diff.isPatchsetsLoading());
   const errorMsg = $derived(diff.getPatchsetsError());
+  const scope = $derived(diff.getScope());
 
-  // Local selection state; default selected = newest, default base
-  // = "(parent)" meaning the merge-base (no patchset comparison).
+  // Local selection state; default selected = newest (and "HEAD-aligned" —
+  // i.e. no interdiff applied until the user explicitly picks a base or
+  // a non-latest patchset).
   let selectedNumber = $state<number | null>(null);
-  let baseNumber = $state<number | null>(null); // null = none / parent
+  let baseNumber = $state<number | null>(null);
 
   $effect(() => {
     void diff.loadPatchsets();
   });
 
-  // Default the selection once data arrives.
+  // Default the selection once data arrives. Reflect the live scope
+  // back into local state so the chip strip stays in sync when the
+  // user resets to HEAD via other controls.
   $effect(() => {
     const list = patchsets;
     if (!list || list.length === 0) return;
-    if (selectedNumber === null) {
-      selectedNumber = list[list.length - 1]!.number;
+    const latest = list[list.length - 1]!.number;
+    if (scope.kind === "patchsets") {
+      selectedNumber = scope.toNumber;
+      baseNumber = scope.fromNumber;
+    } else if (selectedNumber === null) {
+      selectedNumber = latest;
+      baseNumber = null;
+    } else if (scope.kind === "head") {
+      // A reset elsewhere (refresh, j/k navigation) should clear the
+      // compare base so the chip strip isn't lying about the diff
+      // currently on screen.
+      baseNumber = null;
+      selectedNumber = latest;
     }
   });
 
+  function applyScope(): void {
+    if (selectedNumber === null) return;
+    const list = patchsets;
+    if (!list || list.length === 0) return;
+    const latest = list[list.length - 1]!.number;
+    // No base and viewing the latest = "the normal PR diff"; ask the
+    // store for HEAD scope so we don't pay for an interdiff round-trip
+    // on the common case.
+    if (baseNumber === null && selectedNumber === latest) {
+      diff.resetToHead();
+      return;
+    }
+    const from = baseNumber ?? 0;
+    if (from === 0) {
+      // Showing "just this patchset" — compare PS(n-1) → PS(n) if
+      // possible, otherwise fall back to HEAD scope.
+      const idx = list.findIndex((p) => p.number === selectedNumber);
+      if (idx > 0) {
+        diff.selectPatchsets(list[idx - 1]!.number, selectedNumber);
+      } else {
+        diff.resetToHead();
+      }
+      return;
+    }
+    if (from === selectedNumber) return;
+    diff.selectPatchsets(from, selectedNumber);
+  }
+
   function pick(n: number, e?: MouseEvent): void {
     if (e?.shiftKey && selectedNumber !== null && n !== selectedNumber) {
-      // Shift-click sets the base to make a "PSn vs PSm" pair.
       baseNumber = n;
+      applyScope();
       return;
     }
     selectedNumber = n;
     if (baseNumber !== null && baseNumber === n) {
       baseNumber = null;
     }
+    applyScope();
   }
 
   function clearBase(): void {
     baseNumber = null;
+    applyScope();
   }
 </script>
 

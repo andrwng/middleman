@@ -1136,6 +1136,8 @@ export interface components {
              */
             readonly $schema?: string;
             files: components["schemas"]["DiffFile"][] | null;
+            interdiff_kind?: string;
+            interdiff_reason?: string;
             stale: boolean;
             /** Format: int64 */
             whitespace_only_count: number;
@@ -3046,6 +3048,10 @@ export interface operations {
                 from?: string;
                 /** @description End SHA for range diff (inclusive) */
                 to?: string;
+                /** @description Patchset number to compare FROM (Gerrit-style rebase-aware interdiff) */
+                from_patchset?: number;
+                /** @description Patchset number to compare TO */
+                to_patchset?: number;
             };
             header?: never;
             path: {

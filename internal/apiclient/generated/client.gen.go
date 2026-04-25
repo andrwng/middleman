@@ -331,6 +331,8 @@ type DiffResponse struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema              *string     `json:"$schema,omitempty"`
 	Files               *[]DiffFile `json:"files"`
+	InterdiffKind       *string     `json:"interdiff_kind,omitempty"`
+	InterdiffReason     *string     `json:"interdiff_reason,omitempty"`
 	Stale               bool        `json:"stale"`
 	WhitespaceOnlyCount int64       `json:"whitespace_only_count"`
 }
@@ -1006,6 +1008,12 @@ type GetReposByOwnerByNamePullsByNumberDiffParams struct {
 
 	// To End SHA for range diff (inclusive)
 	To *string `form:"to,omitempty" json:"to,omitempty"`
+
+	// FromPatchset Patchset number to compare FROM (Gerrit-style rebase-aware interdiff)
+	FromPatchset *int64 `form:"from_patchset,omitempty" json:"from_patchset,omitempty"`
+
+	// ToPatchset Patchset number to compare TO
+	ToPatchset *int64 `form:"to_patchset,omitempty" json:"to_patchset,omitempty"`
 }
 
 // ListStacksParams defines parameters for ListStacks.
@@ -4350,6 +4358,38 @@ func NewGetReposByOwnerByNamePullsByNumberDiffRequest(server string, owner strin
 		if params.To != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "to", *params.To, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.FromPatchset != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "from_patchset", *params.FromPatchset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.ToPatchset != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "to_patchset", *params.ToPatchset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err

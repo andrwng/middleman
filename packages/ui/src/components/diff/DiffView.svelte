@@ -44,6 +44,7 @@
   const scope = $derived(diffStore.getScope());
   const activeCommit = $derived(diffStore.getActiveCommit());
   const commitIndex = $derived(diffStore.getCommitIndex());
+  const interdiff = $derived(diffStore.getInterdiff());
 
   function scrollToFile(path: string): void {
     if (!diffArea) return;
@@ -147,6 +148,20 @@
       Diff may be outdated -- showing changes as of an earlier version of this PR.
     </div>
   {/if}
+  {#if interdiff && interdiff.kind !== "clean"}
+    <div class="interdiff-banner" role="status">
+      <strong>
+        {#if interdiff.kind === "conflicted"}
+          Interdiff unavailable — rebase noise could not be subtracted.
+        {:else}
+          Interdiff unavailable — patchsets have no common ancestor.
+        {/if}
+      </strong>
+      <span class="interdiff-banner__detail">
+        Showing the raw diff between patchset heads.{interdiff.reason ? ` (${interdiff.reason})` : ""}
+      </span>
+    </div>
+  {/if}
 
   <div class="diff-body">
     {#if loading && !diff}
@@ -221,6 +236,23 @@
     border-bottom: 1px solid var(--diff-stale-border);
     font-size: 12px;
     flex-shrink: 0;
+  }
+
+  .interdiff-banner {
+    padding: 6px 16px;
+    background: color-mix(in srgb, var(--accent-amber) 15%, var(--bg-surface));
+    color: var(--text-primary);
+    border-bottom: 1px solid var(--accent-amber);
+    font-size: 12px;
+    flex-shrink: 0;
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    flex-wrap: wrap;
+  }
+
+  .interdiff-banner__detail {
+    color: var(--text-secondary);
   }
 
   .diff-body {

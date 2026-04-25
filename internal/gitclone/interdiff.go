@@ -6,6 +6,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -34,6 +35,15 @@ const (
 // InterdiffResult carries the result of InterdiffPatchsets.
 type InterdiffResult struct {
 	Diff   []byte
+	Kind   InterdiffKind
+	Reason string
+}
+
+// StructuredInterdiff is the parsed equivalent of InterdiffResult,
+// shaped the same as gitclone.DiffResult so callers can render
+// it through the existing diff UI without special-casing.
+type StructuredInterdiff struct {
+	Result *DiffResult
 	Kind   InterdiffKind
 	Reason string
 }
@@ -166,6 +176,133 @@ func (m *Manager) InterdiffPatchsets(
 		return InterdiffResult{}, fmt.Errorf("interdiff: synthetic diff: %w", err)
 	}
 	return InterdiffResult{Kind: InterdiffClean, Diff: diff}, nil
+}
+
+// InterdiffPatchsetsStructured is the structured (parsed) equivalent
+// of InterdiffPatchsets. Runs the same cherry-pick strategy but
+// returns a *DiffResult so callers can render through the existing
+// diff UI without parsing raw bytes.
+//
+// On a clean result the returned DiffResult is the synthetic diff
+// (old patchset replayed onto new base → newHead). On conflicted or
+// unrelated outcomes it is the raw oldHead..newHead diff.
+func (m *Manager) InterdiffPatchsetsStructured(
+	ctx context.Context,
+	host, owner, name string,
+	oldHead, oldBase, newHead, newBase string,
+	hideWhitespace bool,
+) (StructuredInterdiff, error) {
+	cloneDir := m.ClonePath(host, owner, name)
+
+	// Missing SHAs: fall back to raw diff between heads when we have
+	// both, else return an empty structured result.
+	if oldHead == "" || oldBase == "" || newHead == "" || newBase == "" {
+		if oldHead == "" || newHead == "" || oldHead == newHead {
+			return StructuredInterdiff{
+				Result: &DiffResult{Files: []DiffFile{}},
+				Kind:   InterdiffUnrelated,
+				Reason: "missing patchset SHAs",
+			}, nil
+		}
+		res, err := m.Diff(ctx, host, owner, name, oldHead, newHead, hideWhitespace)
+		if err != nil {
+			return StructuredInterdiff{}, err
+		}
+		return StructuredInterdiff{
+			Result: res,
+			Kind:   InterdiffUnrelated,
+			Reason: "missing patchset SHAs",
+		}, nil
+	}
+
+	// All SHAs must be reachable.
+	for _, sha := range []string{oldHead, oldBase, newHead, newBase} {
+		if _, err := m.git(ctx, host, cloneDir, "cat-file", "-e", sha); err != nil {
+			return StructuredInterdiff{}, fmt.Errorf("interdiff: sha %s not in clone %s/%s: %w", sha, owner, name, err)
+		}
+	}
+
+	// Trivial case: same head.
+	if oldHead == newHead {
+		return StructuredInterdiff{
+			Result: &DiffResult{Files: []DiffFile{}},
+			Kind:   InterdiffClean,
+		}, nil
+	}
+
+	// Unrelated bases: raw diff, labeled unrelated.
+	if _, err := m.git(ctx, host, cloneDir, "merge-base", oldBase, newBase); err != nil {
+		res, dErr := m.Diff(ctx, host, owner, name, oldHead, newHead, hideWhitespace)
+		if dErr != nil {
+			return StructuredInterdiff{}, fmt.Errorf("interdiff: unrelated histories and raw diff failed: %w", dErr)
+		}
+		return StructuredInterdiff{
+			Result: res,
+			Kind:   InterdiffUnrelated,
+			Reason: "patchsets share no common ancestor",
+		}, nil
+	}
+
+	// Empty old range: synthetic head == newBase, so diff newBase..newHead.
+	if oldBase == oldHead {
+		res, err := m.Diff(ctx, host, owner, name, newBase, newHead, hideWhitespace)
+		if err != nil {
+			return StructuredInterdiff{}, fmt.Errorf("interdiff (empty old range) diff: %w", err)
+		}
+		return StructuredInterdiff{Result: res, Kind: InterdiffClean}, nil
+	}
+
+	// Spin up a worktree at newBase and cherry-pick oldBase..oldHead.
+	wtPath := filepath.Join(
+		filepath.Dir(cloneDir),
+		"interdiff-worktrees",
+		fmt.Sprintf("%s-%d-%d", filepath.Base(cloneDir), time.Now().UnixNano(), rand.Int()),
+	)
+	if err := os.MkdirAll(filepath.Dir(wtPath), 0o755); err != nil {
+		return StructuredInterdiff{}, fmt.Errorf("interdiff: prepare worktree dir: %w", err)
+	}
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_, _ = m.git(cleanupCtx, host, wtPath, "cherry-pick", "--abort")
+		_, _ = m.git(cleanupCtx, host, cloneDir, "worktree", "remove", "--force", wtPath)
+		_ = os.RemoveAll(wtPath)
+		_, _ = m.git(cleanupCtx, host, cloneDir, "worktree", "prune")
+	}()
+
+	if _, err := m.git(ctx, host, cloneDir, "worktree", "add", "--detach", wtPath, newBase); err != nil {
+		return StructuredInterdiff{}, fmt.Errorf("interdiff: worktree add: %w", err)
+	}
+
+	if _, err := m.git(ctx, host, wtPath, "cherry-pick", oldBase+".."+oldHead); err != nil {
+		// Conflict: fall back to raw oldHead..newHead diff.
+		res, dErr := m.Diff(ctx, host, owner, name, oldHead, newHead, hideWhitespace)
+		if dErr != nil {
+			return StructuredInterdiff{}, fmt.Errorf("interdiff: cherry-pick failed (%v) and raw diff failed (%w)", err, dErr)
+		}
+		return StructuredInterdiff{
+			Result: res,
+			Kind:   InterdiffConflicted,
+			Reason: "cherry-pick of old patchset onto new base did not apply cleanly",
+		}, nil
+	}
+
+	// Capture the synthetic head SHA; the commit objects are in the
+	// shared object store so Diff against the bare clone resolves them.
+	syntheticOut, err := m.git(ctx, host, wtPath, "rev-parse", "HEAD")
+	if err != nil {
+		return StructuredInterdiff{}, fmt.Errorf("interdiff: rev-parse synthetic HEAD: %w", err)
+	}
+	syntheticHead := strings.TrimSpace(string(syntheticOut))
+	if syntheticHead == "" {
+		return StructuredInterdiff{}, fmt.Errorf("interdiff: empty synthetic HEAD after cherry-pick")
+	}
+
+	res, err := m.Diff(ctx, host, owner, name, syntheticHead, newHead, hideWhitespace)
+	if err != nil {
+		return StructuredInterdiff{}, fmt.Errorf("interdiff: structured synthetic diff: %w", err)
+	}
+	return StructuredInterdiff{Result: res, Kind: InterdiffClean}, nil
 }
 
 // rawDiffBetween is the fallback `git diff a b` for cases where

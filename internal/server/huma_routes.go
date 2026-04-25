@@ -2251,13 +2251,15 @@ func toPRNotesResponse(n db.PRNotes) prNotesResponse {
 // --- Diff ---
 
 type getDiffInput struct {
-	Owner      string `path:"owner"`
-	Name       string `path:"name"`
-	Number     int    `path:"number"`
-	Whitespace string `query:"whitespace"`
-	Commit     string `query:"commit" doc:"Scope to a single commit SHA"`
-	From       string `query:"from"   doc:"Start SHA for range diff (inclusive)"`
-	To         string `query:"to"     doc:"End SHA for range diff (inclusive)"`
+	Owner        string `path:"owner"`
+	Name         string `path:"name"`
+	Number       int    `path:"number"`
+	Whitespace   string `query:"whitespace"`
+	Commit       string `query:"commit" doc:"Scope to a single commit SHA"`
+	From         string `query:"from"   doc:"Start SHA for range diff (inclusive)"`
+	To           string `query:"to"     doc:"End SHA for range diff (inclusive)"`
+	FromPatchset int    `query:"from_patchset" doc:"Patchset number to compare FROM (Gerrit-style rebase-aware interdiff)"`
+	ToPatchset   int    `query:"to_patchset"   doc:"Patchset number to compare TO"`
 }
 
 type getDiffOutput struct {
@@ -2282,6 +2284,15 @@ func (s *Server) getDiff(ctx context.Context, input *getDiffInput) (*getDiffOutp
 
 	host := s.syncer.HostForRepo(input.Owner, input.Name)
 	hideWhitespace := input.Whitespace == "hide"
+
+	// Patchset-pair scope: serve the rebase-aware interdiff. Mutually
+	// exclusive with commit / from-to SHA scopes.
+	if input.FromPatchset > 0 || input.ToPatchset > 0 {
+		if input.Commit != "" || input.From != "" || input.To != "" {
+			return nil, huma.Error400BadRequest("invalid scope: 'from_patchset'/'to_patchset' cannot be combined with 'commit' or 'from'/'to'")
+		}
+		return s.getDiffByPatchsets(ctx, input, host, hideWhitespace, shas.Stale())
+	}
 
 	// Determine diff range based on scope query params.
 	diffFrom := shas.MergeBaseSHA
@@ -2341,6 +2352,80 @@ func (s *Server) getDiff(ctx context.Context, input *getDiffInput) (*getDiffOutp
 		Stale:               result.Stale,
 		WhitespaceOnlyCount: result.WhitespaceOnlyCount,
 		Files:               result.Files,
+	}}, nil
+}
+
+// getDiffByPatchsets serves the rebase-aware interdiff for a patchset
+// pair. Looks up the recorded head/base SHAs for each patchset and
+// defers to gitclone.InterdiffPatchsetsStructured; callers receive a
+// normal diff plus interdiff_kind / interdiff_reason metadata so the
+// UI can banner-flag conflicted or unrelated results.
+func (s *Server) getDiffByPatchsets(
+	ctx context.Context,
+	input *getDiffInput,
+	host string,
+	hideWhitespace, stale bool,
+) (*getDiffOutput, error) {
+	if input.FromPatchset <= 0 || input.ToPatchset <= 0 {
+		return nil, huma.Error400BadRequest("both from_patchset and to_patchset are required")
+	}
+	mrID, err := s.lookupMRID(ctx, repoNumberPathRef{
+		owner: input.Owner, name: input.Name, number: input.Number,
+	})
+	if err != nil {
+		return nil, huma.Error404NotFound("pull request not found")
+	}
+	rows, err := s.db.ListPatchsets(ctx, mrID)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("list patchsets: " + err.Error())
+	}
+	byNumber := make(map[int]db.PRPatchset, len(rows))
+	for _, p := range rows {
+		byNumber[p.Number] = p
+	}
+	from, ok := byNumber[input.FromPatchset]
+	if !ok {
+		return nil, huma.Error404NotFound(fmt.Sprintf("patchset PS%d not found", input.FromPatchset))
+	}
+	to, ok := byNumber[input.ToPatchset]
+	if !ok {
+		return nil, huma.Error404NotFound(fmt.Sprintf("patchset PS%d not found", input.ToPatchset))
+	}
+
+	// Trivial same-patchset comparison: empty diff, clean kind.
+	if from.HeadSHA == to.HeadSHA {
+		return &getDiffOutput{Body: diffResponse{
+			Stale:         stale,
+			Files:         []gitclone.DiffFile{},
+			InterdiffKind: string(gitclone.InterdiffClean),
+		}}, nil
+	}
+
+	si, err := s.clones.InterdiffPatchsetsStructured(
+		ctx, host, input.Owner, input.Name,
+		from.HeadSHA, from.MergeBaseSHA, to.HeadSHA, to.MergeBaseSHA,
+		hideWhitespace,
+	)
+	if err != nil {
+		if errors.Is(err, gitclone.ErrNotFound) {
+			return nil, huma.Error404NotFound("interdiff not available: referenced commit not found")
+		}
+		slog.Error("failed to compute interdiff",
+			"owner", input.Owner, "name", input.Name, "number", input.Number,
+			"from_ps", input.FromPatchset, "to_ps", input.ToPatchset, "err", err)
+		return nil, huma.Error502BadGateway("failed to compute interdiff")
+	}
+
+	res := si.Result
+	if res == nil {
+		res = &gitclone.DiffResult{Files: []gitclone.DiffFile{}}
+	}
+	return &getDiffOutput{Body: diffResponse{
+		Stale:               stale,
+		WhitespaceOnlyCount: res.WhitespaceOnlyCount,
+		Files:               res.Files,
+		InterdiffKind:       string(si.Kind),
+		InterdiffReason:     si.Reason,
 	}}, nil
 }
 

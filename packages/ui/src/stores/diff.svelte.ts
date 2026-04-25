@@ -4,7 +4,8 @@ export type DiffScope =
   | { kind: "head" }
   | { kind: "commit"; sha: string }
   | { kind: "range"; fromSha: string; toSha: string }
-  | { kind: "unreviewed" };
+  | { kind: "unreviewed" }
+  | { kind: "patchsets"; fromNumber: number; toNumber: number };
 
 export interface Patchset {
   id: number;
@@ -930,6 +931,7 @@ export function createDiffStore(opts?: DiffStoreOptions) {
         const r = getUnreviewedRange();
         return r ? `unreviewed:${r.fromSha}..${r.toSha}` : "unreviewed:empty";
       }
+      case "patchsets": return `ps:${s.fromNumber}..${s.toNumber}`;
     }
   }
 
@@ -969,6 +971,10 @@ export function createDiffStore(opts?: DiffStoreOptions) {
         p.set("to", r.toSha);
       }
       // If r is null, caller falls through to HEAD scope (no params).
+    }
+    if (s.kind === "patchsets") {
+      p.set("from_patchset", String(s.fromNumber));
+      p.set("to_patchset", String(s.toNumber));
     }
     return p;
   }
@@ -1155,6 +1161,23 @@ export function createDiffStore(opts?: DiffStoreOptions) {
     }
   }
 
+  // selectPatchsets pins the diff to a Gerrit-style interdiff between
+  // two patchsets. Server does the cherry-pick math and returns the
+  // rebase-subtracted diff; UI reads interdiff_kind on the response to
+  // banner-flag conflicted or unrelated fallbacks.
+  function selectPatchsets(fromNumber: number, toNumber: number): void {
+    if (fromNumber === toNumber) return;
+    scope = { kind: "patchsets", fromNumber, toNumber };
+    if (currentOwner && currentName && currentNumber) {
+      void loadDiff(currentOwner, currentName, currentNumber);
+    }
+  }
+
+  function getInterdiff(): { kind: string; reason: string } | null {
+    if (!diff || !diff.interdiff_kind) return null;
+    return { kind: diff.interdiff_kind, reason: diff.interdiff_reason ?? "" };
+  }
+
   function resetToHead(): void {
     scope = { kind: "head" };
     if (currentOwner && currentName && currentNumber) {
@@ -1230,10 +1253,14 @@ export function createDiffStore(opts?: DiffStoreOptions) {
       if (idx < commits.length - 1) selectCommit(commits[idx + 1]!.sha);
     } else if (s.kind === "range") {
       selectCommit(s.fromSha);
-    } else {
-      // unreviewed → step into the oldest unreviewed commit.
+    } else if (s.kind === "unreviewed") {
       const r = getUnreviewedRange();
       if (r) selectCommit(r.fromSha);
+    } else if (s.kind === "patchsets") {
+      // Commit-level navigation is orthogonal to patchset comparison —
+      // stepping drops back to HEAD so j/k doesn't silently change the
+      // interdiff pair under the user.
+      resetToHead();
     }
   }
 
@@ -1255,7 +1282,9 @@ export function createDiffStore(opts?: DiffStoreOptions) {
       }
     } else if (s.kind === "range") {
       selectCommit(s.toSha);
-    } else {
+    } else if (s.kind === "unreviewed") {
+      resetToHead();
+    } else if (s.kind === "patchsets") {
       resetToHead();
     }
   }
@@ -1326,6 +1355,8 @@ export function createDiffStore(opts?: DiffStoreOptions) {
     getNotesError,
     selectCommit,
     selectRange,
+    selectPatchsets,
+    getInterdiff,
     resetToHead,
     selectUnreviewed,
     hasUnreviewed,

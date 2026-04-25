@@ -5188,6 +5188,274 @@ func TestAPIListPatchsets_NotFound(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, resp.StatusCode())
 }
 
+// TestAPIGetDiff_PatchsetPair exercises the Gerrit-style rebase-aware
+// interdiff over the full HTTP stack. Scenario: PS1 adds `x.txt` on
+// top of main commit M0. Main then advances to M1 (adds `extra.txt`).
+// PS2 is PS1 rebased onto M1 with an amended body of `x.txt`. A
+// reviewer asking "what did the author actually change between PS1
+// and PS2?" should see *only* the `x.txt` delta — the rebase of
+// `extra.txt` must be subtracted out.
+func TestAPIGetDiff_PatchsetPair(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+
+	dir := t.TempDir()
+	database, err := db.Open(filepath.Join(dir, "test.db"))
+	require.NoError(err)
+	t.Cleanup(func() { database.Close() })
+
+	bareDir := filepath.Join(dir, "clones")
+	require.NoError(os.MkdirAll(bareDir, 0o755))
+	bare := filepath.Join(bareDir, "github.com", "acme", "widget.git")
+
+	work := filepath.Join(dir, "work")
+	runGit(t, dir, "init", "--bare", "--initial-branch=main", bare)
+	runGit(t, dir, "clone", bare, work)
+	runGit(t, work, "config", "user.email", "test@test.com")
+	runGit(t, work, "config", "user.name", "Test")
+
+	require.NoError(os.WriteFile(filepath.Join(work, "base.txt"), []byte("base\n"), 0o644))
+	runGit(t, work, "add", ".")
+	runGit(t, work, "commit", "-m", "M0")
+	runGit(t, work, "push", "origin", "main")
+	oldBase := testGitSHA(t, work, "HEAD")
+
+	// PS1: branch off M0 and add x.txt.
+	runGit(t, work, "checkout", "-b", "pr")
+	require.NoError(os.WriteFile(filepath.Join(work, "x.txt"), []byte("v1\n"), 0o644))
+	runGit(t, work, "add", ".")
+	runGit(t, work, "commit", "-m", "add x")
+	runGit(t, work, "push", "origin", "pr")
+	ps1Head := testGitSHA(t, work, "HEAD")
+
+	// Advance main to M1.
+	runGit(t, work, "checkout", "main")
+	require.NoError(os.WriteFile(filepath.Join(work, "extra.txt"), []byte("extra\n"), 0o644))
+	runGit(t, work, "add", ".")
+	runGit(t, work, "commit", "-m", "M1")
+	runGit(t, work, "push", "origin", "main")
+	newBase := testGitSHA(t, work, "HEAD")
+
+	// PS2: rebase PS1 onto M1 AND amend x.txt's content from v1 -> v2.
+	runGit(t, work, "checkout", "pr")
+	runGit(t, work, "rebase", "main")
+	require.NoError(os.WriteFile(filepath.Join(work, "x.txt"), []byte("v2\n"), 0o644))
+	runGit(t, work, "add", ".")
+	runGit(t, work, "commit", "--amend", "--no-edit")
+	runGit(t, work, "push", "--force", "origin", "pr")
+	ps2Head := testGitSHA(t, work, "HEAD")
+
+	clones := gitclone.New(bareDir, nil)
+	mock := &mockGH{}
+	repos := []ghclient.RepoRef{{Owner: "acme", Name: "widget", PlatformHost: "github.com"}}
+	syncer := ghclient.NewSyncer(map[string]ghclient.Client{"github.com": mock}, database, nil, repos, time.Minute, nil, nil)
+	t.Cleanup(syncer.Stop)
+	srv := New(database, syncer, nil, "/", nil, ServerOptions{Clones: clones})
+
+	mrID := seedPR(t, database, "acme", "widget", 1)
+	ctx := context.Background()
+	repoID, err := database.UpsertRepo(ctx, "github.com", "acme", "widget")
+	require.NoError(err)
+	// PR-level SHAs reflect the current (PS2) state so the non-interdiff
+	// code paths still have a valid merge-base to fall back on.
+	require.NoError(database.UpdateDiffSHAs(ctx, repoID, 1, ps2Head, newBase, newBase))
+
+	_, _, err = database.RecordPatchset(ctx, mrID, db.RecordPatchsetOpts{
+		HeadSHA: ps1Head, BaseSHA: oldBase, MergeBaseSHA: oldBase,
+	})
+	require.NoError(err)
+	_, _, err = database.RecordPatchset(ctx, mrID, db.RecordPatchsetOpts{
+		HeadSHA: ps2Head, BaseSHA: newBase, MergeBaseSHA: newBase,
+	})
+	require.NoError(err)
+
+	client := setupTestClient(t, srv)
+	from := int64(1)
+	to := int64(2)
+	resp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberDiffWithResponse(
+		ctx, "acme", "widget", 1,
+		&generated.GetReposByOwnerByNamePullsByNumberDiffParams{
+			FromPatchset: &from,
+			ToPatchset:   &to,
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, resp.StatusCode())
+	require.NotNil(resp.JSON200)
+	require.NotNil(resp.JSON200.InterdiffKind)
+	assert.Equal("clean", *resp.JSON200.InterdiffKind)
+	// Rebase noise (extra.txt) must be subtracted; only x.txt should show.
+	require.NotNil(resp.JSON200.Files)
+	files := *resp.JSON200.Files
+	require.Len(files, 1)
+	assert.Equal("x.txt", files[0].Path)
+}
+
+// TestAPIGetDiff_PatchsetPairUnrelated covers the "no common ancestor"
+// branch: the two patchsets sit on different root histories, so the
+// interdiff math can't apply. The API should return the raw oldHead..newHead
+// diff and flag interdiff_kind = "unrelated".
+func TestAPIGetDiff_PatchsetPairUnrelated(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+
+	dir := t.TempDir()
+	database, err := db.Open(filepath.Join(dir, "test.db"))
+	require.NoError(err)
+	t.Cleanup(func() { database.Close() })
+
+	bareDir := filepath.Join(dir, "clones")
+	require.NoError(os.MkdirAll(bareDir, 0o755))
+	bare := filepath.Join(bareDir, "github.com", "acme", "widget.git")
+
+	work := filepath.Join(dir, "work")
+	runGit(t, dir, "init", "--bare", "--initial-branch=main", bare)
+	runGit(t, dir, "clone", bare, work)
+	runGit(t, work, "config", "user.email", "test@test.com")
+	runGit(t, work, "config", "user.name", "Test")
+
+	// Branch A: seeds main and a PS1 on top.
+	require.NoError(os.WriteFile(filepath.Join(work, "base.txt"), []byte("base\n"), 0o644))
+	runGit(t, work, "add", ".")
+	runGit(t, work, "commit", "-m", "M0")
+	runGit(t, work, "push", "origin", "main")
+	oldBase := testGitSHA(t, work, "HEAD")
+
+	runGit(t, work, "checkout", "-b", "pr")
+	require.NoError(os.WriteFile(filepath.Join(work, "x.txt"), []byte("v1\n"), 0o644))
+	runGit(t, work, "add", ".")
+	runGit(t, work, "commit", "-m", "add x (PS1)")
+	runGit(t, work, "push", "origin", "pr")
+	ps1Head := testGitSHA(t, work, "HEAD")
+
+	// Branch B: orphan root with no shared ancestor.
+	runGit(t, work, "checkout", "--orphan", "unrelated")
+	runGit(t, work, "rm", "-rf", ".")
+	require.NoError(os.WriteFile(filepath.Join(work, "y.txt"), []byte("y\n"), 0o644))
+	runGit(t, work, "add", ".")
+	runGit(t, work, "commit", "-m", "unrelated root")
+	newBase := testGitSHA(t, work, "HEAD")
+
+	require.NoError(os.WriteFile(filepath.Join(work, "x.txt"), []byte("v2\n"), 0o644))
+	runGit(t, work, "add", ".")
+	runGit(t, work, "commit", "-m", "add x (PS2)")
+	runGit(t, work, "push", "origin", "unrelated")
+	ps2Head := testGitSHA(t, work, "HEAD")
+
+	clones := gitclone.New(bareDir, nil)
+	mock := &mockGH{}
+	repos := []ghclient.RepoRef{{Owner: "acme", Name: "widget", PlatformHost: "github.com"}}
+	syncer := ghclient.NewSyncer(map[string]ghclient.Client{"github.com": mock}, database, nil, repos, time.Minute, nil, nil)
+	t.Cleanup(syncer.Stop)
+	srv := New(database, syncer, nil, "/", nil, ServerOptions{Clones: clones})
+
+	mrID := seedPR(t, database, "acme", "widget", 1)
+	ctx := context.Background()
+	repoID, err := database.UpsertRepo(ctx, "github.com", "acme", "widget")
+	require.NoError(err)
+	require.NoError(database.UpdateDiffSHAs(ctx, repoID, 1, ps2Head, newBase, newBase))
+
+	_, _, err = database.RecordPatchset(ctx, mrID, db.RecordPatchsetOpts{
+		HeadSHA: ps1Head, BaseSHA: oldBase, MergeBaseSHA: oldBase,
+	})
+	require.NoError(err)
+	_, _, err = database.RecordPatchset(ctx, mrID, db.RecordPatchsetOpts{
+		HeadSHA: ps2Head, BaseSHA: newBase, MergeBaseSHA: newBase,
+	})
+	require.NoError(err)
+
+	client := setupTestClient(t, srv)
+	from := int64(1)
+	to := int64(2)
+	resp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberDiffWithResponse(
+		ctx, "acme", "widget", 1,
+		&generated.GetReposByOwnerByNamePullsByNumberDiffParams{
+			FromPatchset: &from,
+			ToPatchset:   &to,
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, resp.StatusCode())
+	require.NotNil(resp.JSON200)
+	require.NotNil(resp.JSON200.InterdiffKind)
+	assert.Equal("unrelated", *resp.JSON200.InterdiffKind)
+	require.NotNil(resp.JSON200.InterdiffReason)
+	assert.NotEmpty(*resp.JSON200.InterdiffReason)
+}
+
+// Trivial same-patchset comparison: no git work needed, empty diff, clean.
+func TestAPIGetDiff_PatchsetPairSamePatchset(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+
+	// Use the clone-equipped fixture so getDiff's `s.clones == nil`
+	// guard doesn't short-circuit to 503 before we reach the
+	// patchset branch.
+	client, database, _, headSHA, _ := setupTestServerWithClones(t)
+	ctx := context.Background()
+
+	mrID, err := database.GetMRIDByRepoAndNumber(ctx, "acme", "widget", 1)
+	require.NoError(err)
+
+	_, _, err = database.RecordPatchset(ctx, mrID, db.RecordPatchsetOpts{
+		HeadSHA: headSHA, BaseSHA: headSHA, MergeBaseSHA: headSHA,
+	})
+	require.NoError(err)
+
+	from := int64(1)
+	to := int64(1)
+	resp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberDiffWithResponse(
+		ctx, "acme", "widget", 1,
+		&generated.GetReposByOwnerByNamePullsByNumberDiffParams{
+			FromPatchset: &from,
+			ToPatchset:   &to,
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, resp.StatusCode())
+	require.NotNil(resp.JSON200)
+	require.NotNil(resp.JSON200.InterdiffKind)
+	assert.Equal("clean", *resp.JSON200.InterdiffKind)
+	require.NotNil(resp.JSON200.Files)
+	assert.Empty(*resp.JSON200.Files)
+}
+
+// Mixing commit/range scope with patchset scope should be rejected.
+func TestAPIGetDiff_PatchsetAndCommitMutuallyExclusive(t *testing.T) {
+	client, _, _, headSHA, _ := setupTestServerWithClones(t)
+	from := int64(1)
+	to := int64(2)
+	resp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberDiffWithResponse(
+		context.Background(), "acme", "widget", 1,
+		&generated.GetReposByOwnerByNamePullsByNumberDiffParams{
+			Commit:       &headSHA,
+			FromPatchset: &from,
+			ToPatchset:   &to,
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode())
+}
+
+// Requesting a patchset number that doesn't exist should 404.
+func TestAPIGetDiff_PatchsetUnknownNumber(t *testing.T) {
+	client, database, _, _, _ := setupTestServerWithClones(t)
+	ctx := context.Background()
+	// No patchset rows recorded.
+	_ = database
+	from := int64(1)
+	to := int64(2)
+	resp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberDiffWithResponse(
+		ctx, "acme", "widget", 1,
+		&generated.GetReposByOwnerByNamePullsByNumberDiffParams{
+			FromPatchset: &from,
+			ToPatchset:   &to,
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusNotFound, resp.StatusCode())
+}
+
 func TestAPIGetCommits(t *testing.T) {
 	require := require.New(t)
 	assert := Assert.New(t)

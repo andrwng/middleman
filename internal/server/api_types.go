@@ -89,6 +89,11 @@ type diffResponse struct {
 	Stale               bool                `json:"stale"`
 	WhitespaceOnlyCount int                 `json:"whitespace_only_count"`
 	Files               []gitclone.DiffFile `json:"files"`
+	// Interdiff metadata — only set when the request scoped to a
+	// patchset pair. Kind is "clean" | "conflicted" | "unrelated";
+	// Reason is a human-readable explanation when not clean.
+	InterdiffKind   string `json:"interdiff_kind,omitempty"`
+	InterdiffReason string `json:"interdiff_reason,omitempty"`
 }
 
 type filesResponse struct {
