@@ -81,6 +81,14 @@ func (m *Manager) Diff(
 	if files == nil {
 		files = []DiffFile{}
 	}
+	// Binary/rename-only files appear in --raw but not in patch output,
+	// so ParsePatch leaves their Hunks as nil. Marshal that as `[]`
+	// (not `null`) so the frontend's `file.hunks[0]` access is safe.
+	for i := range files {
+		if files[i].Hunks == nil {
+			files[i].Hunks = []Hunk{}
+		}
+	}
 
 	// Step 4: Mark whitespace-only files (only in default mode).
 	if !hideWhitespace {
