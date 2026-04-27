@@ -48,41 +48,41 @@
     }
   });
 
+  // Mental model: "no base = no comparison = full PR diff." Plain-click
+  // moves the selected pin (which side you're viewing). Shift-click
+  // sets the compare base to enable a PSn vs PSm interdiff. ✕ always
+  // exits comparison mode by clearing the base.
   function applyScope(): void {
     if (selectedNumber === null) return;
     const list = patchsets;
     if (!list || list.length === 0) return;
-    const latest = list[list.length - 1]!.number;
-    // No base and viewing the latest = "the normal PR diff"; ask the
-    // store for HEAD scope so we don't pay for an interdiff round-trip
-    // on the common case.
-    if (baseNumber === null && selectedNumber === latest) {
+    if (baseNumber === null) {
       diff.resetToHead();
       return;
     }
-    const from = baseNumber ?? 0;
-    if (from === 0) {
-      // Showing "just this patchset" — compare PS(n-1) → PS(n) if
-      // possible, otherwise fall back to HEAD scope.
-      const idx = list.findIndex((p) => p.number === selectedNumber);
-      if (idx > 0) {
-        diff.selectPatchsets(list[idx - 1]!.number, selectedNumber);
-      } else {
-        diff.resetToHead();
-      }
+    if (baseNumber === selectedNumber) {
+      // Degenerate compare; treat as no comparison.
+      diff.resetToHead();
       return;
     }
-    if (from === selectedNumber) return;
-    diff.selectPatchsets(from, selectedNumber);
+    diff.selectPatchsets(baseNumber, selectedNumber);
   }
 
   function pick(n: number, e?: MouseEvent): void {
-    if (e?.shiftKey && selectedNumber !== null && n !== selectedNumber) {
-      baseNumber = n;
+    if (e?.shiftKey) {
+      // Shift-click: set/toggle the compare base. Clicking the
+      // already-set base clears it.
+      if (baseNumber === n) {
+        baseNumber = null;
+      } else {
+        baseNumber = n;
+      }
       applyScope();
       return;
     }
     selectedNumber = n;
+    // If the new selection collides with the base, drop the base —
+    // a chip can't be both sides of a comparison.
     if (baseNumber !== null && baseNumber === n) {
       baseNumber = null;
     }
