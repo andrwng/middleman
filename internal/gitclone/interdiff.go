@@ -1,13 +1,12 @@
 package gitclone
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
-	"math/rand/v2"
-	"os"
-	"path/filepath"
+	"os/exec"
 	"strings"
-	"time"
 )
 
 // InterdiffKind classifies the result of an interdiff computation.
@@ -19,12 +18,13 @@ import (
 type InterdiffKind string
 
 const (
-	// InterdiffClean: cherry-picking the old patchset onto the new
-	// base succeeded; the returned diff is the author's net change.
+	// InterdiffClean: replaying the old patchset onto the new base
+	// succeeded; the returned diff is the author's net change.
 	InterdiffClean InterdiffKind = "clean"
-	// InterdiffConflicted: cherry-pick failed mid-way (the rebase
-	// resolved conflicts that we can't replay). The returned diff
-	// is the raw oldHead..newHead and includes rebase noise.
+	// InterdiffConflicted: the synthetic 3-way merge had conflicts
+	// (the author resolved conflicts during their rebase that we
+	// can't replay). The returned diff is the raw oldHead..newHead
+	// and includes rebase noise.
 	InterdiffConflicted InterdiffKind = "conflicted"
 	// InterdiffUnrelated: ranges have no overlapping ancestry, or a
 	// required SHA is missing/empty. Returned diff is the raw
@@ -51,16 +51,13 @@ type StructuredInterdiff struct {
 // InterdiffPatchsets computes a Gerrit-style "patchset N vs M with
 // rebase noise subtracted" diff.
 //
-// Strategy: spin up an ephemeral worktree at newBase, cherry-pick
-// oldBase..oldHead into it (replaying the author's old commits onto
-// the new base), then diff the synthetic head against newHead. When
-// the cherry-pick fails (the author resolved conflicts during the
-// rebase) we fall back to the raw oldHead..newHead diff with a
-// `conflicted` kind so the caller can banner-flag it.
-//
-// The worktree is always cleaned up — successful path uses defer,
-// the defer also runs cherry-pick --abort on conflict so the
-// branch state is sane before removal.
+// Strategy: ask git for an in-memory 3-way merge of (newBase, oldHead)
+// using oldBase as the merge base — equivalent to replaying the
+// author's old commits onto the new base, but without touching a
+// working tree. Diff the resulting synthetic tree against newHead.
+// When merge-tree reports conflicts (the author resolved conflicts
+// during their rebase) we fall back to the raw oldHead..newHead diff
+// with a `conflicted` kind so the caller can banner-flag it.
 func (m *Manager) InterdiffPatchsets(
 	ctx context.Context,
 	host, owner, name string,
@@ -68,8 +65,6 @@ func (m *Manager) InterdiffPatchsets(
 ) (InterdiffResult, error) {
 	cloneDir := m.ClonePath(host, owner, name)
 
-	// Empty SHAs: no useful subtraction possible. Fall back to raw
-	// diff (or empty when both heads match).
 	if oldHead == "" || oldBase == "" || newHead == "" || newBase == "" {
 		raw, err := m.rawDiffBetween(ctx, host, cloneDir, oldHead, newHead)
 		if err != nil {
@@ -82,24 +77,14 @@ func (m *Manager) InterdiffPatchsets(
 		}, nil
 	}
 
-	// All SHAs must be present in the clone. Fail fast with a clear
-	// error so the caller doesn't end up with a nonsense diff.
-	for _, sha := range []string{oldHead, oldBase, newHead, newBase} {
-		if _, err := m.git(ctx, host, cloneDir, "cat-file", "-e", sha); err != nil {
-			return InterdiffResult{}, fmt.Errorf("interdiff: sha %s not in clone %s/%s: %w", sha, owner, name, err)
-		}
+	if err := m.requireSHAs(ctx, host, cloneDir, owner, name, oldHead, oldBase, newHead, newBase); err != nil {
+		return InterdiffResult{}, err
 	}
 
-	// Trivial case: same head SHA, no diff at all.
 	if oldHead == newHead {
 		return InterdiffResult{Kind: InterdiffClean}, nil
 	}
 
-	// If oldBase and newBase share no ancestry (force-push to a
-	// completely different branch), cherry-picking technically
-	// applies but the resulting diff is meaningless. Flag as
-	// unrelated and return the raw oldHead..newHead diff so the
-	// reviewer knows what they're looking at.
 	if _, err := m.git(ctx, host, cloneDir, "merge-base", oldBase, newBase); err != nil {
 		raw, dErr := m.git(ctx, host, cloneDir, "diff", oldHead, newHead)
 		if dErr != nil {
@@ -112,9 +97,7 @@ func (m *Manager) InterdiffPatchsets(
 		}, nil
 	}
 
-	// Empty range (oldBase == oldHead): no commits to cherry-pick;
-	// the synthetic head is just newBase, so the interdiff is
-	// newBase..newHead. Avoids an unnecessary worktree spin-up.
+	// Empty old range: synthetic tree == newBase, so diff newBase..newHead.
 	if oldBase == oldHead {
 		diff, err := m.git(ctx, host, cloneDir, "diff", newBase, newHead)
 		if err != nil {
@@ -123,69 +106,32 @@ func (m *Manager) InterdiffPatchsets(
 		return InterdiffResult{Kind: InterdiffClean, Diff: diff}, nil
 	}
 
-	// Spin up a unique worktree off newBase and cherry-pick
-	// oldBase..oldHead onto it.
-	wtPath := filepath.Join(
-		filepath.Dir(cloneDir),
-		"interdiff-worktrees",
-		fmt.Sprintf("%s-%d-%d", filepath.Base(cloneDir), time.Now().UnixNano(), rand.Int()),
-	)
-	if err := os.MkdirAll(filepath.Dir(wtPath), 0o755); err != nil {
-		return InterdiffResult{}, fmt.Errorf("interdiff: prepare worktree dir: %w", err)
+	syntheticTree, conflicted, err := m.mergeTreeReplay(ctx, host, cloneDir, oldBase, newBase, oldHead)
+	if err != nil {
+		return InterdiffResult{}, fmt.Errorf("interdiff: merge-tree: %w", err)
 	}
-
-	// Clean up the worktree no matter what — including aborting any
-	// in-progress cherry-pick state. Use a detached background
-	// context so cleanup runs even if the caller's ctx was
-	// cancelled mid-flight.
-	defer func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_, _ = m.git(cleanupCtx, host, wtPath, "cherry-pick", "--abort")
-		_, _ = m.git(cleanupCtx, host, cloneDir, "worktree", "remove", "--force", wtPath)
-		_ = os.RemoveAll(wtPath)
-		_, _ = m.git(cleanupCtx, host, cloneDir, "worktree", "prune")
-	}()
-
-	if _, err := m.git(ctx, host, cloneDir, "worktree", "add", "--detach", wtPath, newBase); err != nil {
-		return InterdiffResult{}, fmt.Errorf("interdiff: worktree add: %w", err)
-	}
-
-	// Cherry-pick the old range onto the new base. -X theirs is
-	// intentionally NOT used — we want conflicts to surface so we
-	// can label the result.
-	if _, err := m.git(ctx, host, wtPath, "cherry-pick", oldBase+".."+oldHead); err != nil {
-		// Cherry-pick failed (conflict or otherwise). Fall back to
-		// the raw oldHead..newHead diff. Cleanup defer handles the
-		// abort + worktree teardown.
+	if conflicted {
 		raw, dErr := m.git(ctx, host, cloneDir, "diff", oldHead, newHead)
 		if dErr != nil {
-			return InterdiffResult{}, fmt.Errorf("interdiff: cherry-pick failed (%v) and raw diff failed (%w)", err, dErr)
+			return InterdiffResult{}, fmt.Errorf("interdiff: conflict and raw diff failed: %w", dErr)
 		}
 		return InterdiffResult{
 			Kind:   InterdiffConflicted,
 			Diff:   raw,
-			Reason: "cherry-pick of old patchset onto new base did not apply cleanly",
+			Reason: "merge of old patchset onto new base had conflicts",
 		}, nil
 	}
 
-	// Cherry-pick succeeded; HEAD in the worktree is the synthetic
-	// "old patchset replayed onto new base." Diff against newHead.
-	diff, err := m.git(ctx, host, wtPath, "diff", "HEAD", newHead)
+	diff, err := m.git(ctx, host, cloneDir, "diff", syntheticTree, newHead)
 	if err != nil {
 		return InterdiffResult{}, fmt.Errorf("interdiff: synthetic diff: %w", err)
 	}
 	return InterdiffResult{Kind: InterdiffClean, Diff: diff}, nil
 }
 
-// InterdiffPatchsetsStructured is the structured (parsed) equivalent
-// of InterdiffPatchsets. Runs the same cherry-pick strategy but
-// returns a *DiffResult so callers can render through the existing
-// diff UI without parsing raw bytes.
-//
-// On a clean result the returned DiffResult is the synthetic diff
-// (old patchset replayed onto new base → newHead). On conflicted or
-// unrelated outcomes it is the raw oldHead..newHead diff.
+// InterdiffPatchsetsStructured returns the same result as
+// InterdiffPatchsets but as a parsed *DiffResult so callers can
+// render through the existing diff UI without parsing raw bytes.
 func (m *Manager) InterdiffPatchsetsStructured(
 	ctx context.Context,
 	host, owner, name string,
@@ -194,8 +140,6 @@ func (m *Manager) InterdiffPatchsetsStructured(
 ) (StructuredInterdiff, error) {
 	cloneDir := m.ClonePath(host, owner, name)
 
-	// Missing SHAs: fall back to raw diff between heads when we have
-	// both, else return an empty structured result.
 	if oldHead == "" || oldBase == "" || newHead == "" || newBase == "" {
 		if oldHead == "" || newHead == "" || oldHead == newHead {
 			return StructuredInterdiff{
@@ -215,14 +159,10 @@ func (m *Manager) InterdiffPatchsetsStructured(
 		}, nil
 	}
 
-	// All SHAs must be reachable.
-	for _, sha := range []string{oldHead, oldBase, newHead, newBase} {
-		if _, err := m.git(ctx, host, cloneDir, "cat-file", "-e", sha); err != nil {
-			return StructuredInterdiff{}, fmt.Errorf("interdiff: sha %s not in clone %s/%s: %w", sha, owner, name, err)
-		}
+	if err := m.requireSHAs(ctx, host, cloneDir, owner, name, oldHead, oldBase, newHead, newBase); err != nil {
+		return StructuredInterdiff{}, err
 	}
 
-	// Trivial case: same head.
 	if oldHead == newHead {
 		return StructuredInterdiff{
 			Result: &DiffResult{Files: []DiffFile{}},
@@ -230,7 +170,6 @@ func (m *Manager) InterdiffPatchsetsStructured(
 		}, nil
 	}
 
-	// Unrelated bases: raw diff, labeled unrelated.
 	if _, err := m.git(ctx, host, cloneDir, "merge-base", oldBase, newBase); err != nil {
 		res, dErr := m.Diff(ctx, host, owner, name, oldHead, newHead, hideWhitespace)
 		if dErr != nil {
@@ -243,7 +182,6 @@ func (m *Manager) InterdiffPatchsetsStructured(
 		}, nil
 	}
 
-	// Empty old range: synthetic head == newBase, so diff newBase..newHead.
 	if oldBase == oldHead {
 		res, err := m.Diff(ctx, host, owner, name, newBase, newHead, hideWhitespace)
 		if err != nil {
@@ -252,57 +190,94 @@ func (m *Manager) InterdiffPatchsetsStructured(
 		return StructuredInterdiff{Result: res, Kind: InterdiffClean}, nil
 	}
 
-	// Spin up a worktree at newBase and cherry-pick oldBase..oldHead.
-	wtPath := filepath.Join(
-		filepath.Dir(cloneDir),
-		"interdiff-worktrees",
-		fmt.Sprintf("%s-%d-%d", filepath.Base(cloneDir), time.Now().UnixNano(), rand.Int()),
-	)
-	if err := os.MkdirAll(filepath.Dir(wtPath), 0o755); err != nil {
-		return StructuredInterdiff{}, fmt.Errorf("interdiff: prepare worktree dir: %w", err)
+	syntheticTree, conflicted, err := m.mergeTreeReplay(ctx, host, cloneDir, oldBase, newBase, oldHead)
+	if err != nil {
+		return StructuredInterdiff{}, fmt.Errorf("interdiff: merge-tree: %w", err)
 	}
-	defer func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_, _ = m.git(cleanupCtx, host, wtPath, "cherry-pick", "--abort")
-		_, _ = m.git(cleanupCtx, host, cloneDir, "worktree", "remove", "--force", wtPath)
-		_ = os.RemoveAll(wtPath)
-		_, _ = m.git(cleanupCtx, host, cloneDir, "worktree", "prune")
-	}()
-
-	if _, err := m.git(ctx, host, cloneDir, "worktree", "add", "--detach", wtPath, newBase); err != nil {
-		return StructuredInterdiff{}, fmt.Errorf("interdiff: worktree add: %w", err)
-	}
-
-	if _, err := m.git(ctx, host, wtPath, "cherry-pick", oldBase+".."+oldHead); err != nil {
-		// Conflict: fall back to raw oldHead..newHead diff.
+	if conflicted {
 		res, dErr := m.Diff(ctx, host, owner, name, oldHead, newHead, hideWhitespace)
 		if dErr != nil {
-			return StructuredInterdiff{}, fmt.Errorf("interdiff: cherry-pick failed (%v) and raw diff failed (%w)", err, dErr)
+			return StructuredInterdiff{}, fmt.Errorf("interdiff: conflict and raw diff failed: %w", dErr)
 		}
 		return StructuredInterdiff{
 			Result: res,
 			Kind:   InterdiffConflicted,
-			Reason: "cherry-pick of old patchset onto new base did not apply cleanly",
+			Reason: "merge of old patchset onto new base had conflicts",
 		}, nil
 	}
 
-	// Capture the synthetic head SHA; the commit objects are in the
-	// shared object store so Diff against the bare clone resolves them.
-	syntheticOut, err := m.git(ctx, host, wtPath, "rev-parse", "HEAD")
-	if err != nil {
-		return StructuredInterdiff{}, fmt.Errorf("interdiff: rev-parse synthetic HEAD: %w", err)
-	}
-	syntheticHead := strings.TrimSpace(string(syntheticOut))
-	if syntheticHead == "" {
-		return StructuredInterdiff{}, fmt.Errorf("interdiff: empty synthetic HEAD after cherry-pick")
-	}
-
-	res, err := m.Diff(ctx, host, owner, name, syntheticHead, newHead, hideWhitespace)
+	res, err := m.Diff(ctx, host, owner, name, syntheticTree, newHead, hideWhitespace)
 	if err != nil {
 		return StructuredInterdiff{}, fmt.Errorf("interdiff: structured synthetic diff: %w", err)
 	}
 	return StructuredInterdiff{Result: res, Kind: InterdiffClean}, nil
+}
+
+// mergeTreeReplay runs an in-memory 3-way merge of (newBase, oldHead)
+// — semantically equivalent to cherry-picking oldBase..oldHead onto
+// newBase, but without touching a working tree. Returns the
+// resulting tree SHA and whether the merge had conflicts.
+//
+// Apple Git 2.39 doesn't support --merge-base=; we rely on git's
+// auto-detection from the two refs. In our model oldHead descends
+// from oldBase and newBase shares oldBase, so merge-base(newBase,
+// oldHead) will resolve to oldBase (or its ancestor) — exactly what
+// we want. The caller has already pre-checked shared ancestry.
+//
+// Exit codes:
+//
+//	0  → clean merge, output is the tree SHA on a single line
+//	1  → conflicts present, first line is still the tree SHA
+//	>1 → genuine error (missing object, IO problem, etc.)
+func (m *Manager) mergeTreeReplay(
+	ctx context.Context, host, cloneDir, oldBase, newBase, oldHead string,
+) (treeSHA string, conflicted bool, err error) {
+	_ = oldBase // currently passed in for symmetry / future --merge-base wiring
+	out, err := m.git(ctx, host, cloneDir,
+		"merge-tree", "--write-tree", "--name-only",
+		newBase, oldHead,
+	)
+	if err != nil {
+		// Exit code 1 = conflict (still useful — first line is the
+		// tree SHA, but we don't trust it for a "clean" interdiff).
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return "", true, nil
+		}
+		// Stderr is wrapped in the error; check for the "unrelated
+		// histories" message to translate it into our caller-visible
+		// kind. The pre-check via `git merge-base` should catch most
+		// of these, but some edge cases (e.g. one side is a tree
+		// already merged-in) only surface here.
+		if strings.Contains(err.Error(), "unrelated histories") {
+			return "", true, nil
+		}
+		return "", false, err
+	}
+	first := bytes.IndexByte(out, '\n')
+	if first < 0 {
+		first = len(out)
+	}
+	treeSHA = strings.TrimSpace(string(out[:first]))
+	if treeSHA == "" {
+		return "", false, fmt.Errorf("merge-tree: empty tree SHA in output: %q", out)
+	}
+	return treeSHA, false, nil
+}
+
+// requireSHAs verifies that every SHA passed to interdiff is
+// reachable in the bare clone, so the caller doesn't end up with a
+// nonsense fallback diff produced by git silently treating a missing
+// SHA as an empty tree.
+func (m *Manager) requireSHAs(
+	ctx context.Context, host, cloneDir, owner, name string, shas ...string,
+) error {
+	for _, sha := range shas {
+		if _, err := m.git(ctx, host, cloneDir, "cat-file", "-e", sha); err != nil {
+			return fmt.Errorf("interdiff: sha %s not in clone %s/%s: %w", sha, owner, name, err)
+		}
+	}
+	return nil
 }
 
 // rawDiffBetween is the fallback `git diff a b` for cases where
