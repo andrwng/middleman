@@ -207,7 +207,7 @@
         <section class="brief__section">
           <h4 class="brief__section-title">Intent</h4>
           <div class="brief__section-body markdown-body">
-            {@html renderMarkdown(sections.intent, { owner, name })}
+            {@html renderMarkdown(sections.intent, { owner, name, sha: brief.head_sha })}
           </div>
         </section>
       {/if}
@@ -217,7 +217,7 @@
             <div class="brief__half">
               <h4 class="brief__section-title brief__section-title--before">Before</h4>
               <div class="brief__section-body markdown-body">
-                {@html renderMarkdown(sections.before, { owner, name })}
+                {@html renderMarkdown(sections.before, { owner, name, sha: brief.head_sha })}
               </div>
             </div>
           {/if}
@@ -225,7 +225,7 @@
             <div class="brief__half">
               <h4 class="brief__section-title brief__section-title--after">After</h4>
               <div class="brief__section-body markdown-body">
-                {@html renderMarkdown(sections.after, { owner, name })}
+                {@html renderMarkdown(sections.after, { owner, name, sha: brief.head_sha })}
               </div>
             </div>
           {/if}
@@ -235,7 +235,7 @@
         <section class="brief__section">
           <h4 class="brief__section-title">Commits</h4>
           <div class="brief__section-body markdown-body">
-            {@html renderMarkdown(sections.commits, { owner, name })}
+            {@html renderMarkdown(sections.commits, { owner, name, sha: brief.head_sha })}
           </div>
         </section>
       {/if}
@@ -243,14 +243,14 @@
         <section class="brief__section">
           <h4 class="brief__section-title">Observations</h4>
           <div class="brief__section-body markdown-body">
-            {@html renderMarkdown(sections.observations, { owner, name })}
+            {@html renderMarkdown(sections.observations, { owner, name, sha: brief.head_sha })}
           </div>
         </section>
       {/if}
       {#if sections.other}
         <section class="brief__section">
           <div class="brief__section-body markdown-body">
-            {@html renderMarkdown(sections.other, { owner, name })}
+            {@html renderMarkdown(sections.other, { owner, name, sha: brief.head_sha })}
           </div>
         </section>
       {/if}

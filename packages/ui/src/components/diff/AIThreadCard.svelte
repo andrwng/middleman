@@ -146,7 +146,7 @@
       </div>
       {#if q.status === "done" && q.answer}
         <div class="ai-thread__answer markdown-body">
-          {@html renderMarkdown(q.answer, { owner: repoOwner, name: repoName })}
+          {@html renderMarkdown(q.answer, { owner: repoOwner, name: repoName, sha: thread.commit_sha })}
         </div>
         <div class="ai-thread__answer-actions">
           <button
