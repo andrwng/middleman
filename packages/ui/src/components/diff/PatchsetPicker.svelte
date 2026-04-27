@@ -48,15 +48,19 @@
     }
   });
 
-  // Mental model: "no base = no comparison = full PR diff." Plain-click
-  // moves the selected pin (which side you're viewing). Shift-click
-  // sets the compare base to enable a PSn vs PSm interdiff. ✕ always
-  // exits comparison mode by clearing the base.
+  // Plain-click a chip = view that patchset (auto-derives the
+  // previous patchset as the base so something visible happens).
+  // Shift-click = explicitly set/toggle the compare base. ✕ snaps
+  // the selection back to the latest chip and clears the base, so
+  // the user always lands on the full PR diff.
   function applyScope(): void {
     if (selectedNumber === null) return;
     const list = patchsets;
     if (!list || list.length === 0) return;
-    if (baseNumber === null) {
+    const latest = list[list.length - 1]!.number;
+
+    // Latest selected with no explicit base = the normal PR diff.
+    if (selectedNumber === latest && baseNumber === null) {
       diff.resetToHead();
       return;
     }
@@ -65,7 +69,20 @@
       diff.resetToHead();
       return;
     }
-    diff.selectPatchsets(baseNumber, selectedNumber);
+    if (baseNumber !== null) {
+      diff.selectPatchsets(baseNumber, selectedNumber);
+      return;
+    }
+    // Plain-click on a non-latest chip: auto-derive base = previous
+    // patchset so the click produces a visible delta.
+    const idx = list.findIndex((p) => p.number === selectedNumber);
+    if (idx > 0) {
+      diff.selectPatchsets(list[idx - 1]!.number, selectedNumber);
+      return;
+    }
+    // Oldest patchset clicked alone — no prior patchset to compare
+    // against. Fall back to full PR diff.
+    diff.resetToHead();
   }
 
   function pick(n: number, e?: MouseEvent): void {
@@ -81,7 +98,7 @@
       return;
     }
     selectedNumber = n;
-    // If the new selection collides with the base, drop the base —
+    // Selecting the chip that's currently the base clears the base —
     // a chip can't be both sides of a comparison.
     if (baseNumber !== null && baseNumber === n) {
       baseNumber = null;
@@ -90,6 +107,13 @@
   }
 
   function clearBase(): void {
+    // Snap selected back to latest so applyScope's auto-derive
+    // doesn't immediately re-create the comparison the user is
+    // trying to exit.
+    const list = patchsets;
+    if (list && list.length > 0) {
+      selectedNumber = list[list.length - 1]!.number;
+    }
     baseNumber = null;
     applyScope();
   }
@@ -113,7 +137,8 @@
             (isSelected ? "Currently viewing this patchset.\n" : "") +
             `Head: ${p.head_sha.slice(0, 7)}\n` +
             `Observed: ${timeAgo(p.observed_at)}\n\n` +
-            "Click to view; shift-click to set as compare base."
+            "Click to view this patchset (compares with the previous one).\n" +
+            "Shift-click to set as compare base for an explicit pair."
           }
         >
           PS{p.number}
