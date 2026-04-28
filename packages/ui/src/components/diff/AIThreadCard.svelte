@@ -2,6 +2,7 @@
   import { getStores } from "../../context.js";
   import { renderMarkdown } from "../../utils/markdown.js";
   import type { AIThread, AIQuestion } from "../../stores/ai.svelte.js";
+  import { extractFileRefs } from "../../stores/fileResolver.svelte.js";
 
   interface Props {
     thread: AIThread;
@@ -11,9 +12,37 @@
 
   const { thread, repoOwner, repoName }: Props = $props();
 
-  const { ai: aiStore, diff: diffStore } = getStores();
+  const { ai: aiStore, diff: diffStore, fileResolver } = getStores();
 
   const questions = $derived(aiStore.getQuestionsForThread(thread.id));
+
+  // Kick off filename resolution whenever a question's answer arrives,
+  // so basenames Claude mentions get deep-linked when the server can
+  // confirm the unique path at the thread's commit SHA.
+  $effect(() => {
+    if (!thread.commit_sha) return;
+    const refs: string[] = [];
+    for (const q of questions) {
+      if (q.answer) refs.push(...extractFileRefs(q.answer));
+    }
+    if (refs.length === 0) return;
+    void fileResolver.resolve(repoOwner, repoName, thread.commit_sha, refs);
+  });
+
+  const resolverVersion = $derived(
+    thread.commit_sha ? fileResolver.getVersion(thread.commit_sha) : 0,
+  );
+
+  const repoCtx = $derived({
+    owner: repoOwner,
+    name: repoName,
+    sha: thread.commit_sha,
+    resolveBareFile: (basename: string) =>
+      thread.commit_sha
+        ? fileResolver.lookup(thread.commit_sha, basename)
+        : undefined,
+    cacheBust: String(resolverVersion),
+  });
   let followUp = $state("");
   let sending = $state(false);
 
@@ -146,7 +175,7 @@
       </div>
       {#if q.status === "done" && q.answer}
         <div class="ai-thread__answer markdown-body">
-          {@html renderMarkdown(q.answer, { owner: repoOwner, name: repoName, sha: thread.commit_sha })}
+          {@html renderMarkdown(q.answer, repoCtx)}
         </div>
         <div class="ai-thread__answer-actions">
           <button

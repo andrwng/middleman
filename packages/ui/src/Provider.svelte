@@ -76,6 +76,9 @@
     createBriefStore,
   } from "./stores/brief.svelte.js";
   import {
+    createFileResolverStore,
+  } from "./stores/fileResolver.svelte.js";
+  import {
     createAuthorGroupsStore,
   } from "./stores/authorGroups.svelte.js";
   import { createViewerStore } from "./stores/viewer.svelte.js";
@@ -221,6 +224,9 @@
     const briefStore = createBriefStore({
       ...(cfg.basePath != null && { getBasePath: () => cfg.basePath as string }),
     });
+    const fileResolverStore = createFileResolverStore({
+      ...(cfg.basePath != null && { getBasePath: () => cfg.basePath as string }),
+    });
 
     const authorGroupsStore = createAuthorGroupsStore({ client: cl });
     void authorGroupsStore.load();
@@ -247,6 +253,7 @@
       authorGroups: authorGroupsStore,
       viewer: viewerStore,
       aiSessions: aiSessionsStore,
+      fileResolver: fileResolverStore,
     };
 
     if (roborevBase) {

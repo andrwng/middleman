@@ -5437,6 +5437,97 @@ func TestAPIGetDiff_PatchsetAndCommitMutuallyExclusive(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode())
 }
 
+// TestAPIResolveFiles_Basics covers the AI-prose filename resolver:
+// bare basenames with a unique match return the full path; ambiguous
+// or missing names get omitted; multi-segment paths are verified
+// against the actual tree.
+func TestAPIResolveFiles_Basics(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+
+	dir := t.TempDir()
+	database, err := db.Open(filepath.Join(dir, "test.db"))
+	require.NoError(err)
+	t.Cleanup(func() { database.Close() })
+
+	bareDir := filepath.Join(dir, "clones")
+	require.NoError(os.MkdirAll(bareDir, 0o755))
+	bare := filepath.Join(bareDir, "github.com", "acme", "widget.git")
+
+	work := filepath.Join(dir, "work")
+	runGit(t, dir, "init", "--bare", "--initial-branch=main", bare)
+	runGit(t, dir, "clone", bare, work)
+	runGit(t, work, "config", "user.email", "test@test.com")
+	runGit(t, work, "config", "user.name", "Test")
+
+	mkFile := func(rel, body string) {
+		full := filepath.Join(work, rel)
+		require.NoError(os.MkdirAll(filepath.Dir(full), 0o755))
+		require.NoError(os.WriteFile(full, []byte(body), 0o644))
+	}
+	mkFile("internal/server/huma_routes.go", "package server\n")
+	mkFile("internal/server/types.go", "package server\n")
+	// Duplicate basename across two dirs — should resolve to ambiguous.
+	mkFile("internal/db/types.go", "package db\n")
+	mkFile("pkg/util/util.go", "package util\n")
+
+	runGit(t, work, "add", ".")
+	runGit(t, work, "commit", "-m", "seed")
+	runGit(t, work, "push", "origin", "main")
+	headSHA := testGitSHA(t, work, "HEAD")
+
+	clones := gitclone.New(bareDir, nil)
+	mock := &mockGH{}
+	repos := []ghclient.RepoRef{{Owner: "acme", Name: "widget", PlatformHost: "github.com"}}
+	syncer := ghclient.NewSyncer(map[string]ghclient.Client{"github.com": mock}, database, nil, repos, time.Minute, nil, nil)
+	t.Cleanup(syncer.Stop)
+	srv := New(database, syncer, nil, "/", nil, ServerOptions{Clones: clones})
+	client := setupTestClient(t, srv)
+
+	resp, err := client.HTTP.PostReposByOwnerByNameResolveFilesWithResponse(
+		context.Background(), "acme", "widget",
+		generated.PostReposByOwnerByNameResolveFilesJSONRequestBody{
+			Sha: headSHA,
+			Names: &[]string{
+				"huma_routes.go",                 // unique → resolves
+				"types.go",                       // ambiguous → omitted
+				"util.go",                        // unique → resolves
+				"missing.go",                     // doesn't exist → omitted
+				"internal/server/huma_routes.go", // multi-seg verified
+				"internal/server/nope.go",        // multi-seg missing
+			},
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, resp.StatusCode())
+	require.NotNil(resp.JSON200)
+	r := resp.JSON200.Resolutions
+	assert.Equal("internal/server/huma_routes.go", r["huma_routes.go"])
+	assert.Equal("pkg/util/util.go", r["util.go"])
+	assert.Equal("internal/server/huma_routes.go", r["internal/server/huma_routes.go"])
+	_, hasTypes := r["types.go"]
+	assert.False(hasTypes, "ambiguous basename should be omitted")
+	_, hasMissing := r["missing.go"]
+	assert.False(hasMissing)
+	_, hasNope := r["internal/server/nope.go"]
+	assert.False(hasNope)
+}
+
+// No clones configured → 503 (defensive guard for fresh installs
+// before any clone has been provisioned).
+func TestAPIResolveFiles_NoClones(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	client := setupTestClient(t, srv)
+	resp, err := client.HTTP.PostReposByOwnerByNameResolveFilesWithResponse(
+		context.Background(), "acme", "widget",
+		generated.PostReposByOwnerByNameResolveFilesJSONRequestBody{
+			Sha: "deadbeef", Names: &[]string{"foo.go"},
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode())
+}
+
 // Requesting a patchset number that doesn't exist should 404.
 func TestAPIGetDiff_PatchsetUnknownNumber(t *testing.T) {
 	client, database, _, _, _ := setupTestServerWithClones(t)

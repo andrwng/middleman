@@ -755,6 +755,25 @@ type Repo struct {
 	PlatformHost             string     `json:"PlatformHost"`
 }
 
+// ResolveFilesRequest defines model for ResolveFilesRequest.
+type ResolveFilesRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+
+	// Names Bare filenames or paths to resolve
+	Names *[]string `json:"names"`
+
+	// Sha Commit/tree SHA to resolve names against
+	Sha string `json:"sha"`
+}
+
+// ResolveFilesResponse defines model for ResolveFilesResponse.
+type ResolveFilesResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema      *string           `json:"$schema,omitempty"`
+	Resolutions map[string]string `json:"resolutions"`
+}
+
 // ResolveItemResponse defines model for ResolveItemResponse.
 type ResolveItemResponse struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -1071,6 +1090,9 @@ type PostReposByOwnerByNamePullsByNumberReviewJSONRequestBody = SubmitReviewInpu
 // SetKanbanStateJSONRequestBody defines body for SetKanbanState for application/json ContentType.
 type SetKanbanStateJSONRequestBody = SetKanbanStateInputBody
 
+// PostReposByOwnerByNameResolveFilesJSONRequestBody defines body for PostReposByOwnerByNameResolveFiles for application/json ContentType.
+type PostReposByOwnerByNameResolveFilesJSONRequestBody = ResolveFilesRequest
+
 // UnsetStarredJSONRequestBody defines body for UnsetStarred for application/json ContentType.
 type UnsetStarredJSONRequestBody = StarredRequest
 
@@ -1323,6 +1345,11 @@ type ClientInterface interface {
 
 	// PostReposByOwnerByNamePullsByNumberSync request
 	PostReposByOwnerByNamePullsByNumberSync(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PostReposByOwnerByNameResolveFilesWithBody request with any body
+	PostReposByOwnerByNameResolveFilesWithBody(ctx context.Context, owner string, name string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	PostReposByOwnerByNameResolveFiles(ctx context.Context, owner string, name string, body PostReposByOwnerByNameResolveFilesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListStacks request
 	ListStacks(ctx context.Context, params *ListStacksParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2092,6 +2119,30 @@ func (c *Client) SetKanbanState(ctx context.Context, owner string, name string, 
 
 func (c *Client) PostReposByOwnerByNamePullsByNumberSync(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPostReposByOwnerByNamePullsByNumberSyncRequest(c.Server, owner, name, number)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PostReposByOwnerByNameResolveFilesWithBody(ctx context.Context, owner string, name string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostReposByOwnerByNameResolveFilesRequestWithBody(c.Server, owner, name, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PostReposByOwnerByNameResolveFiles(ctx context.Context, owner string, name string, body PostReposByOwnerByNameResolveFilesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostReposByOwnerByNameResolveFilesRequest(c.Server, owner, name, body)
 	if err != nil {
 		return nil, err
 	}
@@ -5055,6 +5106,60 @@ func NewPostReposByOwnerByNamePullsByNumberSyncRequest(server string, owner stri
 	return req, nil
 }
 
+// NewPostReposByOwnerByNameResolveFilesRequest calls the generic PostReposByOwnerByNameResolveFiles builder with application/json body
+func NewPostReposByOwnerByNameResolveFilesRequest(server string, owner string, name string, body PostReposByOwnerByNameResolveFilesJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPostReposByOwnerByNameResolveFilesRequestWithBody(server, owner, name, "application/json", bodyReader)
+}
+
+// NewPostReposByOwnerByNameResolveFilesRequestWithBody generates requests for PostReposByOwnerByNameResolveFiles with any type of body
+func NewPostReposByOwnerByNameResolveFilesRequestWithBody(server string, owner string, name string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/resolve-files", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListStacksRequest generates requests for ListStacks
 func NewListStacksRequest(server string, params *ListStacksParams) (*http.Request, error) {
 	var err error
@@ -5608,6 +5713,11 @@ type ClientWithResponsesInterface interface {
 
 	// PostReposByOwnerByNamePullsByNumberSyncWithResponse request
 	PostReposByOwnerByNamePullsByNumberSyncWithResponse(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberSyncResponse, error)
+
+	// PostReposByOwnerByNameResolveFilesWithBodyWithResponse request with any body
+	PostReposByOwnerByNameResolveFilesWithBodyWithResponse(ctx context.Context, owner string, name string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNameResolveFilesResponse, error)
+
+	PostReposByOwnerByNameResolveFilesWithResponse(ctx context.Context, owner string, name string, body PostReposByOwnerByNameResolveFilesJSONRequestBody, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNameResolveFilesResponse, error)
 
 	// ListStacksWithResponse request
 	ListStacksWithResponse(ctx context.Context, params *ListStacksParams, reqEditors ...RequestEditorFn) (*ListStacksResponse, error)
@@ -6719,6 +6829,29 @@ func (r PostReposByOwnerByNamePullsByNumberSyncResponse) StatusCode() int {
 	return 0
 }
 
+type PostReposByOwnerByNameResolveFilesResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *ResolveFilesResponse
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r PostReposByOwnerByNameResolveFilesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PostReposByOwnerByNameResolveFilesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type ListStacksResponse struct {
 	Body                          []byte
 	HTTPResponse                  *http.Response
@@ -7463,6 +7596,23 @@ func (c *ClientWithResponses) PostReposByOwnerByNamePullsByNumberSyncWithRespons
 		return nil, err
 	}
 	return ParsePostReposByOwnerByNamePullsByNumberSyncResponse(rsp)
+}
+
+// PostReposByOwnerByNameResolveFilesWithBodyWithResponse request with arbitrary body returning *PostReposByOwnerByNameResolveFilesResponse
+func (c *ClientWithResponses) PostReposByOwnerByNameResolveFilesWithBodyWithResponse(ctx context.Context, owner string, name string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNameResolveFilesResponse, error) {
+	rsp, err := c.PostReposByOwnerByNameResolveFilesWithBody(ctx, owner, name, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostReposByOwnerByNameResolveFilesResponse(rsp)
+}
+
+func (c *ClientWithResponses) PostReposByOwnerByNameResolveFilesWithResponse(ctx context.Context, owner string, name string, body PostReposByOwnerByNameResolveFilesJSONRequestBody, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNameResolveFilesResponse, error) {
+	rsp, err := c.PostReposByOwnerByNameResolveFiles(ctx, owner, name, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostReposByOwnerByNameResolveFilesResponse(rsp)
 }
 
 // ListStacksWithResponse request returning *ListStacksResponse
@@ -9069,6 +9219,39 @@ func ParsePostReposByOwnerByNamePullsByNumberSyncResponse(rsp *http.Response) (*
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest MergeRequestDetailResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePostReposByOwnerByNameResolveFilesResponse parses an HTTP response from a PostReposByOwnerByNameResolveFilesWithResponse call
+func ParsePostReposByOwnerByNameResolveFilesResponse(rsp *http.Response) (*PostReposByOwnerByNameResolveFilesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PostReposByOwnerByNameResolveFilesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ResolveFilesResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

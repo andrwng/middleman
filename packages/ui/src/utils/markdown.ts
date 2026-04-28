@@ -11,6 +11,18 @@ interface RepoContext {
   // number mentioned by Claude is meaningful only at the snapshot it
   // was reasoning over.
   sha?: string;
+  // Optional resolver for bare filenames. Returns the unique full
+  // path for a basename if the caller has resolved it (typically
+  // via a server-side `git ls-tree` lookup), null when the basename
+  // is ambiguous or missing, undefined when resolution hasn't
+  // happened yet. Multi-segment paths are passed through unchanged
+  // when the resolver returns the same string. When omitted, only
+  // multi-segment paths are linked.
+  resolveBareFile?: (basename: string) => string | null | undefined;
+  // Cache-bust token. Callers using a resolver should bump this
+  // when resolutions arrive so renderMarkdown's cached HTML doesn't
+  // mask the new state.
+  cacheBust?: string;
 }
 
 // Extensions Claude commonly mentions in review prose. Whitelisted
@@ -64,13 +76,13 @@ const FILE_REF_EXTS = [
 const FILE_REF_EXT_GROUP = FILE_REF_EXTS.join("|");
 
 // Captures: 1=path (with required extension), 2=line, 3=optional end line.
-// The path must include at least one "/" to count as multi-segment;
-// bare filenames like "huma_routes.go:2267" are too ambiguous to link
-// reliably (Claude often omits the directory) and would 404 on github
-// when the file lives in a subdirectory. Better to leave them as plain
-// text than to send the reader to a dead link.
+// Both bare filenames (e.g. "huma_routes.go:42") and multi-segment
+// paths are matched here. Bare filenames are only LINKED if a resolver
+// is provided (and finds a unique match) — otherwise they render as
+// plain text. This avoids the 404 trap from blindly guessing the
+// directory.
 const FILE_REF_RE = new RegExp(
-  String.raw`([\w.\-]+(?:\/[\w.\-]+)+\.(?:` +
+  String.raw`([\w./\-]+\.(?:` +
     FILE_REF_EXT_GROUP +
     String.raw`))(?::(\d+)(?:[-:](\d+))?)`,
 );
@@ -129,14 +141,37 @@ function fileRefExtension(repo?: RepoContext): TokenizerAndRendererExtension {
       };
       const r = repo;
       if (!r?.sha) return t.text;
-      // Strip any leading "./" so the github URL stays clean.
       const cleanPath = t.path.replace(/^\.\//, "");
+
+      // Bare filename (no slash): only link when the caller's
+      // resolver gives us a unique path. Without a resolver, leave
+      // as plain text — guessing the directory produces 404s.
+      let target: string | null = cleanPath;
+      if (!cleanPath.includes("/")) {
+        const resolved = r.resolveBareFile?.(cleanPath);
+        target = typeof resolved === "string" && resolved !== "" ? resolved : null;
+      } else if (r.resolveBareFile) {
+        // Multi-segment paths run through the resolver too so the
+        // server can verify the path exists at this SHA. A non-string
+        // result means "couldn't verify" — fall back to plain text
+        // rather than emit a known-bad link.
+        const resolved = r.resolveBareFile(cleanPath);
+        if (resolved === null) {
+          target = null;
+        } else if (typeof resolved === "string" && resolved !== "") {
+          target = resolved;
+        }
+        // undefined = not yet resolved → keep cleanPath optimistically
+        // until the resolution arrives and re-render replaces it.
+      }
+      if (target === null) return t.text;
+
       const fragment = t.endLine
         ? `L${t.line}-L${t.endLine}`
         : `L${t.line}`;
       const href =
         `https://github.com/${r.owner}/${r.name}/blob/` +
-        `${encodeURIComponent(r.sha)}/${cleanPath}#${fragment}`;
+        `${encodeURIComponent(r.sha)}/${target}#${fragment}`;
       return `<a class="file-ref" href="${href}" target="_blank" rel="noopener">${t.text}</a>`;
     },
   };
@@ -203,7 +238,18 @@ function itemRefExtension(repo?: RepoContext): TokenizerAndRendererExtension {
 const htmlCache = new Map<string, string>();
 const markedCache = new Map<string, Marked>();
 
+// We can't safely cache the Marked instance when a resolver
+// closure is involved — different cards pass different closures
+// reading from different state. Build a fresh instance per call
+// in that case; it's cheap enough.
 function getMarked(repo?: RepoContext): Marked {
+  if (repo?.resolveBareFile) {
+    const m = new Marked({ breaks: true, gfm: true });
+    m.use({
+      extensions: [itemRefExtension(repo), fileRefExtension(repo)],
+    });
+    return m;
+  }
   const key = repo
     ? `${repo.owner}/${repo.name}@${repo.sha ?? ""}`
     : "";
@@ -223,17 +269,26 @@ export function renderMarkdown(
   repo?: RepoContext,
 ): string {
   if (!raw) return "";
+  // Skip the HTML cache when a resolver is in play — its output
+  // depends on resolver state that the (raw, repo) tuple doesn't
+  // capture. cacheBust still buys us caching when the caller
+  // explicitly bumps it.
+  const skipCache = !!repo?.resolveBareFile && !repo.cacheBust;
   const key = repo
-    ? `${repo.owner}/${repo.name}@${repo.sha ?? ""}\0${raw}`
+    ? `${repo.owner}/${repo.name}@${repo.sha ?? ""}#${repo.cacheBust ?? ""}\0${raw}`
     : raw;
-  const cached = htmlCache.get(key);
-  if (cached !== undefined) return cached;
+  if (!skipCache) {
+    const cached = htmlCache.get(key);
+    if (cached !== undefined) return cached;
+  }
 
   const html = DOMPurify.sanitize(
     getMarked(repo).parse(raw) as string,
     { ADD_ATTR: ["target", "data-owner", "data-name", "data-number"] },
   );
-  if (htmlCache.size > 500) htmlCache.clear();
-  htmlCache.set(key, html);
+  if (!skipCache) {
+    if (htmlCache.size > 500) htmlCache.clear();
+    htmlCache.set(key, html);
+  }
   return html;
 }

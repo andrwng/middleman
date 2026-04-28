@@ -665,6 +665,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/repos/{owner}/{name}/resolve-files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post repos by owner by name resolve files */
+        post: operations["post-repos-by-owner-by-name-resolve-files"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/stacks": {
         parameters: {
             query?: never;
@@ -1670,6 +1687,29 @@ export interface components {
             Owner: string;
             Platform: string;
             PlatformHost: string;
+        };
+        ResolveFilesRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/ResolveFilesRequest.json
+             */
+            readonly $schema?: string;
+            /** @description Bare filenames or paths to resolve */
+            names: string[] | null;
+            /** @description Commit/tree SHA to resolve names against */
+            sha: string;
+        };
+        ResolveFilesResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/ResolveFilesResponse.json
+             */
+            readonly $schema?: string;
+            resolutions: {
+                [key: string]: string;
+            };
         };
         ResolveItemResponse: {
             /**
@@ -3484,6 +3524,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MergeRequestDetailResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-resolve-files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResolveFilesRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResolveFilesResponse"];
                 };
             };
             /** @description Error */

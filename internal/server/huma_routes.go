@@ -419,6 +419,7 @@ func (s *Server) registerAPI(api huma.API) {
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/diff", s.getDiff)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/files", s.getFiles)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/blob-range", s.getBlobRange)
+	huma.Post(api, "/repos/{owner}/{name}/resolve-files", s.resolveFiles)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/notes", s.getPRNotes)
 	huma.Put(api, "/repos/{owner}/{name}/pulls/{number}/notes", s.putPRNotes)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/ai-threads", s.createAIThread)
@@ -2155,6 +2156,66 @@ func (s *Server) getBlobRange(ctx context.Context, input *getBlobRangeInput) (*g
 		return nil, huma.Error502BadGateway("read blob: " + err.Error())
 	}
 	return &getBlobRangeOutput{Body: blobRangeResponse{Lines: lines}}, nil
+}
+
+// --- Filename resolution (for AI prose linkification) ---
+
+const resolveFilesMaxNames = 64
+
+type resolveFilesInput struct {
+	Owner string `path:"owner"`
+	Name  string `path:"name"`
+	Body  resolveFilesRequest
+}
+
+type resolveFilesRequest struct {
+	SHA   string   `json:"sha" doc:"Commit/tree SHA to resolve names against"`
+	Names []string `json:"names" doc:"Bare filenames or paths to resolve"`
+}
+
+type resolveFilesOutput struct {
+	Body resolveFilesResponse
+}
+
+type resolveFilesResponse struct {
+	// Resolutions maps each requested name to its unique full path
+	// at the given SHA. Names with zero or multiple matches are
+	// omitted (callers should treat missing entries as "leave as
+	// plain text" rather than guessing).
+	Resolutions map[string]string `json:"resolutions"`
+}
+
+// resolveFiles takes a list of basenames or paths and returns the
+// unique repo path at the given SHA for each. Used by the AI review
+// markdown post-processor to turn bare filenames like "huma_routes.go"
+// into deep links — without server-side resolution we'd guess wrong
+// when files live in subdirectories, producing 404s.
+func (s *Server) resolveFiles(ctx context.Context, input *resolveFilesInput) (*resolveFilesOutput, error) {
+	if s.clones == nil {
+		return nil, huma.Error503ServiceUnavailable("file resolution not available: clone manager not configured")
+	}
+	if input.Body.SHA == "" {
+		return nil, huma.Error400BadRequest("sha is required")
+	}
+	if len(input.Body.Names) == 0 {
+		return &resolveFilesOutput{Body: resolveFilesResponse{Resolutions: map[string]string{}}}, nil
+	}
+	if len(input.Body.Names) > resolveFilesMaxNames {
+		return nil, huma.Error400BadRequest(fmt.Sprintf("too many names (max %d)", resolveFilesMaxNames))
+	}
+
+	host := s.syncer.HostForRepo(input.Owner, input.Name)
+	resolved, err := s.clones.ResolveFilenames(ctx, host, input.Owner, input.Name, input.Body.SHA, input.Body.Names)
+	if err != nil {
+		if errors.Is(err, gitclone.ErrNotFound) {
+			return nil, huma.Error404NotFound("sha not in clone: " + err.Error())
+		}
+		return nil, huma.Error502BadGateway("resolve files: " + err.Error())
+	}
+	if resolved == nil {
+		resolved = map[string]string{}
+	}
+	return &resolveFilesOutput{Body: resolveFilesResponse{Resolutions: resolved}}, nil
 }
 
 // --- Patchsets ---

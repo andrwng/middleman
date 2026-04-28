@@ -53,13 +53,54 @@ describe("renderMarkdown file ref linking", () => {
     expect(renderMarkdown("internal/x.go in passing", REPO)).not.toContain("<a");
   });
 
-  it("does not link bare filenames without a directory", () => {
-    // "huma_routes.go:2267" is too ambiguous — the file is at
-    // internal/server/huma_routes.go but Claude often omits the dir.
-    // Linking blindly produces a 404, so leave it as plain text.
+  it("does not link bare filenames when no resolver is provided", () => {
+    // Without a resolver we can't safely guess the directory, so
+    // leave bare filenames as plain text rather than emit a 404.
     const html = renderMarkdown("see huma_routes.go:2267 for the handler", REPO);
     expect(html).not.toContain("<a");
     expect(html).toContain("huma_routes.go:2267");
+  });
+
+  it("links bare filenames when the resolver gives a unique path", () => {
+    const html = renderMarkdown("see huma_routes.go:2267", {
+      ...REPO,
+      resolveBareFile: (n) =>
+        n === "huma_routes.go" ? "internal/server/huma_routes.go" : null,
+    });
+    expect(html).toContain(
+      "/blob/deadbeef/internal/server/huma_routes.go#L2267",
+    );
+  });
+
+  it("does not link bare filenames the resolver flags as ambiguous", () => {
+    const html = renderMarkdown("see types.go:5 for details", {
+      ...REPO,
+      resolveBareFile: (n) => (n === "types.go" ? null : null),
+    });
+    expect(html).not.toContain("<a");
+  });
+
+  it("renders bare filenames as plain text while resolution is pending", () => {
+    // Resolver returns undefined → state is "asking, not yet known"
+    // → render as plain text. (Once the resolver state updates the
+    // caller will re-invoke renderMarkdown via the cacheBust token.)
+    const html = renderMarkdown("see foo.go:1", {
+      ...REPO,
+      resolveBareFile: () => undefined,
+    });
+    expect(html).not.toContain("<a");
+    expect(html).toContain("foo.go:1");
+  });
+
+  it("verifies multi-segment paths through the resolver too", () => {
+    // The resolver acts as a path validator: a non-existent multi-
+    // segment path returns null → render as plain text rather than
+    // emit a known-bad 404 link.
+    const html = renderMarkdown("see internal/server/missing.go:3", {
+      ...REPO,
+      resolveBareFile: () => null,
+    });
+    expect(html).not.toContain("<a");
   });
 
   it("does not match version-like or time-like colon strings", () => {

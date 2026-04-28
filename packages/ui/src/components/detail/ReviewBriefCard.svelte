@@ -2,6 +2,7 @@
   import { getStores } from "../../context.js";
   import { renderMarkdown } from "../../utils/markdown.js";
   import { timeAgo } from "../../utils/time.js";
+  import { extractFileRefs } from "../../stores/fileResolver.svelte.js";
 
   interface Props {
     owner: string;
@@ -11,7 +12,7 @@
 
   const { owner, name, number }: Props = $props();
 
-  const { brief: briefStore, diff: diffStore } = getStores();
+  const { brief: briefStore, diff: diffStore, fileResolver } = getStores();
 
   const brief = $derived(briefStore.current());
   const commits = $derived(diffStore.getCommits());
@@ -34,6 +35,34 @@
 
   const stale = $derived(briefStore.isStale(headSha));
   const inFlight = $derived(briefStore.isInFlight());
+
+  // Kick off resolution of any bare filenames Claude mentioned so
+  // they can be deep-linked once the server confirms the unique
+  // path at brief.head_sha. The resolver caches per (owner, name,
+  // sha) so this is a one-shot cost when the brief loads.
+  $effect(() => {
+    if (!brief?.content || !brief.head_sha) return;
+    const refs = extractFileRefs(brief.content);
+    if (refs.length === 0) return;
+    void fileResolver.resolve(owner, name, brief.head_sha, refs);
+  });
+
+  // resolveBareFile reads from a $state-backed map; this $derived
+  // tracks it, so renderMarkdown re-runs when resolutions arrive.
+  const resolverVersion = $derived(
+    brief?.head_sha ? fileResolver.getVersion(brief.head_sha) : 0,
+  );
+
+  const repoCtx = $derived({
+    owner,
+    name,
+    sha: brief?.head_sha ?? "",
+    resolveBareFile: (basename: string) =>
+      brief?.head_sha
+        ? fileResolver.lookup(brief.head_sha, basename)
+        : undefined,
+    cacheBust: String(resolverVersion),
+  });
 
   async function generate(depth: "quick" | "deep"): Promise<void> {
     await briefStore.generate(depth);
@@ -207,7 +236,7 @@
         <section class="brief__section">
           <h4 class="brief__section-title">Intent</h4>
           <div class="brief__section-body markdown-body">
-            {@html renderMarkdown(sections.intent, { owner, name, sha: brief.head_sha })}
+            {@html renderMarkdown(sections.intent, repoCtx)}
           </div>
         </section>
       {/if}
@@ -217,7 +246,7 @@
             <div class="brief__half">
               <h4 class="brief__section-title brief__section-title--before">Before</h4>
               <div class="brief__section-body markdown-body">
-                {@html renderMarkdown(sections.before, { owner, name, sha: brief.head_sha })}
+                {@html renderMarkdown(sections.before, repoCtx)}
               </div>
             </div>
           {/if}
@@ -225,7 +254,7 @@
             <div class="brief__half">
               <h4 class="brief__section-title brief__section-title--after">After</h4>
               <div class="brief__section-body markdown-body">
-                {@html renderMarkdown(sections.after, { owner, name, sha: brief.head_sha })}
+                {@html renderMarkdown(sections.after, repoCtx)}
               </div>
             </div>
           {/if}
@@ -235,7 +264,7 @@
         <section class="brief__section">
           <h4 class="brief__section-title">Commits</h4>
           <div class="brief__section-body markdown-body">
-            {@html renderMarkdown(sections.commits, { owner, name, sha: brief.head_sha })}
+            {@html renderMarkdown(sections.commits, repoCtx)}
           </div>
         </section>
       {/if}
@@ -243,14 +272,14 @@
         <section class="brief__section">
           <h4 class="brief__section-title">Observations</h4>
           <div class="brief__section-body markdown-body">
-            {@html renderMarkdown(sections.observations, { owner, name, sha: brief.head_sha })}
+            {@html renderMarkdown(sections.observations, repoCtx)}
           </div>
         </section>
       {/if}
       {#if sections.other}
         <section class="brief__section">
           <div class="brief__section-body markdown-body">
-            {@html renderMarkdown(sections.other, { owner, name, sha: brief.head_sha })}
+            {@html renderMarkdown(sections.other, repoCtx)}
           </div>
         </section>
       {/if}

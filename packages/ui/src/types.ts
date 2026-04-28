@@ -111,6 +111,7 @@ import type { BriefStore } from "./stores/brief.svelte.js";
 import type { AuthorGroupsStore } from "./stores/authorGroups.svelte.js";
 import type { ViewerStore } from "./stores/viewer.svelte.js";
 import type { AISessionsStore } from "./stores/aiSessions.svelte.js";
+import type { FileResolverStore } from "./stores/fileResolver.svelte.js";
 
 export interface StoreInstances {
   pulls: PullsStore;
@@ -128,6 +129,7 @@ export interface StoreInstances {
   authorGroups: AuthorGroupsStore;
   viewer: ViewerStore;
   aiSessions: AISessionsStore;
+  fileResolver: FileResolverStore;
   roborevDaemon?: DaemonStore;
   roborevJobs?: JobsStore;
   roborevReview?: ReviewStore;

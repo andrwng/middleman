@@ -20,15 +20,16 @@ var ErrNotFound = errors.New("git object not found")
 
 // Manager manages bare git clones for diff computation.
 type Manager struct {
-	baseDir string            // directory to store clones
-	tokens  map[string]string // host -> token (e.g., "github.com" -> "ghp_...")
+	baseDir      string            // directory to store clones
+	tokens       map[string]string // host -> token (e.g., "github.com" -> "ghp_...")
+	resolveCache *resolveCache     // basename → full-path tree cache, lazy-init
 }
 
 // New creates a Manager that stores bare clones under baseDir.
 // tokens maps each host (e.g., "github.com") to its auth token.
 // A nil or empty map means all operations proceed without auth.
 func New(baseDir string, tokens map[string]string) *Manager {
-	return &Manager{baseDir: baseDir, tokens: tokens}
+	return &Manager{baseDir: baseDir, tokens: tokens, resolveCache: newResolveCache()}
 }
 
 // ClonePath returns the filesystem path for a repo's bare clone.
