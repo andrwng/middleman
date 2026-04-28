@@ -108,6 +108,45 @@ describe("renderMarkdown file ref linking", () => {
     expect(renderMarkdown("at 09:30:45 the build started", REPO)).not.toContain("<a");
   });
 
+  it("links a bare filename inside a code span when the resolver finds it", () => {
+    // The most common Claude pattern: `huma_routes.go:2267` in
+    // backticks, with the directory omitted. Resolution gives us
+    // the unique path; the codespan renderer wraps the result.
+    const html = renderMarkdown(
+      "the bug is in `huma_routes.go:2267`",
+      {
+        ...REPO,
+        resolveBareFile: (n) =>
+          n === "huma_routes.go" ? "internal/server/huma_routes.go" : null,
+      },
+    );
+    expect(html).toContain(
+      "/blob/deadbeef/internal/server/huma_routes.go#L2267",
+    );
+    // Code styling preserved inside the link.
+    expect(html).toContain("<code>huma_routes.go:2267</code>");
+  });
+
+  it("leaves non-file-ref code spans alone", () => {
+    const html = renderMarkdown("run `git log` to see commits", REPO);
+    expect(html).not.toContain("<a");
+    expect(html).toContain("<code>git log</code>");
+  });
+
+  it("links file refs inside inline code spans (`backtick-wrapped`)", () => {
+    // Claude habitually wraps paths in backticks. Without explicit
+    // codespan handling, marked consumes the `...` as one token and
+    // our inline tokenizer never sees the path. The renderer must
+    // post-process codespans to rescue these.
+    const html = renderMarkdown(
+      "see `internal/server/huma_routes.go:42` for the handler",
+      REPO,
+    );
+    expect(html).toContain(
+      "/blob/deadbeef/internal/server/huma_routes.go#L42",
+    );
+  });
+
   it("does not link inside fenced code blocks", () => {
     const html = renderMarkdown(
       "```\ninternal/x.go:5\n```",

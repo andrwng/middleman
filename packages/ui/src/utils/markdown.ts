@@ -91,13 +91,63 @@ const FILE_REF_RE_ANCHORED = new RegExp(
   "^" + FILE_REF_RE.source,
 );
 
+// resolveFileRefTarget returns the target path to deep-link a
+// file ref, or null when the link should be suppressed (no repo
+// context, ambiguous bare filename, missing path, etc.). Shared by
+// the inline tokenizer and the codespan renderer so both produce
+// links with identical semantics.
+function resolveFileRefTarget(
+  repo: RepoContext | undefined,
+  path: string,
+): string | null {
+  if (!repo?.sha) return null;
+  const cleanPath = path.replace(/^\.\//, "");
+  if (!cleanPath.includes("/")) {
+    const resolved = repo.resolveBareFile?.(cleanPath);
+    if (typeof resolved === "string" && resolved !== "") return resolved;
+    return null;
+  }
+  if (repo.resolveBareFile) {
+    const resolved = repo.resolveBareFile(cleanPath);
+    if (resolved === null) return null;
+    if (typeof resolved === "string" && resolved !== "") return resolved;
+    // undefined = pending; render optimistically with the literal
+    // path so the link works for unmodified subdirectory files in
+    // common cases (most multi-segment refs are correct anyway).
+  }
+  return cleanPath;
+}
+
+function buildFileRefHref(
+  repo: RepoContext,
+  target: string,
+  line: number,
+  endLine?: number,
+): string {
+  const fragment = endLine ? `L${line}-L${endLine}` : `L${line}`;
+  return (
+    `https://github.com/${repo.owner}/${repo.name}/blob/` +
+    `${encodeURIComponent(repo.sha ?? "")}/${target}#${fragment}`
+  );
+}
+
+const HTML_ESCAPES: Record<string, string> = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&#39;",
+};
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => HTML_ESCAPES[c]!);
+}
+
 function fileRefExtension(repo?: RepoContext): TokenizerAndRendererExtension {
   return {
     name: "fileRef",
     level: "inline",
     start(src: string): number | undefined {
-      // Quick reject: file refs always have a colon followed by a
-      // digit. Bail before running the full regex if neither shows up.
       const colonIdx = src.indexOf(":");
       if (colonIdx < 0) return undefined;
       const m = src.match(FILE_REF_RE);
@@ -116,10 +166,8 @@ function fileRefExtension(repo?: RepoContext): TokenizerAndRendererExtension {
       if (!m) return undefined;
       const path = m[1]!;
       const line = parseInt(m[2]!, 10);
-      // Defensive: skip path-like text that's actually a URL hash or
-      // similar — paths starting with a dot-only segment ("./" or
-      // "../") are common in prose; allow those. Reject things that
-      // look like ".some.thing.go" with no slash and a leading dot.
+      // Skip path-like text that's actually a URL hash or similar —
+      // "./" / "../" prefixes are fine; bare "." prefixes aren't.
       if (path.startsWith(".") && !path.startsWith("./") && !path.startsWith("../")) {
         return undefined;
       }
@@ -139,40 +187,37 @@ function fileRefExtension(repo?: RepoContext): TokenizerAndRendererExtension {
         endLine?: number;
         text: string;
       };
-      const r = repo;
-      if (!r?.sha) return t.text;
-      const cleanPath = t.path.replace(/^\.\//, "");
-
-      // Bare filename (no slash): only link when the caller's
-      // resolver gives us a unique path. Without a resolver, leave
-      // as plain text — guessing the directory produces 404s.
-      let target: string | null = cleanPath;
-      if (!cleanPath.includes("/")) {
-        const resolved = r.resolveBareFile?.(cleanPath);
-        target = typeof resolved === "string" && resolved !== "" ? resolved : null;
-      } else if (r.resolveBareFile) {
-        // Multi-segment paths run through the resolver too so the
-        // server can verify the path exists at this SHA. A non-string
-        // result means "couldn't verify" — fall back to plain text
-        // rather than emit a known-bad link.
-        const resolved = r.resolveBareFile(cleanPath);
-        if (resolved === null) {
-          target = null;
-        } else if (typeof resolved === "string" && resolved !== "") {
-          target = resolved;
-        }
-        // undefined = not yet resolved → keep cleanPath optimistically
-        // until the resolution arrives and re-render replaces it.
-      }
-      if (target === null) return t.text;
-
-      const fragment = t.endLine
-        ? `L${t.line}-L${t.endLine}`
-        : `L${t.line}`;
-      const href =
-        `https://github.com/${r.owner}/${r.name}/blob/` +
-        `${encodeURIComponent(r.sha)}/${target}#${fragment}`;
+      const target = resolveFileRefTarget(repo, t.path);
+      if (target === null || !repo?.sha) return t.text;
+      const href = buildFileRefHref(repo, target, t.line, t.endLine);
       return `<a class="file-ref" href="${href}" target="_blank" rel="noopener">${t.text}</a>`;
+    },
+  };
+}
+
+// codespanRenderer overrides marked's default codespan output so
+// that backtick-wrapped file refs (e.g. `internal/server/foo.go:42`)
+// get linked. Without this, marked consumes the codespan as a single
+// token and our inline file-ref tokenizer never sees the path —
+// which is exactly the form Claude prefers in review prose.
+function codespanRenderer(repo?: RepoContext) {
+  return {
+    codespan(token: { text: string }): string {
+      const text = token.text;
+      const m = text.match(FILE_REF_RE_ANCHORED);
+      // Match must consume the whole code text; partial matches mean
+      // the code span is doing something else (e.g. `git log`).
+      if (!m || m[0] !== text) return `<code>${escapeHtml(text)}</code>`;
+      const path = m[1]!;
+      const line = parseInt(m[2]!, 10);
+      const endLine = m[3] ? parseInt(m[3], 10) : undefined;
+      const target = resolveFileRefTarget(repo, path);
+      if (target === null || !repo?.sha) return `<code>${escapeHtml(text)}</code>`;
+      const href = buildFileRefHref(repo, target, line, endLine);
+      return (
+        `<a class="file-ref" href="${href}" target="_blank" rel="noopener">` +
+        `<code>${escapeHtml(text)}</code></a>`
+      );
     },
   };
 }
@@ -245,9 +290,10 @@ const markedCache = new Map<string, Marked>();
 function getMarked(repo?: RepoContext): Marked {
   if (repo?.resolveBareFile) {
     const m = new Marked({ breaks: true, gfm: true });
-    m.use({
-      extensions: [itemRefExtension(repo), fileRefExtension(repo)],
-    });
+    m.use(
+      { extensions: [itemRefExtension(repo), fileRefExtension(repo)] },
+      { renderer: codespanRenderer(repo) },
+    );
     return m;
   }
   const key = repo
@@ -256,9 +302,10 @@ function getMarked(repo?: RepoContext): Marked {
   let instance = markedCache.get(key);
   if (!instance) {
     instance = new Marked({ breaks: true, gfm: true });
-    instance.use({
-      extensions: [itemRefExtension(repo), fileRefExtension(repo)],
-    });
+    instance.use(
+      { extensions: [itemRefExtension(repo), fileRefExtension(repo)] },
+      { renderer: codespanRenderer(repo) },
+    );
     markedCache.set(key, instance);
   }
   return instance;
