@@ -42,8 +42,6 @@
   const error = $derived(diffStore.getDiffError());
   const tabWidth = $derived(diffStore.getTabWidth());
   const scope = $derived(diffStore.getScope());
-  const activeCommit = $derived(diffStore.getActiveCommit());
-  const commitIndex = $derived(diffStore.getCommitIndex());
   const interdiff = $derived(diffStore.getInterdiff());
 
   function scrollToFile(path: string): void {
@@ -185,23 +183,6 @@
           onscroll={onDiffScroll}
           style:tab-size={tabWidth}
         >
-          {#if scope.kind === "commit" && activeCommit && commitIndex}
-            <div class="commit-header">
-              <div class="commit-header__crumbs">
-                <span class="commit-header__crumb commit-header__crumb--pr">PR #{number}</span>
-                <span class="commit-header__sep">&rsaquo;</span>
-                <span class="commit-header__crumb commit-header__crumb--pos">Commit {commitIndex.current}/{commitIndex.total}</span>
-                <span class="commit-header__sep">&rsaquo;</span>
-                <span class="commit-header__crumb commit-header__crumb--sha">{activeCommit.sha.slice(0, 7)}</span>
-                <span class="commit-header__sep">&rsaquo;</span>
-                <span class="commit-header__crumb commit-header__crumb--subject">{activeCommit.message}</span>
-                <span class="commit-header__author">{activeCommit.author_name}</span>
-              </div>
-              {#if activeCommit.body}
-                <div class="commit-header__body">{activeCommit.body}</div>
-              {/if}
-            </div>
-          {/if}
           {#each diff.files as file (file.path)}
             <DiffFileComponent
               {file}
@@ -294,73 +275,6 @@
 
   .diff-state-msg--error {
     color: var(--accent-red);
-  }
-
-  .commit-header {
-    padding: 8px 16px;
-    background: var(--bg-inset);
-    border-bottom: 1px solid var(--diff-border);
-    flex-shrink: 0;
-  }
-
-  .commit-header__crumbs {
-    display: flex;
-    align-items: baseline;
-    flex-wrap: wrap;
-    gap: 6px;
-    font-size: 11px;
-    color: var(--text-muted);
-    min-width: 0;
-  }
-
-  .commit-header__crumb {
-    min-width: 0;
-  }
-
-  .commit-header__crumb--pr {
-    font-weight: 600;
-    color: var(--text-secondary);
-  }
-
-  .commit-header__crumb--pos {
-    font-weight: 600;
-    color: var(--accent-blue);
-  }
-
-  .commit-header__crumb--sha {
-    font-family: var(--font-mono);
-    font-size: 10px;
-  }
-
-  .commit-header__crumb--subject {
-    font-size: 13px;
-    color: var(--text-primary);
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .commit-header__sep {
-    color: var(--text-muted);
-    font-size: 12px;
-    user-select: none;
-  }
-
-  .commit-header__author {
-    margin-left: auto;
-    color: var(--text-muted);
-  }
-
-  .commit-header__body {
-    margin-top: 8px;
-    font-family: var(--font-mono);
-    font-size: 12px;
-    color: var(--text-secondary);
-    white-space: pre-wrap;
-    word-break: break-word;
-    line-height: 1.45;
   }
 
   @keyframes spin {

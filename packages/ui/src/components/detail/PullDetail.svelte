@@ -22,6 +22,7 @@
   import ReviewBriefCard from "./ReviewBriefCard.svelte";
   import PRNotesPanel from "./PRNotesPanel.svelte";
   import PatchsetPicker from "../diff/PatchsetPicker.svelte";
+  import CommitMessageBanner from "../diff/CommitMessageBanner.svelte";
 
   const { detail: detailStore, pulls, activity } = getStores();
   const client = getClient();
@@ -366,6 +367,7 @@
           </aside>
           <div class="files-main">
             <ReviewCoverBanner {pr} {owner} {name} />
+            <CommitMessageBanner {number} />
             <PatchsetPicker />
             <ReviewBriefCard {owner} {name} {number} />
             <DiffView {owner} {name} {number} />
