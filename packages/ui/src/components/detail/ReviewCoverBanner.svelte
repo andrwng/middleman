@@ -131,6 +131,17 @@
     font-size: 13px;
     line-height: 1.55;
     color: var(--text-primary);
+    /* Cap prose width for readability — past ~80ch, eye-tracking
+       degrades. Matches GitHub/Gerrit/GitLab convention. */
+    max-width: 80ch;
+  }
+
+  /* Fenced code blocks (commit excerpts, diagrams) escape the prose
+     column constraint by scrolling horizontally, never wrapping —
+     wrapped code is harder to read than scrolled code. */
+  .review-cover__body :global(pre) {
+    max-width: 100%;
+    overflow-x: auto;
   }
 
   .review-cover__empty {
