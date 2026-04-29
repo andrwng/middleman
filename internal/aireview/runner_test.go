@@ -97,6 +97,27 @@ func TestBriefPrompt_FallbackOnReadError(t *testing.T) {
 	assert.Contains(t, got, "Head SHA: abc1234")
 }
 
+// TestBriefPrompt_StructureLock guards against accidental deletion of
+// any required section heading or anti-padding rule from the built-in
+// brief prompt. Brief output structure is part of the contract with
+// the UI's section parser (and the reviewer's expectations); silent
+// drift here would surface as missing sections in the rendered card.
+func TestBriefPrompt_StructureLock(t *testing.T) {
+	runner := New(RunnerConfig{})
+	got := runner.briefPrompt(BriefInput{HeadSHA: "abc1234", Depth: "quick"}, nil)
+	assert := assert.New(t)
+	for _, heading := range []string{
+		"## Subsystem", "## Intent", "## Before", "## After",
+		"## Mechanics", "## Commits", "## Risk surface", "## Open questions",
+	} {
+		assert.Contains(got, heading, "missing section %q", heading)
+	}
+	// Anti-padding cues that callers (and Claude) rely on.
+	assert.Contains(got, "Map")
+	assert.Contains(got, "Compass")
+	assert.Contains(got, "Padding is worse than omitting")
+}
+
 func TestBuildPrompt_MultiLineRange(t *testing.T) {
 	start := 40
 	end := 43

@@ -77,40 +77,46 @@
   }
 
   // Parse the Markdown into known sections. The generator prompt
-  // demands exact "## Intent / Before / After / Commits /
-  // Observations" headings; anything outside those gets dropped into
-  // a "Preamble" bucket and rendered under Intent as a fallback.
+  // demands exact "## Subsystem / Intent / Before / After / Mechanics
+  // / Commits / Risk surface / Open questions" headings; anything
+  // outside those falls into "other" and renders raw at the bottom.
+  // "observations" is kept as a back-compat bucket for briefs
+  // generated against the old prompt.
   interface Sections {
+    subsystem: string;
     intent: string;
     before: string;
     after: string;
+    mechanics: string;
     commits: string;
-    observations: string;
+    risk: string;
+    questions: string;
+    observations: string; // legacy heading, pre-2026-04-29 briefs
     other: string;
   }
 
-  const sections = $derived.by<Sections>(() => {
-    const empty: Sections = {
+  function emptySections(): Sections {
+    return {
+      subsystem: "",
       intent: "",
       before: "",
       after: "",
+      mechanics: "",
       commits: "",
+      risk: "",
+      questions: "",
       observations: "",
       other: "",
     };
-    if (!brief || !brief.content) return empty;
+  }
+
+  const sections = $derived.by<Sections>(() => {
+    if (!brief || !brief.content) return emptySections();
     return splitSections(brief.content);
   });
 
   function splitSections(md: string): Sections {
-    const out: Sections = {
-      intent: "",
-      before: "",
-      after: "",
-      commits: "",
-      observations: "",
-      other: "",
-    };
+    const out = emptySections();
     // Match "## Heading" at line start, capture heading + body until next "## " or EOF.
     const re = /(^|\n)##\s+([^\n]+)\n([\s\S]*?)(?=\n##\s+|$)/g;
     let m: RegExpExecArray | null;
@@ -120,10 +126,16 @@
       const heading = m[2]!.trim().toLowerCase();
       const body = m[3]!.trim();
       switch (heading) {
+        case "subsystem": out.subsystem = body; break;
         case "intent": out.intent = body; break;
         case "before": out.before = body; break;
         case "after": out.after = body; break;
+        case "mechanics": out.mechanics = body; break;
         case "commits": out.commits = body; break;
+        case "risk surface":
+        case "risks": out.risk = body; break;
+        case "open questions":
+        case "questions": out.questions = body; break;
         case "observations": out.observations = body; break;
         default: out.other += (out.other ? "\n\n" : "") + `## ${m[2]!.trim()}\n\n${body}`;
       }
@@ -232,6 +244,14 @@
 
   {#if brief && expanded && brief.content}
     <div class="brief__body">
+      {#if sections.subsystem}
+        <section class="brief__section">
+          <h4 class="brief__section-title">Subsystem</h4>
+          <div class="brief__section-body markdown-body">
+            {@html renderMarkdown(sections.subsystem, repoCtx)}
+          </div>
+        </section>
+      {/if}
       {#if sections.intent}
         <section class="brief__section">
           <h4 class="brief__section-title">Intent</h4>
@@ -260,11 +280,35 @@
           {/if}
         </section>
       {/if}
+      {#if sections.mechanics}
+        <section class="brief__section">
+          <h4 class="brief__section-title">Mechanics</h4>
+          <div class="brief__section-body markdown-body">
+            {@html renderMarkdown(sections.mechanics, repoCtx)}
+          </div>
+        </section>
+      {/if}
       {#if sections.commits}
         <section class="brief__section">
           <h4 class="brief__section-title">Commits</h4>
           <div class="brief__section-body markdown-body">
             {@html renderMarkdown(sections.commits, repoCtx)}
+          </div>
+        </section>
+      {/if}
+      {#if sections.risk}
+        <section class="brief__section">
+          <h4 class="brief__section-title">Risk surface</h4>
+          <div class="brief__section-body markdown-body">
+            {@html renderMarkdown(sections.risk, repoCtx)}
+          </div>
+        </section>
+      {/if}
+      {#if sections.questions}
+        <section class="brief__section">
+          <h4 class="brief__section-title">Open questions</h4>
+          <div class="brief__section-body markdown-body">
+            {@html renderMarkdown(sections.questions, repoCtx)}
           </div>
         </section>
       {/if}

@@ -794,8 +794,8 @@ func buildBriefPrompt(in BriefInput, cachedShas []string) string {
 	b.WriteString(commitCacheNotice(cachedShas))
 	b.WriteString(
 		"\nBash is not available. Read files directly from the working copy — it is checked out at the PR head. " +
-			"The PR-wide diff and commit log are pre-computed in the Context block above; per-commit details " +
-			"are in the cache directory described above when you need them.\n",
+			"The PR-wide commit log is in the Context block above; per-commit `git show` output is in the cache " +
+			"directory described above when you need it.\n",
 	)
 	return b.String()
 }
@@ -803,32 +803,51 @@ func buildBriefPrompt(in BriefInput, cachedShas []string) string {
 // briefPromptHeader is the static rules portion of the prompt. Split
 // out so a user's override file can copy/paste this verbatim as a
 // starting point if they want to tweak only the rules.
-const briefPromptHeader = `You are generating a structural review brief for a pull request for a senior engineer. Read the repository files with your Read/Glob/Grep tools as needed for context. You MUST produce output in the following Markdown structure exactly, with those section headings verbatim:
+const briefPromptHeader = `You are generating a structural review brief for a staff engineer who will dive into the PR's diff immediately after reading this. They have breadth across the codebase and decent depth in many areas, but for hairier subsystems they need their cognitive cache primed first. They learn visually and from high-level pseudocode.
+
+The brief has two jobs:
+- **Map** — a compressed view of what's coming so the reviewer can navigate (Intent, Before, After, Commits).
+- **Compass** — the orientation the diff itself can't easily give (Subsystem, Mechanics when non-trivial, Risk surface, Open questions).
+
+Both matter. Be terse but complete. Read repository files with Read/Glob/Grep as needed; per-commit ` + "`git show`" + ` output is cached in ` + "`.middleman-commits/<sha>.diff`" + ` — use it.
+
+Output the following Markdown sections, in this order, with headings verbatim. **Skip a section entirely (no heading, no placeholder) when its content would be empty or trivial for this PR.**
+
+## Subsystem
+≤ 4 lines. For each affected subsystem: a phrase saying what it does, where it sits in the architecture, and the 1–2 invariants/protocols a reviewer needs to hold in mind. Cite the entrypoint file:line. Skip when the touched code is a leaf utility with no useful subsystem context.
 
 ## Intent
-1–2 sentences naming what this PR actually does, based on the code (not the PR title).
+1–2 sentences. What this PR does, based on the code — not the title.
 
 ## Before
-How the code worked before the change, with respect to the PR. If the PR changes the control or data flow, summarize the before control flow with a minimal pipeline diagram, potentially referencing code methods or components. If the PR is exclusively code movement or refactoring, use prose to describe the shortcomings before the PR. Otherwise, describe the before state in prose or bullets.
+≤ 6 lines. The shape of the relevant code before this PR — control flow, data flow, types, or contract. Bullets > prose.
 
 ## After
-How the code is organised or how it flows after this PR.
-How the code works after the change, with respect to the PR. If the PR changes the control or data flow, summarize the after control flow with a minimal pipeline diagram, potentially referencing code methods or components, being sure to encompass behavioral changes. If the PR is exclusively code movement or refactoring, use prose to describe the ergonomics after the PR. Otherwise, describe the after state in prose or bullets.
+≤ 6 lines. The same shape, after the PR. If the change is structural, include **at most one** small text-based diagram total across Before/After/Mechanics — a few boxes-and-arrows in a fenced code block, or a tiny call-tree with indentation. Skip diagrams entirely for refactors, renames, or mechanical changes; an unhelpful diagram is worse than no diagram. (Mermaid won't render in this UI yet — use plain ASCII.)
+
+## Mechanics
+≤ 15 lines of plain-language pseudocode showing the new behavior end-to-end. Skip this section entirely when the PR is a refactor, rename, or otherwise mechanical.
 
 ## Commits
-For each commit in the PR, in order (oldest first), one bullet:
-- ` + "`<sha>`" + ` **<one-line title>**
-  - 1–2 bullets describing what this commit does, with file:line citations.
-  - Suggested read depth: ` + "`read carefully`, `skim`, or `skip if trusted`" + `.
+One bullet per commit, oldest first:
+- ` + "`<sha>`" + ` **<one-line title>** — ` + "`read carefully`" + ` | ` + "`skim`" + ` | ` + "`skip if trusted`" + `
+  - ≤ 1 line: what it does and why.
+  - When a commit edits tests, name the cause: a behavior change (point at it with file:line), an invariant shift, or scaffolding/flake-fix. Don't accept "updates tests for new behavior" as an answer to yourself.
 
-## Observations
-Neutral observations with file:line citations. Phrase concerns as questions, never as verdicts or recommendations.
+## Risk surface
+≤ 5 bullets, ≤ 12 words each. Concrete failure modes the reviewer should watch for: concurrency races, partial-state on errors, perf cliffs, missed edge cases. Each bullet cites file:line. Skip the section when there is no plausible failure surface.
+
+## Open questions
+≤ 3 bullets. Things only the author knows, phrased as questions. Skip when there are none.
 
 Rules:
-- Every non-trivial claim MUST cite a file:line (e.g. ` + "`foo.go:42`" + `).
-- Never produce review feedback. No 'should', no approvals, no verdicts.
-- Hedge when uncertain ("appears to", "seems to").
-- Keep prose tight. Bullets over paragraphs where it fits.`
+- Cite file:line for every non-trivial claim (e.g. ` + "`foo.go:42`" + `).
+- One fact or one question per bullet. If a bullet contains "and" or a semicolon, split it or cut the weaker half.
+- No throat-clearing. No "this PR appears to introduce". State directly.
+- Hedge at most once per claim and only when genuinely uncertain ("uncertain whether X"); don't decorate every sentence with "appears to" / "seems to".
+- Never produce review feedback. No "should", no approvals, no verdicts.
+- Don't restate what an earlier section already covered.
+- A short brief is correct, not lazy. Padding is worse than omitting.`
 
 
 func parseClaudeResult(raw []byte) (claudeResult, error) {
