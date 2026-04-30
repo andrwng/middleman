@@ -1230,15 +1230,20 @@
     line-height: 1.4;
   }
 
-  .review-tally__pill--inreview {
-    color: var(--accent-blue);
-    border: 1px solid var(--accent-blue);
-    background: color-mix(in srgb, var(--accent-blue) 10%, transparent);
-  }
-
+  /* Tally pill palette tracks the row chips:
+       responded → solid amber (act now)
+       in-review → outlined purple (your drafts)
+       unreviewed → outlined neutral (default queue)
+       reviewed → outlined green (done) */
   .review-tally__pill--responded {
     color: #fff;
     background: var(--accent-amber);
+  }
+
+  .review-tally__pill--inreview {
+    color: var(--accent-purple);
+    border: 1px solid var(--accent-purple);
+    background: color-mix(in srgb, var(--accent-purple) 10%, transparent);
   }
 
   .review-tally__pill--unreviewed {
@@ -1248,8 +1253,9 @@
   }
 
   .review-tally__pill--reviewed {
-    color: var(--text-muted);
-    background: color-mix(in srgb, var(--text-muted) 15%, transparent);
+    color: var(--accent-green);
+    border: 1px solid color-mix(in srgb, var(--accent-green) 60%, transparent);
+    background: color-mix(in srgb, var(--accent-green) 12%, transparent);
   }
   .group-toggle {
     display: flex;

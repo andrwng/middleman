@@ -325,28 +325,40 @@
     flex-shrink: 0;
   }
 
-  /* "responded" — the author moved while you were waiting; high-
-     attention amber, mirrors the patchset-picker compare-base color
-     so the "something changed since you looked" signal is consistent
-     across the app. */
+  /* Two visual tiers:
+       SOLID chips = action signals (responded, review queue) — they
+         tell you to look at this PR.
+       OUTLINED chips = your-relationship signals (in-review,
+         reviewed) — they describe a state you're already in.
+     Hue carries meaning: amber=act-now, blue=assigned, purple=your-
+     drafts, green=done. */
+
+  /* "responded" — the author moved while you were waiting; loudest
+     chip because this is the only state where the ball is back in
+     your court without you having started anything. */
   .review-chip--responded {
     background: var(--accent-amber);
     color: #fff;
   }
 
-  /* "reviewed" — you've weighed in, ball is in the author's court.
-     Muted gray says "you can deprioritize this." */
-  .review-chip--reviewed {
-    background: color-mix(in srgb, var(--text-muted) 30%, transparent);
-    color: var(--text-secondary);
+  /* "in-review" — you have unsaved drafts; outlined purple keeps
+     the "work-in-progress, mine" semantics and is hue-distinct
+     from the solid blue review-queue chip so the two never blur. */
+  .review-chip--inreview {
+    background: color-mix(in srgb, var(--accent-purple) 15%, transparent);
+    color: var(--accent-purple);
+    border: 1px solid var(--accent-purple);
+    padding: 0 5px;
   }
 
-  /* "in-review" — you have unsaved drafts; outlined treatment so it
-     reads as work-in-progress rather than a finished state. */
-  .review-chip--inreview {
-    background: color-mix(in srgb, var(--accent-blue) 15%, transparent);
-    color: var(--accent-blue);
-    border: 1px solid var(--accent-blue);
+  /* "reviewed" — you weighed in, ball is in the author's court.
+     Outlined green reads as "done" without the visual weight of a
+     solid action chip; eye-catching enough to register at a glance
+     but quiet enough not to compete with responded/queue. */
+  .review-chip--reviewed {
+    background: color-mix(in srgb, var(--accent-green) 12%, transparent);
+    color: var(--accent-green);
+    border: 1px solid color-mix(in srgb, var(--accent-green) 60%, transparent);
     padding: 0 5px;
   }
 
