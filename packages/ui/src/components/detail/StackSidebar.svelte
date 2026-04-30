@@ -45,7 +45,11 @@
       params: { path: { owner: o, name: n, number: num } },
     }).then(({ data: resp, error }) => {
       if (seq !== requestSeq) return;
-      if (error || !resp) {
+      // Server returns 200 + in_stack=false for the common "this PR
+      // isn't part of any stack" case so the browser console stays
+      // quiet. A real transport/server error still hits the error
+      // branch and hides the sidebar.
+      if (error || !resp || resp.in_stack === false) {
         visible = false;
         return;
       }

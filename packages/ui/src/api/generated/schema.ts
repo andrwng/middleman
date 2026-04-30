@@ -1742,6 +1742,7 @@ export interface components {
              */
             readonly $schema?: string;
             health: string;
+            in_stack: boolean;
             members: components["schemas"]["StackMemberResponse"][] | null;
             /** Format: int64 */
             position: number;

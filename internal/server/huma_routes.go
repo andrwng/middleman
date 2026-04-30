@@ -2612,7 +2612,12 @@ func (s *Server) getStackForPR(ctx context.Context, input *repoNumberInput) (*ge
 		return nil, huma.Error500InternalServerError("get stack for pr failed")
 	}
 	if stack == nil {
-		return nil, huma.Error404NotFound("PR is not part of a stack")
+		// PR isn't in a stack — common case for most PRs. Return 200
+		// with InStack=false so the browser console isn't peppered
+		// with harmless 404s.
+		return &getStackForPROutput{
+			Body: stackContextResponse{InStack: false, Members: []stackMemberResponse{}},
+		}, nil
 	}
 
 	var position int
@@ -2625,6 +2630,7 @@ func (s *Server) getStackForPR(ctx context.Context, input *repoNumberInput) (*ge
 
 	return &getStackForPROutput{
 		Body: stackContextResponse{
+			InStack:   true,
 			StackID:   stack.ID,
 			StackName: stack.Name,
 			Position:  position,

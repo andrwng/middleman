@@ -6203,14 +6203,20 @@ func TestAPIGetStackForPR(t *testing.T) {
 	require.NoError(err)
 	require.Equal(http.StatusOK, resp.StatusCode())
 	require.NotNil(resp.JSON200)
+	assert.True(resp.JSON200.InStack)
 	assert.Equal("api", resp.JSON200.StackName)
 	assert.Equal(int64(2), resp.JSON200.Size)
 	assert.Equal("blocked", resp.JSON200.Health)
 
+	// "Not part of a stack" returns 200 + InStack=false. We dropped
+	// 404 here so the browser console isn't peppered with harmless
+	// failed requests during routine PR navigation.
 	seedPR(t, database, "acme", "widget", 99)
 	resp2, err := client.HTTP.GetReposByOwnerByNamePullsByNumberStackWithResponse(ctx, "acme", "widget", 99)
 	require.NoError(err)
-	assert.Equal(http.StatusNotFound, resp2.StatusCode())
+	require.Equal(http.StatusOK, resp2.StatusCode())
+	require.NotNil(resp2.JSON200)
+	assert.False(resp2.JSON200.InStack)
 }
 
 func TestAPIGetStackForPR_DraftNotBaseReady(t *testing.T) {

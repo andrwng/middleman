@@ -289,6 +289,13 @@ type stackResponse struct {
 }
 
 type stackContextResponse struct {
+	// InStack is false when this PR is not part of any stack — most
+	// PRs aren't, so this is the common case. The endpoint returns
+	// 200 with InStack=false rather than 404 so the browser console
+	// stays quiet for routine "no stack here" lookups; callers should
+	// branch on InStack rather than treating an absent stack as an
+	// error.
+	InStack   bool                  `json:"in_stack"`
 	StackID   int64                 `json:"stack_id"`
 	StackName string                `json:"stack_name"`
 	Position  int                   `json:"position"`

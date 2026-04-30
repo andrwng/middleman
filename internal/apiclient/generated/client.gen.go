@@ -798,6 +798,7 @@ type StackContextResponse struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema    *string                `json:"$schema,omitempty"`
 	Health    string                 `json:"health"`
+	InStack   bool                   `json:"in_stack"`
 	Members   *[]StackMemberResponse `json:"members"`
 	Position  int64                  `json:"position"`
 	Size      int64                  `json:"size"`
