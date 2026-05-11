@@ -101,14 +101,27 @@
   }
 
   .code {
-    flex: 1 0 auto;
+    /* flex-basis 0 + grow 1 + shrink 1 + min-width 0 is the
+       canonical "fill remaining width but allow shrinking below
+       intrinsic content width" recipe. Without min-width: 0 a flex
+       item's default min-width: auto resolves to the content's
+       intrinsic min width, which for a long unbroken token would
+       block wrapping and force horizontal overflow. */
+    flex: 1 1 0;
+    min-width: 0;
     margin: 0;
     padding: 0 8px 0 4px;
     font-family: var(--font-mono);
     font-size: 12px;
     line-height: 20px;
     color: var(--diff-text);
-    white-space: pre;
+    /* pre-wrap preserves indentation and explicit newlines but lets
+       long lines wrap. overflow-wrap: anywhere is the escape hatch
+       for tokens with no whitespace at all (URLs, base64 strings,
+       minified blobs) — it counts the broken text toward min-content
+       so flexbox actually shrinks, unlike word-break: break-all. */
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
     background: transparent;
     border: none;
   }

@@ -1095,8 +1095,11 @@
   }
 
   .file-rows {
-    min-width: 100%;
-    width: max-content;
+    /* Constrain rows to the parent width so DiffLine's pre-wrap can
+       wrap long content. Previously width: max-content forced each
+       row to its widest content, which made horizontal scrolling
+       the only option for long lines. */
+    width: 100%;
   }
 
   .file-rows--split {
