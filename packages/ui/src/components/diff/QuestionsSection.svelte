@@ -1,8 +1,9 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import { getStores } from "../../context.js";
   import type { AIThread, AIQuestion } from "../../stores/ai.svelte.js";
 
-  const { ai: aiStore } = getStores();
+  const { ai: aiStore, diff: diffStore } = getStores();
 
   const data = $derived(aiStore.all());
   const threads = $derived(data.threads);
@@ -53,7 +54,20 @@
     return `${side}${thread.anchor_line}`;
   }
 
-  function scrollToThread(thread: AIThread): void {
+  async function scrollToThread(thread: AIThread): Promise<void> {
+    // If the file is collapsed, the .line-wrap nodes aren't in the
+    // DOM and the selector would silently find nothing. Expand it
+    // first, then await a render tick so the lines mount before we
+    // try to locate the anchor.
+    const pr = diffStore.getCurrentPR();
+    if (
+      pr &&
+      diffStore.isFileCollapsed(pr.owner, pr.name, pr.number, thread.path)
+    ) {
+      diffStore.toggleFileCollapsed(pr.owner, pr.name, pr.number, thread.path);
+      await tick();
+    }
+
     const selector =
       `.diff-file[data-file-path="${CSS.escape(thread.path)}"] ` +
       `.line-wrap[data-anchor-line="${thread.anchor_line}"]` +
@@ -61,6 +75,23 @@
     const el = document.querySelector<HTMLElement>(selector);
     if (el) {
       el.scrollIntoView({ block: "center", behavior: "smooth" });
+      // Brief highlight so the user's eye lands on the right line —
+      // when several threads sit close together a smooth scroll
+      // alone makes it ambiguous which one you jumped to.
+      el.classList.add("line-wrap--flash");
+      window.setTimeout(() => el.classList.remove("line-wrap--flash"), 1500);
+      return;
+    }
+
+    // Fall back to scrolling the file header into view — the
+    // anchored line might live inside an unexpanded context region
+    // (CollapsedRegion) or the diff scope might have changed since
+    // the thread was created (line numbers no longer resolve).
+    const fileEl = document.querySelector<HTMLElement>(
+      `.diff-file[data-file-path="${CSS.escape(thread.path)}"]`,
+    );
+    if (fileEl) {
+      fileEl.scrollIntoView({ block: "start", behavior: "smooth" });
     }
   }
 

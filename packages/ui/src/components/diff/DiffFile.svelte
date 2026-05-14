@@ -1173,6 +1173,18 @@
     position: relative;
   }
 
+  /* Brief flash when the user jumps to a question's anchor from the
+     Questions panel — the smooth scroll alone makes it ambiguous
+     which line you landed on when threads sit near each other. */
+  :global(.line-wrap--flash) {
+    animation: line-wrap-flash 1.5s ease-out;
+  }
+
+  @keyframes line-wrap-flash {
+    0%   { background: color-mix(in srgb, var(--accent-blue) 35%, transparent); }
+    100% { background: transparent; }
+  }
+
   .line-actions {
     position: absolute;
     top: 50%;
