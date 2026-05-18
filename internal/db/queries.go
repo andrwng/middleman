@@ -441,7 +441,45 @@ func (d *DB) UpsertRepo(ctx context.Context, host, owner, name string) (int64, e
 	return id, nil
 }
 
-// ListRepos returns all repos ordered by owner, name.
+// UpsertLocalRepo inserts (if missing) a row for a local-only repo
+// entry — a worktree-discovery source with no GitHub side. The
+// stored shape uses platform='local', platform_host='local',
+// owner='local', name=<user-supplied basename>. Returns the row id.
+//
+// Same table as middleman_repos because the existing unique
+// constraint (platform, platform_host, owner, name) already keeps
+// local and GitHub entries from colliding, and worktrees can FK to
+// either kind without a schema split.
+func (d *DB) UpsertLocalRepo(ctx context.Context, name string) (int64, error) {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" {
+		return 0, fmt.Errorf("local repo name is required")
+	}
+	_, err := d.rw.ExecContext(ctx,
+		`INSERT INTO middleman_repos (platform, platform_host, owner, name)
+		 VALUES ('local', 'local', 'local', ?)
+		 ON CONFLICT(platform, platform_host, owner, name) DO NOTHING`,
+		name,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("upsert local repo: %w", err)
+	}
+	var id int64
+	err = d.ro.QueryRowContext(ctx,
+		`SELECT id FROM middleman_repos
+		 WHERE platform = 'local' AND platform_host = 'local'
+		   AND owner = 'local' AND name = ?`,
+		name,
+	).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("get local repo id after upsert: %w", err)
+	}
+	return id, nil
+}
+
+// ListRepos returns GitHub repos ordered by owner, name. Local-only
+// repo entries (platform = 'local') are excluded; they have no
+// GitHub-side data and would surprise callers reading this list.
 func (d *DB) ListRepos(ctx context.Context) ([]Repo, error) {
 	rows, err := d.ro.QueryContext(ctx,
 		`SELECT id, platform, platform_host, owner, name,
@@ -453,7 +491,9 @@ func (d *DB) ListRepos(ctx context.Context) ([]Repo, error) {
 		        backfill_issue_page, backfill_issue_complete,
 		        backfill_issue_completed_at,
 		        created_at
-		 FROM middleman_repos ORDER BY owner, name`,
+		 FROM middleman_repos
+		 WHERE platform = 'github'
+		 ORDER BY owner, name`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list repos: %w", err)

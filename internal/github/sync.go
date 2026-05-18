@@ -12,6 +12,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v84/github"
+	"github.com/wesm/middleman/internal/config"
 	"github.com/wesm/middleman/internal/db"
 	"github.com/wesm/middleman/internal/gitclone"
 	"github.com/wesm/middleman/internal/worktrees"
@@ -94,16 +95,22 @@ func (e *DiffSyncError) UserMessage() string {
 	}
 }
 
-// RepoRef identifies a GitHub repository.
+// RepoRef identifies a repository as enrolled in middleman. It
+// covers both GitHub-side entries (owner/name/host) and local-only
+// entries (LocalPath set; identity synthesized by config.normalize).
 type RepoRef struct {
 	Owner        string
 	Name         string
-	PlatformHost string // "github.com" or GHE hostname
-	// LocalPath, when non-empty, is the filesystem path to a local
-	// clone of this repo (mirrors config.Repo.LocalPath). Used to
-	// discover `git worktree` entries alongside GitHub PRs. Only
-	// populated for non-glob configured repos.
+	PlatformHost string // "github.com", GHE hostname, or "local"
+	// LocalPath is set for local-only entries and is the filesystem
+	// path under which `git worktree list` is run.
 	LocalPath string
+}
+
+// IsLocal reports whether this is a local-only entry (no GitHub
+// side; worktree discovery only). Mirrors config.Repo.IsLocal.
+func (r RepoRef) IsLocal() bool {
+	return r.PlatformHost == config.LocalPlatformHost
 }
 
 // RepoSyncResult holds the outcome of syncing a single repo.
@@ -1212,6 +1219,24 @@ dispatch:
 
 // syncRepo syncs one repository: open PRs, timeline events, and stale closures.
 func (s *Syncer) syncRepo(ctx context.Context, repo RepoRef) error {
+	// Local-only entries skip every GitHub-side step. They exist
+	// solely to drive worktree discovery; the periodic sync just
+	// reconciles `git worktree list` against the DB.
+	if repo.IsLocal() {
+		repoID, err := s.db.UpsertLocalRepo(ctx, repo.Name)
+		if err != nil {
+			return fmt.Errorf("upsert local repo %s: %w", repo.Name, err)
+		}
+		if _, err := worktrees.Sync(ctx, s.db, repoID, repo.LocalPath); err != nil {
+			slog.Warn("worktree sync failed",
+				"repo", repo.Name,
+				"local_path", repo.LocalPath,
+				"err", err,
+			)
+		}
+		return nil
+	}
+
 	repoID, err := s.db.UpsertRepo(ctx, repo.PlatformHost, repo.Owner, repo.Name)
 	if err != nil {
 		return fmt.Errorf("upsert repo %s/%s: %w", repo.Owner, repo.Name, err)
@@ -1257,19 +1282,6 @@ func (s *Syncer) syncRepo(ctx context.Context, repo RepoRef) error {
 	}
 
 	syncErr := s.indexSyncRepo(ctx, repo, repoID, cloneFetchOK)
-
-	// Discover local worktrees, if a local clone is configured. Failures
-	// don't fail the overall sync — they're logged so the GitHub-side
-	// work and the local-side work stay independent.
-	if repo.LocalPath != "" {
-		if _, err := worktrees.Sync(ctx, s.db, repoID, repo.LocalPath); err != nil {
-			slog.Warn("worktree sync failed",
-				"repo", repo.Owner+"/"+repo.Name,
-				"local_path", repo.LocalPath,
-				"err", err,
-			)
-		}
-	}
 
 	syncErrStr := ""
 	if syncErr != nil {

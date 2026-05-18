@@ -140,6 +140,18 @@ func resolveConfiguredRepo(
 		Name:   raw.Name,
 		IsGlob: raw.HasNameGlob(),
 	}
+	// Local-only entries skip GitHub resolution entirely — they have
+	// no remote to query and their identity is already synthesized by
+	// config.normalize().
+	if raw.IsLocal() {
+		status.MatchedRepoCount = 1
+		return status, []RepoRef{{
+			Owner:        raw.Owner,
+			Name:         raw.Name,
+			PlatformHost: raw.PlatformHost,
+			LocalPath:    raw.LocalPath,
+		}}, nil
+	}
 	host := raw.PlatformHostOrDefault()
 	client, ok := clients[host]
 	if !ok {

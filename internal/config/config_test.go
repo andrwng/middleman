@@ -1001,40 +1001,40 @@ func TestSavePreservesTmuxCommand(t *testing.T) {
 	)
 }
 
-func TestLoadRepoLocalPathAbsolute(t *testing.T) {
+func TestLoadLocalOnlyRepoAbsolutePath(t *testing.T) {
 	assert := Assert.New(t)
 	path := writeConfig(t, `
 [[repos]]
-owner = "org"
-name = "foo"
-local_path = "/srv/code/foo"
+local_path = "/srv/code/redpanda"
 `)
 	cfg, err := Load(path)
 	require.NoError(t, err)
 	require.Len(t, cfg.Repos, 1)
-	assert.Equal("/srv/code/foo", cfg.Repos[0].LocalPath)
+	r := cfg.Repos[0]
+	assert.True(r.IsLocal())
+	assert.Equal("/srv/code/redpanda", r.LocalPath)
+	assert.Equal(LocalRepoOwner, r.Owner)
+	assert.Equal("redpanda", r.Name)
+	assert.Equal(LocalPlatformHost, r.PlatformHost)
 }
 
-func TestLoadRepoLocalPathExpandsTilde(t *testing.T) {
+func TestLoadLocalOnlyRepoExpandsTilde(t *testing.T) {
 	assert := Assert.New(t)
 	t.Setenv("HOME", "/tmp/middleman-test-home")
 	path := writeConfig(t, `
 [[repos]]
-owner = "org"
-name = "foo"
-local_path = "~/code/foo"
+local_path = "~/code/redpanda"
 `)
 	cfg, err := Load(path)
 	require.NoError(t, err)
 	require.Len(t, cfg.Repos, 1)
-	assert.Equal("/tmp/middleman-test-home/code/foo", cfg.Repos[0].LocalPath)
+	assert.Equal("/tmp/middleman-test-home/code/redpanda", cfg.Repos[0].LocalPath)
+	assert.Equal("redpanda", cfg.Repos[0].Name)
 }
 
-func TestLoadRepoLocalPathRejectsRelative(t *testing.T) {
+func TestLoadLocalOnlyRepoRejectsRelativePath(t *testing.T) {
 	path := writeConfig(t, `
 [[repos]]
-owner = "org"
-name = "foo"
 local_path = "code/foo"
 `)
 	_, err := Load(path)
@@ -1042,7 +1042,30 @@ local_path = "code/foo"
 	require.Contains(t, err.Error(), "must be absolute")
 }
 
-func TestLoadRepoLocalPathOmittedIsFine(t *testing.T) {
+func TestLoadLocalOnlyRepoRejectsLocalPathWithOwnerName(t *testing.T) {
+	path := writeConfig(t, `
+[[repos]]
+owner = "org"
+name = "foo"
+local_path = "/srv/code/foo"
+`)
+	_, err := Load(path)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "mutually exclusive")
+}
+
+func TestLoadLocalOnlyRepoRejectsLocalPathWithPlatformHost(t *testing.T) {
+	path := writeConfig(t, `
+[[repos]]
+platform_host = "ghe.example.com"
+local_path = "/srv/code/foo"
+`)
+	_, err := Load(path)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "mutually exclusive")
+}
+
+func TestLoadGitHubRepoStillWorks(t *testing.T) {
 	assert := Assert.New(t)
 	path := writeConfig(t, `
 [[repos]]
@@ -1052,16 +1075,15 @@ name = "foo"
 	cfg, err := Load(path)
 	require.NoError(t, err)
 	require.Len(t, cfg.Repos, 1)
+	assert.False(cfg.Repos[0].IsLocal())
 	assert.Equal("", cfg.Repos[0].LocalPath)
 }
 
-func TestSaveRoundTripLocalPath(t *testing.T) {
+func TestSaveRoundTripMixedLocalAndGitHub(t *testing.T) {
 	assert := Assert.New(t)
 	path := writeConfig(t, `
 [[repos]]
-owner = "org"
-name = "foo"
-local_path = "/srv/code/foo"
+local_path = "/srv/code/redpanda"
 
 [[repos]]
 owner = "org"
@@ -1076,6 +1098,12 @@ name = "bar"
 	reloaded, err := Load(savePath)
 	require.NoError(t, err)
 	require.Len(t, reloaded.Repos, 2)
-	assert.Equal("/srv/code/foo", reloaded.Repos[0].LocalPath)
-	assert.Equal("", reloaded.Repos[1].LocalPath)
+	// First entry: local, identity round-tripped from local_path basename.
+	assert.True(reloaded.Repos[0].IsLocal())
+	assert.Equal("/srv/code/redpanda", reloaded.Repos[0].LocalPath)
+	assert.Equal("redpanda", reloaded.Repos[0].Name)
+	// Second entry: GitHub, no local_path.
+	assert.False(reloaded.Repos[1].IsLocal())
+	assert.Equal("org", reloaded.Repos[1].Owner)
+	assert.Equal("bar", reloaded.Repos[1].Name)
 }

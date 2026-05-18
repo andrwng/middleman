@@ -162,6 +162,48 @@ func TestListAllActiveWorktreesJoinsRepo(t *testing.T) {
 	assert.Equal("/code/beta-a", got[1].Path)
 }
 
+func TestUpsertLocalRepoInsertsAndIsIdempotent(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	d := openTestDB(t)
+	ctx := context.Background()
+
+	id1, err := d.UpsertLocalRepo(ctx, "redpanda")
+	require.NoError(err)
+	assert.NotZero(id1)
+
+	id2, err := d.UpsertLocalRepo(ctx, "redpanda")
+	require.NoError(err)
+	assert.Equal(id1, id2)
+
+	// A different name gets its own id.
+	id3, err := d.UpsertLocalRepo(ctx, "console")
+	require.NoError(err)
+	assert.NotEqual(id1, id3)
+}
+
+func TestUpsertLocalRepoRejectsEmpty(t *testing.T) {
+	d := openTestDB(t)
+	_, err := d.UpsertLocalRepo(context.Background(), "")
+	require.Error(t, err)
+}
+
+func TestListReposExcludesLocalEntries(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	d := openTestDB(t)
+	ctx := context.Background()
+
+	_ = insertTestRepo(t, d, "org", "github-repo")
+	_, err := d.UpsertLocalRepo(ctx, "local-only")
+	require.NoError(err)
+
+	got, err := d.ListRepos(ctx)
+	require.NoError(err)
+	require.Len(got, 1)
+	assert.Equal("github-repo", got[0].Name)
+}
+
 func TestUpsertWorktreeRejectsEmptyPath(t *testing.T) {
 	d := openTestDB(t)
 	ctx := context.Background()

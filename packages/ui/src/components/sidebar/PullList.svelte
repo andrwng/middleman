@@ -576,28 +576,23 @@
       <p class="state-message">Loading…</p>
     {:else if pulls.getError() !== null && pulls.getPulls().length === 0}
       <p class="state-message state-message--error">Error: {pulls.getError()}</p>
-    {:else if pulls.getPulls().length === 0 && sync.getSyncState()?.running}
+    {:else if pulls.getPulls().length === 0 && worktrees.getWorktrees().length === 0 && sync.getSyncState()?.running}
       <div class="state-message sync-message">
         <span class="sync-dot"></span>
         Syncing from GitHub…
       </div>
-    {:else if pulls.getPulls().length === 0 && !sync.getSyncState()?.last_run_at}
+    {:else if pulls.getPulls().length === 0 && worktrees.getWorktrees().length === 0 && !sync.getSyncState()?.last_run_at}
       <p class="state-message">Waiting for first sync…</p>
-    {:else if pulls.getPulls().length === 0}
+    {:else if pulls.getPulls().length === 0 && worktrees.getWorktrees().length === 0}
       <p class="state-message">No pull requests found.</p>
     {:else}
       {#if groupingMode === "byRepo"}
-        {@const worktreesByRepo = worktrees.worktreesByRepo()}
-        {@const reposWithPRs = new Set(pulls.pullsByRepo().keys())}
-        {@const orphanWorktreeRepos = [...worktreesByRepo.entries()]
-          .filter(([repo]) => !reposWithPRs.has(repo))}
         {#each [...pulls.pullsByRepo().entries()] as [repo, prs] (repo)}
           {@const userCollapsed = collapsedRepos.isCollapsed("pulls", repo)}
           {@const hasSelectedPR = isDiffFocus && prs.some(
             (p) => isSelected(p.repo_owner ?? "", p.repo_name ?? "", p.Number),
           )}
           {@const collapsed = userCollapsed && !hasSelectedPR}
-          {@const repoWorktrees = worktreesByRepo.get(repo) ?? []}
           <div class="repo-group">
             <button
               type="button"
@@ -627,18 +622,12 @@
                   onclick={() => handleSelect(pr.repo_owner ?? "", pr.repo_name ?? "", pr.Number)}
                 />
               {/each}
-              {#if repoWorktrees.length > 0}
-                <div class="worktrees-subhead">Worktrees · {repoWorktrees.length}</div>
-                {#each repoWorktrees as w (w.id)}
-                  <WorktreeItem worktree={w} />
-                {/each}
-              {/if}
             {/if}
           </div>
         {/each}
-        {#each orphanWorktreeRepos as [repo, ws] (repo)}
+        {#each [...worktrees.worktreesByRepo().entries()] as [repo, ws] (repo)}
           {@const collapsed = collapsedRepos.isCollapsed("pulls", repo)}
-          <div class="repo-group">
+          <div class="repo-group repo-group--local">
             <button
               type="button"
               class="repo-header"
@@ -654,10 +643,9 @@
                 <polyline points="2,3 5,7 8,3" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
               <span class="repo-header__name">{repo}</span>
-              <span class="repo-header__count">0</span>
+              <span class="repo-header__count">{ws.length}</span>
             </button>
             {#if !collapsed}
-              <div class="worktrees-subhead">Worktrees · {ws.length}</div>
               {#each ws as w (w.id)}
                 <WorktreeItem worktree={w} />
               {/each}
@@ -1209,15 +1197,11 @@
     flex-shrink: 0;
   }
 
-  .worktrees-subhead {
-    padding: 4px 12px 2px 20px;
-    font-size: 10px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text-muted);
-    background: var(--bg-surface);
-    border-top: 1px solid var(--border-muted);
+  /* Local-only repo sections (entries with no GitHub side, just
+     local worktrees). Subtle visual distinction from GitHub repos
+     so the user can tell at a glance which is which. */
+  .repo-group--local .repo-header__name {
+    color: var(--text-secondary);
   }
 
   .sidebar-footer {

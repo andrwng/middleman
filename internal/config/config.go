@@ -75,6 +75,28 @@ func (r Repo) ResolveToken(globalToken string) string {
 // GitHub URLs or SSH addresses if the user pasted one into either
 // field. It also strips a trailing .git suffix.
 func (r *Repo) normalize() error {
+	// Local-only entries: just local_path, no GitHub identity. They
+	// participate in worktree discovery but not in PR sync, and they
+	// render as their own section in the Open sidebar.
+	if r.LocalPath != "" {
+		if r.Owner != "" || r.Name != "" || r.PlatformHost != "" || r.TokenEnv != "" {
+			return errors.New("local_path is mutually exclusive with owner/name/platform_host/token_env")
+		}
+		expanded, err := expandLocalPath(r.LocalPath)
+		if err != nil {
+			return err
+		}
+		base := strings.ToLower(filepath.Base(expanded))
+		if base == "" || base == "/" || base == "." || base == ".." {
+			return fmt.Errorf("cannot derive a stable name from local_path %q", expanded)
+		}
+		r.LocalPath = expanded
+		r.Owner = LocalRepoOwner
+		r.Name = base
+		r.PlatformHost = LocalPlatformHost
+		return nil
+	}
+
 	// Check if either field contains a full GitHub URL or SSH
 	// address. If so, extract owner/name from it.
 	for _, raw := range []string{r.Owner, r.Name} {
@@ -91,19 +113,28 @@ func (r *Repo) normalize() error {
 
 	r.Name = strings.TrimSuffix(r.Name, ".git")
 	if r.Owner == "" || r.Name == "" {
-		return errors.New("must have owner and name")
+		return errors.New("must have owner and name (or set local_path for a local-only entry)")
 	}
 	r.Owner = strings.ToLower(r.Owner)
 	r.Name = strings.ToLower(r.Name)
 	r.PlatformHost = strings.ToLower(r.PlatformHost)
-	if r.LocalPath != "" {
-		expanded, err := expandLocalPath(r.LocalPath)
-		if err != nil {
-			return err
-		}
-		r.LocalPath = expanded
-	}
 	return nil
+}
+
+// LocalRepoOwner and LocalPlatformHost are the synthetic identifiers
+// stamped onto local-only repo entries. They make the existing
+// (platform_host, owner, name) keying scheme work for local entries
+// without a schema change and give them a recognizable, distinct
+// sidebar label ("local/<basename>").
+const (
+	LocalRepoOwner    = "local"
+	LocalPlatformHost = "local"
+)
+
+// IsLocal reports whether this entry is a local-only repo (worktree
+// discovery only, no GitHub sync).
+func (r Repo) IsLocal() bool {
+	return r.PlatformHost == LocalPlatformHost
 }
 
 // expandLocalPath expands a leading `~` to the user's home directory
@@ -581,12 +612,25 @@ type configFile struct {
 
 // Save writes the current config to the given path.
 func (c *Config) Save(path string) error {
+	// For local entries, owner/name/platform_host are synthesized
+	// by normalize(); only the original local_path is user-authored.
+	// Strip the synthesized fields on the way out so the on-disk
+	// shape matches what the user wrote, and so a load+save round
+	// trip doesn't trip the mutual-exclusivity check on reload.
+	repos := make([]Repo, len(c.Repos))
+	for i, r := range c.Repos {
+		if r.IsLocal() {
+			repos[i] = Repo{LocalPath: r.LocalPath}
+		} else {
+			repos[i] = r
+		}
+	}
 	f := configFile{
 		SyncInterval:   c.SyncInterval,
 		GitHubTokenEnv: c.GitHubTokenEnv,
 		Host:           c.Host,
 		Port:           c.Port,
-		Repos:          c.Repos,
+		Repos:          repos,
 		Activity:       c.Activity,
 		Roborev:        c.Roborev,
 		Tmux:           c.Tmux,

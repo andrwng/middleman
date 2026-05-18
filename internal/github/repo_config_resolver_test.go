@@ -212,40 +212,41 @@ func TestResolveConfiguredRepos_MatchesRepoNamesCaseInsensitively(t *testing.T) 
 	}}, result.Expanded)
 }
 
-func TestResolveConfiguredReposCarriesLocalPath(t *testing.T) {
+func TestResolveConfiguredReposLocalOnlyEntry(t *testing.T) {
 	assert := Assert.New(t)
-	client := &mockClient{
-		getRepositoryFn: func(
-			_ context.Context, owner, repo string,
-		) (*gh.Repository, error) {
-			return &gh.Repository{
-				Name:     new(repo),
-				Owner:    &gh.User{Login: new(owner)},
-				Archived: new(false),
-			}, nil
-		},
-	}
-
+	// No GitHub client needs to be supplied for local entries —
+	// the resolver short-circuits before consulting the client map.
 	result := ResolveConfiguredRepos(
 		context.Background(),
-		map[string]Client{"github.com": client},
-		[]config.Repo{
-			{Owner: "acme", Name: "widgets", LocalPath: "/srv/code/widgets"},
-		},
+		map[string]Client{},
+		[]config.Repo{{
+			// Caller-side: fields mirror what config.normalize()
+			// would have produced from `local_path = "/srv/code/redpanda"`.
+			Owner:        config.LocalRepoOwner,
+			Name:         "redpanda",
+			PlatformHost: config.LocalPlatformHost,
+			LocalPath:    "/srv/code/redpanda",
+		}},
 	)
 
 	require.Len(t, result.Expanded, 1)
-	assert.Equal("/srv/code/widgets", result.Expanded[0].LocalPath)
+	r := result.Expanded[0]
+	assert.True(r.IsLocal())
+	assert.Equal(config.LocalRepoOwner, r.Owner)
+	assert.Equal("redpanda", r.Name)
+	assert.Equal("/srv/code/redpanda", r.LocalPath)
 }
 
-func TestFallbackConfiguredRepoRefsRefreshesLocalPath(t *testing.T) {
+func TestFallbackConfiguredRepoRefsCarriesLocalPath(t *testing.T) {
 	assert := Assert.New(t)
-	previous := []RepoRef{
-		{Owner: "acme", Name: "widgets", PlatformHost: "github.com", LocalPath: "/old/path"},
-	}
+	previous := []RepoRef{}
 	got := FallbackConfiguredRepoRefs(previous, config.Repo{
-		Owner: "acme", Name: "widgets", LocalPath: "/new/path",
+		Owner:        config.LocalRepoOwner,
+		Name:         "redpanda",
+		PlatformHost: config.LocalPlatformHost,
+		LocalPath:    "/srv/code/redpanda",
 	})
 	require.Len(t, got, 1)
-	assert.Equal("/new/path", got[0].LocalPath)
+	assert.True(got[0].IsLocal())
+	assert.Equal("/srv/code/redpanda", got[0].LocalPath)
 }
