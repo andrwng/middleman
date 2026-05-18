@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { getStores } from "../../context.js";
 
   const { worktrees } = getStores();
@@ -8,15 +9,23 @@
   }
   const { worktreeId }: Props = $props();
 
-  // Load the worktree list and the per-id file change list on mount.
-  // The sidebar normally primes the list, but on a hard refresh to
-  // /pulls/worktree/<id> the WorktreeDetail can mount before that
-  // fetch completes — without a defensive call here we'd flash a
-  // "not found" message until the list arrives.
-  $effect(() => {
+  // Defensive one-time list load. The sidebar usually primes the
+  // worktree list, but on a hard refresh to /pulls/worktree/<id>
+  // the detail can mount before that fetch completes. Done in
+  // onMount rather than an $effect — the prior $effect read
+  // isLoading()/getWorktrees() and called loadWorktrees() which
+  // mutates them, driving Svelte into an
+  // effect_update_depth_exceeded loop.
+  onMount(() => {
     if (worktrees.getWorktrees().length === 0 && !worktrees.isLoading()) {
       void worktrees.loadWorktrees();
     }
+  });
+
+  // Per-id file fetch. Re-fires when worktreeId changes. Reads only
+  // the prop and writes to a disjoint slice of store state, so no
+  // feedback loop.
+  $effect(() => {
     void worktrees.loadChangedFiles(worktreeId);
   });
 
