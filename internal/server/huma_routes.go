@@ -1751,7 +1751,8 @@ func (s *Server) getWorktreeChangedFiles(
 	if w.RemovedAt != nil {
 		return nil, huma.Error404NotFound("worktree no longer exists on disk")
 	}
-	cs, err := worktrees.ChangedFilesAgainstBase(ctx, w.Path)
+	overrideRef := s.lookupBaseRefForWorktree(ctx, w)
+	cs, err := worktrees.ChangedFilesAgainstBase(ctx, w.Path, overrideRef)
 	if err != nil {
 		return nil, huma.Error500InternalServerError(
 			"reading worktree changes failed: " + err.Error(),
@@ -1776,6 +1777,32 @@ func (s *Server) getWorktreeChangedFiles(
 		})
 	}
 	return &getWorktreeChangedFilesOutput{Body: out}, nil
+}
+
+// lookupBaseRefForWorktree finds the config.Repo entry that owns
+// the given worktree and returns its base_ref override (or empty
+// if none is configured). Match is by the worktree's repo id →
+// middleman_repos.name, cross-referenced against the synthesized
+// name on each local config entry. Returns empty when the config
+// isn't accessible or no match is found; callers fall through to
+// auto-detect in that case.
+func (s *Server) lookupBaseRefForWorktree(ctx context.Context, w db.Worktree) string {
+	if s.cfg == nil {
+		return ""
+	}
+	repo, err := s.db.GetRepoByID(ctx, w.RepoID)
+	if err != nil || repo == nil {
+		return ""
+	}
+	for _, cfgRepo := range s.cfg.Repos {
+		if !cfgRepo.IsLocal() {
+			continue
+		}
+		if cfgRepo.Name == repo.Name {
+			return cfgRepo.BaseRef
+		}
+	}
+	return ""
 }
 
 func (s *Server) listWorktrees(ctx context.Context, _ *struct{}) (*listWorktreesOutput, error) {

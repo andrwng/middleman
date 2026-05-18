@@ -1079,6 +1079,50 @@ name = "foo"
 	assert.Equal("", cfg.Repos[0].LocalPath)
 }
 
+func TestLoadLocalOnlyRepoCarriesBaseRef(t *testing.T) {
+	assert := Assert.New(t)
+	path := writeConfig(t, `
+[[repos]]
+local_path = "/srv/code/redpanda"
+base_ref = "origin/dev"
+`)
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	require.Len(t, cfg.Repos, 1)
+	assert.True(cfg.Repos[0].IsLocal())
+	assert.Equal("origin/dev", cfg.Repos[0].BaseRef)
+}
+
+func TestLoadRejectsBaseRefOnGitHubEntry(t *testing.T) {
+	path := writeConfig(t, `
+[[repos]]
+owner = "org"
+name = "foo"
+base_ref = "origin/dev"
+`)
+	_, err := Load(path)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "only valid on local-only entries")
+}
+
+func TestSaveRoundTripLocalRepoBaseRef(t *testing.T) {
+	assert := Assert.New(t)
+	path := writeConfig(t, `
+[[repos]]
+local_path = "/srv/code/redpanda"
+base_ref = "origin/dev"
+`)
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	savePath := filepath.Join(t.TempDir(), "saved.toml")
+	require.NoError(t, cfg.Save(savePath))
+	reloaded, err := Load(savePath)
+	require.NoError(t, err)
+	require.Len(t, reloaded.Repos, 1)
+	assert.Equal("/srv/code/redpanda", reloaded.Repos[0].LocalPath)
+	assert.Equal("origin/dev", reloaded.Repos[0].BaseRef)
+}
+
 func TestSaveRoundTripMixedLocalAndGitHub(t *testing.T) {
 	assert := Assert.New(t)
 	path := writeConfig(t, `

@@ -40,6 +40,13 @@ type Repo struct {
 	// absolute. The directory is not required to exist at config
 	// load — the scanner handles missing/inaccessible paths.
 	LocalPath string `toml:"local_path,omitempty" json:"local_path,omitempty"`
+	// BaseRef overrides the auto-detected base ref used when
+	// computing the worktree's change set. Only valid on local-only
+	// entries. Defaults to whichever of origin/main, origin/master,
+	// origin/develop, or origin/dev resolves first; set this when
+	// the repo's mainline lives elsewhere (e.g. `origin/dev` for
+	// repos that keep `origin/main` as a release branch).
+	BaseRef string `toml:"base_ref,omitempty" json:"base_ref,omitempty"`
 }
 
 func (r Repo) FullName() string {
@@ -94,7 +101,11 @@ func (r *Repo) normalize() error {
 		r.Owner = LocalRepoOwner
 		r.Name = base
 		r.PlatformHost = LocalPlatformHost
+		r.BaseRef = strings.TrimSpace(r.BaseRef)
 		return nil
+	}
+	if r.BaseRef != "" {
+		return errors.New("base_ref is only valid on local-only entries (set local_path too)")
 	}
 
 	// Check if either field contains a full GitHub URL or SSH
@@ -620,7 +631,10 @@ func (c *Config) Save(path string) error {
 	repos := make([]Repo, len(c.Repos))
 	for i, r := range c.Repos {
 		if r.IsLocal() {
-			repos[i] = Repo{LocalPath: r.LocalPath}
+			repos[i] = Repo{
+				LocalPath: r.LocalPath,
+				BaseRef:   r.BaseRef,
+			}
 		} else {
 			repos[i] = r
 		}

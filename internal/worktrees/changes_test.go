@@ -107,7 +107,7 @@ func TestResolveBasePicksOriginMain(t *testing.T) {
 	dir := t.TempDir()
 	setupRepoWithRemote(t, dir, "main")
 
-	base, err := ResolveBase(ctx, dir)
+	base, err := ResolveBase(ctx, dir, "")
 	require.NoError(err)
 	assert.Equal("origin/main", base.Ref)
 	assert.False(base.Fallback)
@@ -125,7 +125,7 @@ func TestResolveBaseFallsThroughCandidates(t *testing.T) {
 	dir := t.TempDir()
 	setupRepoWithRemote(t, dir, "dev")
 
-	base, err := ResolveBase(ctx, dir)
+	base, err := ResolveBase(ctx, dir, "")
 	require.NoError(err)
 	assert.Equal("origin/dev", base.Ref)
 	assert.False(base.Fallback)
@@ -145,7 +145,7 @@ func TestResolveBaseFallsBackToHEAD(t *testing.T) {
 	runGitT(t, dir, "config", "user.name", "Test")
 	runGitT(t, dir, "commit", "--allow-empty", "-m", "init")
 
-	base, err := ResolveBase(ctx, dir)
+	base, err := ResolveBase(ctx, dir, "")
 	require.NoError(err)
 	assert.Equal("", base.Ref)
 	assert.True(base.Fallback)
@@ -170,7 +170,7 @@ func TestChangedFilesAgainstBaseIncludesCommittedAndUncommitted(t *testing.T) {
 	runGitT(t, dir, "commit", "-m", "add committed file")
 	require.NoError(os.WriteFile(filepath.Join(dir, "uncommitted.txt"), []byte("wip\n"), 0o644))
 
-	cs, err := ChangedFilesAgainstBase(ctx, dir)
+	cs, err := ChangedFilesAgainstBase(ctx, dir, "")
 	require.NoError(err)
 	assert.Equal("origin/main", cs.Base.Ref)
 	assert.False(cs.Base.Fallback)
@@ -183,6 +183,52 @@ func TestChangedFilesAgainstBaseIncludesCommittedAndUncommitted(t *testing.T) {
 	require.Contains(paths, "uncommitted.txt")
 	assert.Equal("added", paths["committed.txt"].Status)
 	assert.Equal("added", paths["uncommitted.txt"].Status)
+}
+
+func TestResolveBaseHonorsOverride(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on PATH")
+	}
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+
+	// Repo has both origin/main and origin/dev. Without an override
+	// the resolver picks origin/main; the override flips that.
+	dir := t.TempDir()
+	setupRepoWithRemote(t, dir, "main")
+	runGitT(t, dir, "checkout", "-b", "dev")
+	runGitT(t, dir, "commit", "--allow-empty", "-m", "dev tip")
+	runGitT(t, dir, "push", "origin", "dev")
+	runGitT(t, dir, "fetch", "origin")
+	runGitT(t, dir, "checkout", "main")
+
+	noOverride, err := ResolveBase(ctx, dir, "")
+	require.NoError(err)
+	assert.Equal("origin/main", noOverride.Ref)
+
+	withOverride, err := ResolveBase(ctx, dir, "origin/dev")
+	require.NoError(err)
+	assert.Equal("origin/dev", withOverride.Ref)
+}
+
+func TestResolveBaseOverrideFallsBackWhenMissing(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on PATH")
+	}
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+
+	// origin/main exists; the override ref doesn't. Resolver falls
+	// through the override and lands on origin/main.
+	dir := t.TempDir()
+	setupRepoWithRemote(t, dir, "main")
+
+	base, err := ResolveBase(ctx, dir, "origin/bogus-does-not-exist")
+	require.NoError(err)
+	assert.Equal("origin/main", base.Ref)
+	assert.False(base.Fallback)
 }
 
 // setupRepoWithRemote initialises `dir` as a working repo on

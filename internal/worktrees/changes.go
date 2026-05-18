@@ -52,11 +52,18 @@ var candidateBaseRefs = []string{
 // and returns the first that resolves, along with the merge-base
 // against HEAD. When no candidate resolves, returns a BaseRef
 // pointing at HEAD with Fallback=true.
-func ResolveBase(ctx context.Context, worktreePath string) (BaseRef, error) {
+//
+// If overrideRef is non-empty, it is tried first; only on failure
+// does the auto-detect candidate list run.
+func ResolveBase(ctx context.Context, worktreePath, overrideRef string) (BaseRef, error) {
 	if worktreePath == "" {
 		return BaseRef{}, fmt.Errorf("worktreePath is required")
 	}
-	for _, ref := range candidateBaseRefs {
+	refs := candidateBaseRefs
+	if overrideRef != "" {
+		refs = append([]string{overrideRef}, candidateBaseRefs...)
+	}
+	for _, ref := range refs {
 		// `git rev-parse --verify <ref>` exits non-zero if missing.
 		if _, err := gitCmd(ctx, worktreePath, "rev-parse", "--verify", "--quiet", ref); err != nil {
 			continue
@@ -89,8 +96,10 @@ func ResolveBase(ctx context.Context, worktreePath string) (BaseRef, error) {
 // When no base ref is found in the worktree, falls back to HEAD vs
 // working tree. Untracked files are surfaced from `git ls-files
 // --others` since `git diff` ignores them by default.
-func ChangedFilesAgainstBase(ctx context.Context, worktreePath string) (ChangeSet, error) {
-	base, err := ResolveBase(ctx, worktreePath)
+func ChangedFilesAgainstBase(
+	ctx context.Context, worktreePath, overrideRef string,
+) (ChangeSet, error) {
+	base, err := ResolveBase(ctx, worktreePath, overrideRef)
 	if err != nil {
 		return ChangeSet{}, fmt.Errorf("resolve base: %w", err)
 	}
