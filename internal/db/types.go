@@ -285,6 +285,30 @@ type WorkspaceSummary struct {
 	MRDeletions      *int
 }
 
+// Worktree is one row in middleman_worktrees — a git worktree
+// discovered under a repo's configured local_path.
+type Worktree struct {
+	ID           int64
+	RepoID       int64
+	Path         string
+	Branch       string
+	HeadSHA      string
+	IsDetached   bool
+	IsLocked     bool
+	IsPrunable   bool
+	DiscoveredAt time.Time
+	LastSeenAt   time.Time
+	RemovedAt    *time.Time
+}
+
+// WorktreeWithRepo is a Worktree joined with its repo owner/name,
+// for surfaces that list worktrees across repos.
+type WorktreeWithRepo struct {
+	Worktree
+	RepoOwner string
+	RepoName  string
+}
+
 // ListActivityOpts holds filters and pagination for the activity feed.
 type ListActivityOpts struct {
 	Repo   string     // "owner/name" filter
