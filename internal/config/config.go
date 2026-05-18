@@ -33,6 +33,13 @@ type Repo struct {
 	Name         string `toml:"name" json:"name"`
 	PlatformHost string `toml:"platform_host,omitempty" json:"platform_host,omitempty"`
 	TokenEnv     string `toml:"token_env,omitempty" json:"token_env,omitempty"`
+	// LocalPath is the filesystem path to a local clone of this
+	// repo. When set, middleman scans `git worktree list` against
+	// this path to surface local worktrees alongside GitHub PRs.
+	// Tilde prefixes are expanded; the resulting path must be
+	// absolute. The directory is not required to exist at config
+	// load — the scanner handles missing/inaccessible paths.
+	LocalPath string `toml:"local_path,omitempty" json:"local_path,omitempty"`
 }
 
 func (r Repo) FullName() string {
@@ -89,7 +96,32 @@ func (r *Repo) normalize() error {
 	r.Owner = strings.ToLower(r.Owner)
 	r.Name = strings.ToLower(r.Name)
 	r.PlatformHost = strings.ToLower(r.PlatformHost)
+	if r.LocalPath != "" {
+		expanded, err := expandLocalPath(r.LocalPath)
+		if err != nil {
+			return err
+		}
+		r.LocalPath = expanded
+	}
 	return nil
+}
+
+// expandLocalPath expands a leading `~` to the user's home directory
+// and requires the result to be absolute. Trailing slashes are
+// trimmed for stable comparisons.
+func expandLocalPath(raw string) (string, error) {
+	p := strings.TrimSpace(raw)
+	if strings.HasPrefix(p, "~/") || p == "~" {
+		home := homeDir()
+		if home == "" {
+			return "", fmt.Errorf("cannot expand %q: home directory is unknown", raw)
+		}
+		p = filepath.Join(home, strings.TrimPrefix(p, "~"))
+	}
+	if !filepath.IsAbs(p) {
+		return "", fmt.Errorf("local_path %q must be absolute (or start with ~/)", raw)
+	}
+	return filepath.Clean(p), nil
 }
 
 func (r Repo) ownerHasGlob() bool {

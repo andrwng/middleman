@@ -1000,3 +1000,82 @@ func TestSavePreservesTmuxCommand(t *testing.T) {
 		reloaded.Tmux.Command,
 	)
 }
+
+func TestLoadRepoLocalPathAbsolute(t *testing.T) {
+	assert := Assert.New(t)
+	path := writeConfig(t, `
+[[repos]]
+owner = "org"
+name = "foo"
+local_path = "/srv/code/foo"
+`)
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	require.Len(t, cfg.Repos, 1)
+	assert.Equal("/srv/code/foo", cfg.Repos[0].LocalPath)
+}
+
+func TestLoadRepoLocalPathExpandsTilde(t *testing.T) {
+	assert := Assert.New(t)
+	t.Setenv("HOME", "/tmp/middleman-test-home")
+	path := writeConfig(t, `
+[[repos]]
+owner = "org"
+name = "foo"
+local_path = "~/code/foo"
+`)
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	require.Len(t, cfg.Repos, 1)
+	assert.Equal("/tmp/middleman-test-home/code/foo", cfg.Repos[0].LocalPath)
+}
+
+func TestLoadRepoLocalPathRejectsRelative(t *testing.T) {
+	path := writeConfig(t, `
+[[repos]]
+owner = "org"
+name = "foo"
+local_path = "code/foo"
+`)
+	_, err := Load(path)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "must be absolute")
+}
+
+func TestLoadRepoLocalPathOmittedIsFine(t *testing.T) {
+	assert := Assert.New(t)
+	path := writeConfig(t, `
+[[repos]]
+owner = "org"
+name = "foo"
+`)
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	require.Len(t, cfg.Repos, 1)
+	assert.Equal("", cfg.Repos[0].LocalPath)
+}
+
+func TestSaveRoundTripLocalPath(t *testing.T) {
+	assert := Assert.New(t)
+	path := writeConfig(t, `
+[[repos]]
+owner = "org"
+name = "foo"
+local_path = "/srv/code/foo"
+
+[[repos]]
+owner = "org"
+name = "bar"
+`)
+	cfg, err := Load(path)
+	require.NoError(t, err)
+
+	savePath := filepath.Join(t.TempDir(), "saved.toml")
+	require.NoError(t, cfg.Save(savePath))
+
+	reloaded, err := Load(savePath)
+	require.NoError(t, err)
+	require.Len(t, reloaded.Repos, 2)
+	assert.Equal("/srv/code/foo", reloaded.Repos[0].LocalPath)
+	assert.Equal("", reloaded.Repos[1].LocalPath)
+}
