@@ -578,9 +578,9 @@
     {#if settings.isSettingsLoaded() && !settings.hasConfiguredRepos()}
       <p class="state-message">No repositories configured.<br />
         {#if !isEmbedded()}<button class="settings-link" onclick={() => navigate("/settings")}>Add one in Settings</button>{/if}</p>
-    {:else if pulls.isLoading() && pulls.getPulls().length === 0}
+    {:else if pulls.isLoading() && pulls.getPulls().length === 0 && worktrees.getWorktrees().length === 0}
       <p class="state-message">Loading…</p>
-    {:else if pulls.getError() !== null && pulls.getPulls().length === 0}
+    {:else if pulls.getError() !== null && pulls.getPulls().length === 0 && worktrees.getWorktrees().length === 0}
       <p class="state-message state-message--error">Error: {pulls.getError()}</p>
     {:else if pulls.getPulls().length === 0 && worktrees.getWorktrees().length === 0 && sync.getSyncState()?.running}
       <div class="state-message sync-message">
@@ -593,6 +593,37 @@
       <p class="state-message">No pull requests found.</p>
     {:else}
       {#if groupingMode === "byRepo"}
+        {#each [...worktrees.worktreesByRepo().entries()] as [repo, ws] (repo)}
+          {@const collapsed = collapsedRepos.isCollapsed("pulls", repo)}
+          <div class="repo-group repo-group--local">
+            <button
+              type="button"
+              class="repo-header"
+              aria-expanded={!collapsed}
+              onclick={() => collapsedRepos.toggle("pulls", repo)}
+            >
+              <svg
+                class="repo-header__chevron"
+                class:repo-header__chevron--collapsed={collapsed}
+                width="10" height="10" viewBox="0 0 10 10"
+                fill="none" stroke="currentColor" stroke-width="1.5"
+              >
+                <polyline points="2,3 5,7 8,3" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              <span class="repo-header__name">{repo}</span>
+              <span class="repo-header__count">{ws.length}</span>
+            </button>
+            {#if !collapsed}
+              {#each ws as w (w.id)}
+                <WorktreeItem
+                  worktree={w}
+                  selected={worktrees.getSelectedId() === w.id}
+                  onclick={() => handleSelectWorktree(w.id)}
+                />
+              {/each}
+            {/if}
+          </div>
+        {/each}
         {#each [...pulls.pullsByRepo().entries()] as [repo, prs] (repo)}
           {@const userCollapsed = collapsedRepos.isCollapsed("pulls", repo)}
           {@const hasSelectedPR = isDiffFocus && prs.some(
@@ -626,37 +657,6 @@
                   selected={prSelected}
                   {importAction}
                   onclick={() => handleSelect(pr.repo_owner ?? "", pr.repo_name ?? "", pr.Number)}
-                />
-              {/each}
-            {/if}
-          </div>
-        {/each}
-        {#each [...worktrees.worktreesByRepo().entries()] as [repo, ws] (repo)}
-          {@const collapsed = collapsedRepos.isCollapsed("pulls", repo)}
-          <div class="repo-group repo-group--local">
-            <button
-              type="button"
-              class="repo-header"
-              aria-expanded={!collapsed}
-              onclick={() => collapsedRepos.toggle("pulls", repo)}
-            >
-              <svg
-                class="repo-header__chevron"
-                class:repo-header__chevron--collapsed={collapsed}
-                width="10" height="10" viewBox="0 0 10 10"
-                fill="none" stroke="currentColor" stroke-width="1.5"
-              >
-                <polyline points="2,3 5,7 8,3" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-              <span class="repo-header__name">{repo}</span>
-              <span class="repo-header__count">{ws.length}</span>
-            </button>
-            {#if !collapsed}
-              {#each ws as w (w.id)}
-                <WorktreeItem
-                  worktree={w}
-                  selected={worktrees.getSelectedId() === w.id}
-                  onclick={() => handleSelectWorktree(w.id)}
                 />
               {/each}
             {/if}
