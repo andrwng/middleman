@@ -8,14 +8,21 @@
   }
   const { worktreeId }: Props = $props();
 
-  // Load the file change list on mount and on id changes. The
-  // worktree list itself is already loaded by PullList; we just need
-  // the per-worktree fetch.
+  // Load the worktree list and the per-id file change list on mount.
+  // The sidebar normally primes the list, but on a hard refresh to
+  // /pulls/worktree/<id> the WorktreeDetail can mount before that
+  // fetch completes — without a defensive call here we'd flash a
+  // "not found" message until the list arrives.
   $effect(() => {
+    if (worktrees.getWorktrees().length === 0 && !worktrees.isLoading()) {
+      void worktrees.loadWorktrees();
+    }
     void worktrees.loadChangedFiles(worktreeId);
   });
 
   const w = $derived(worktrees.getById(worktreeId));
+  const listLoading = $derived(worktrees.isLoading());
+  const listHasItems = $derived(worktrees.getWorktrees().length > 0);
   const entry = $derived(worktrees.getChangedFiles(worktreeId));
   const files = $derived(entry?.files ?? []);
   const loading = $derived(entry?.loading ?? false);
@@ -62,7 +69,11 @@
 </script>
 
 <div class="wt-detail">
-  {#if !w}
+  {#if !w && (listLoading || !listHasItems)}
+    <div class="wt-detail__state">
+      <p>Loading worktree…</p>
+    </div>
+  {:else if !w}
     <div class="wt-detail__state">
       <p>Worktree not found.</p>
     </div>
