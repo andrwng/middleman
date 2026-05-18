@@ -14,6 +14,7 @@ import (
 	gh "github.com/google/go-github/v84/github"
 	"github.com/wesm/middleman/internal/db"
 	"github.com/wesm/middleman/internal/gitclone"
+	"github.com/wesm/middleman/internal/worktrees"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -98,6 +99,11 @@ type RepoRef struct {
 	Owner        string
 	Name         string
 	PlatformHost string // "github.com" or GHE hostname
+	// LocalPath, when non-empty, is the filesystem path to a local
+	// clone of this repo (mirrors config.Repo.LocalPath). Used to
+	// discover `git worktree` entries alongside GitHub PRs. Only
+	// populated for non-glob configured repos.
+	LocalPath string
 }
 
 // RepoSyncResult holds the outcome of syncing a single repo.
@@ -1251,6 +1257,19 @@ func (s *Syncer) syncRepo(ctx context.Context, repo RepoRef) error {
 	}
 
 	syncErr := s.indexSyncRepo(ctx, repo, repoID, cloneFetchOK)
+
+	// Discover local worktrees, if a local clone is configured. Failures
+	// don't fail the overall sync — they're logged so the GitHub-side
+	// work and the local-side work stay independent.
+	if repo.LocalPath != "" {
+		if _, err := worktrees.Sync(ctx, s.db, repoID, repo.LocalPath); err != nil {
+			slog.Warn("worktree sync failed",
+				"repo", repo.Owner+"/"+repo.Name,
+				"local_path", repo.LocalPath,
+				"err", err,
+			)
+		}
+	}
 
 	syncErrStr := ""
 	if syncErr != nil {

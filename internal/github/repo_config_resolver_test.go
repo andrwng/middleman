@@ -211,3 +211,41 @@ func TestResolveConfiguredRepos_MatchesRepoNamesCaseInsensitively(t *testing.T) 
 		PlatformHost: "github.com",
 	}}, result.Expanded)
 }
+
+func TestResolveConfiguredReposCarriesLocalPath(t *testing.T) {
+	assert := Assert.New(t)
+	client := &mockClient{
+		getRepositoryFn: func(
+			_ context.Context, owner, repo string,
+		) (*gh.Repository, error) {
+			return &gh.Repository{
+				Name:     new(repo),
+				Owner:    &gh.User{Login: new(owner)},
+				Archived: new(false),
+			}, nil
+		},
+	}
+
+	result := ResolveConfiguredRepos(
+		context.Background(),
+		map[string]Client{"github.com": client},
+		[]config.Repo{
+			{Owner: "acme", Name: "widgets", LocalPath: "/srv/code/widgets"},
+		},
+	)
+
+	require.Len(t, result.Expanded, 1)
+	assert.Equal("/srv/code/widgets", result.Expanded[0].LocalPath)
+}
+
+func TestFallbackConfiguredRepoRefsRefreshesLocalPath(t *testing.T) {
+	assert := Assert.New(t)
+	previous := []RepoRef{
+		{Owner: "acme", Name: "widgets", PlatformHost: "github.com", LocalPath: "/old/path"},
+	}
+	got := FallbackConfiguredRepoRefs(previous, config.Repo{
+		Owner: "acme", Name: "widgets", LocalPath: "/new/path",
+	})
+	require.Len(t, got, 1)
+	assert.Equal("/new/path", got[0].LocalPath)
+}

@@ -32,6 +32,7 @@ func canonicalRepoRef(repo RepoRef) RepoRef {
 		Owner:        canonicalRepoOwner(repo.Owner),
 		Name:         canonicalRepoName(repo.Name),
 		PlatformHost: canonicalRepoHost(repo.PlatformHost),
+		LocalPath:    repo.LocalPath,
 	}
 }
 
@@ -62,6 +63,9 @@ func FallbackConfiguredRepoRefs(
 			if sameConfiguredRepoHost(repo.PlatformHost, host) &&
 				strings.EqualFold(repo.Owner, raw.Owner) &&
 				strings.EqualFold(repo.Name, raw.Name) {
+				// Pick up local_path from the current config, since
+				// the user may have edited it since previous resolution.
+				repo.LocalPath = raw.LocalPath
 				return []RepoRef{repo}
 			}
 		}
@@ -69,6 +73,7 @@ func FallbackConfiguredRepoRefs(
 			Owner:        canonicalRepoOwner(raw.Owner),
 			Name:         canonicalRepoName(raw.Name),
 			PlatformHost: canonicalRepoHost(host),
+			LocalPath:    raw.LocalPath,
 		}}
 	}
 
@@ -166,6 +171,7 @@ func resolveConfiguredRepo(
 			Owner:        canonicalRepoOwner(canonicalOwner),
 			Name:         canonicalRepoName(repo.GetName()),
 			PlatformHost: canonicalRepoHost(host),
+			LocalPath:    raw.LocalPath,
 		}}, nil
 	}
 
