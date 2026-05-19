@@ -587,6 +587,9 @@ func (s *Server) listPulls(ctx context.Context, input *listPullsInput) (*listPul
 }
 
 func (s *Server) getPull(ctx context.Context, input *repoNumberInput) (*getPullOutput, error) {
+	if isLocalSource(input.Owner) {
+		return s.getPullLocal(ctx, input)
+	}
 	mr, err := s.db.GetMergeRequest(ctx, input.Owner, input.Name, input.Number)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("get pull request failed")
@@ -2564,6 +2567,9 @@ type getDiffOutput struct {
 }
 
 func (s *Server) getDiff(ctx context.Context, input *getDiffInput) (*getDiffOutput, error) {
+	if isLocalSource(input.Owner) {
+		return s.getDiffLocal(ctx, input)
+	}
 	if s.clones == nil {
 		return nil, huma.Error503ServiceUnavailable("diff view not available: clone manager not configured")
 	}
@@ -2739,6 +2745,9 @@ type getFilesOutput struct {
 }
 
 func (s *Server) getFiles(ctx context.Context, input *getFilesInput) (*getFilesOutput, error) {
+	if isLocalSource(input.Owner) {
+		return s.getFilesLocal(ctx, input)
+	}
 	if s.clones == nil {
 		return nil, huma.Error503ServiceUnavailable("files view not available: clone manager not configured")
 	}

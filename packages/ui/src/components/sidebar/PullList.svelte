@@ -189,10 +189,22 @@
     return sel !== null && sel.owner === owner && sel.name === name && sel.number === number;
   }
 
-  function handleSelectWorktree(id: number): void {
-    pulls.clearSelection();
-    worktrees.selectWorktree(id);
-    navigate(`/pulls/worktree/${id}`);
+  // Worktrees route through the PR-shaped URL scheme with a
+  // synthetic `local` owner. The server dispatches /repos/local/...
+  // PR routes to the worktree handlers, so PRListView renders the
+  // standard review pane against a worktree without each component
+  // learning a separate code path.
+  function handleSelectWorktree(name: string, id: number): void {
+    pulls.selectPR("local", name, id);
+    navigate(`/pulls/local/${name}/${id}/files`);
+  }
+
+  function isWorktreeSelected(name: string, id: number): boolean {
+    const sel = pulls.getSelectedPR();
+    return sel !== null &&
+      sel.owner === "local" &&
+      sel.name === name &&
+      sel.number === id;
   }
 
   const selectedVisiblePR = $derived.by(() => {
@@ -617,8 +629,8 @@
               {#each ws as w (w.id)}
                 <WorktreeItem
                   worktree={w}
-                  selected={worktrees.getSelectedId() === w.id}
-                  onclick={() => handleSelectWorktree(w.id)}
+                  selected={isWorktreeSelected(w.repo_name, w.id)}
+                  onclick={() => handleSelectWorktree(w.repo_name, w.id)}
                 />
               {/each}
             {/if}

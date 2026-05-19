@@ -195,6 +195,76 @@ func TestAPIWorktreeChangedFilesNotFound(t *testing.T) {
 	Assert.Equal(t, http.StatusNotFound, resp.StatusCode())
 }
 
+func TestAPILocalDispatchPRRoutes(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on PATH")
+	}
+	require := require.New(t)
+	assert := Assert.New(t)
+	srv, database := setupTestServer(t)
+	client := setupTestClient(t, srv)
+	ctx := context.Background()
+
+	dir := t.TempDir()
+	runGitWT(t, "", "init", "--initial-branch=main", dir)
+	runGitWT(t, dir, "config", "user.email", "test@example.com")
+	runGitWT(t, dir, "config", "user.name", "Test")
+	require.NoError(os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("a\nb\n"), 0o644))
+	runGitWT(t, dir, "add", "hello.txt")
+	runGitWT(t, dir, "commit", "-m", "init")
+	originDir := dir + "-origin.git"
+	runGitWT(t, "", "init", "--bare", originDir)
+	runGitWT(t, dir, "remote", "add", "origin", originDir)
+	runGitWT(t, dir, "push", "origin", "main")
+	runGitWT(t, dir, "fetch", "origin")
+	// Diverge so the diff has content.
+	require.NoError(os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("a\nb\nc\n"), 0o644))
+
+	repoID, err := database.UpsertLocalRepo(ctx, "demo")
+	require.NoError(err)
+	canonDir, err := filepath.EvalSymlinks(dir)
+	require.NoError(err)
+	w, err := database.UpsertWorktree(ctx, repoID, db.ScannedWorktree{
+		Path:   canonDir,
+		Branch: "main",
+	})
+	require.NoError(err)
+
+	// /repos/local/demo/pulls/{id} (detail)
+	pullResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberWithResponse(
+		ctx, "local", "demo", w.ID,
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, pullResp.StatusCode())
+	require.NotNil(pullResp.JSON200)
+	assert.Equal("local", pullResp.JSON200.RepoOwner)
+	assert.Equal("demo", pullResp.JSON200.RepoName)
+
+	// /repos/local/demo/pulls/{id}/diff (full diff)
+	diffResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberDiffWithResponse(
+		ctx, "local", "demo", w.ID, nil,
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, diffResp.StatusCode())
+	require.NotNil(diffResp.JSON200)
+	require.NotNil(diffResp.JSON200.Files)
+	require.Len(*diffResp.JSON200.Files, 1)
+
+	// /repos/local/demo/pulls/{id}/files (lightweight list)
+	filesResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberFilesWithResponse(
+		ctx, "local", "demo", w.ID,
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, filesResp.StatusCode())
+	require.NotNil(filesResp.JSON200)
+	require.NotNil(filesResp.JSON200.Files)
+	require.Len(*filesResp.JSON200.Files, 1)
+	// Files endpoint strips hunks.
+	if (*filesResp.JSON200.Files)[0].Hunks != nil {
+		assert.Empty(*(*filesResp.JSON200.Files)[0].Hunks)
+	}
+}
+
 func runGitWT(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)

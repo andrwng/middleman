@@ -12,7 +12,7 @@ export type Route =
       pin?: "soft" | "hard";
     }
   | { page: "workspaces-panel"; view: "empty"; emptyReason: string }
-  | { page: "pulls"; view: "list" | "board"; selected?: { owner: string; name: string; number: number }; selectedWorktree?: { id: number }; tab?: "files" }
+  | { page: "pulls"; view: "list" | "board"; selected?: { owner: string; name: string; number: number }; tab?: "files" }
   | { page: "issues"; selected?: { owner: string; name: string; number: number } }
   | { page: "settings" }
   | { page: "focus"; itemType: "pr" | "issue"; owner: string; name: string; number: number }
@@ -133,14 +133,6 @@ function parseRoute(fullPath: string): Route {
   if (path.startsWith("/pulls")) {
     const rest = path.slice("/pulls".length);
     if (rest === "/board") return { page: "pulls", view: "board" };
-    const worktreeMatch = rest.match(/^\/worktree\/(\d+)$/);
-    if (worktreeMatch) {
-      return {
-        page: "pulls",
-        view: "list",
-        selectedWorktree: { id: parseInt(worktreeMatch[1]!, 10) },
-      };
-    }
     const filesMatch = rest.match(/^\/([^/]+)\/([^/]+)\/(\d+)\/files$/);
     if (filesMatch) {
       return {
@@ -359,13 +351,6 @@ export function getSelectedPRFromRoute(): { owner: string; name: string; number:
   return null;
 }
 
-export function getSelectedWorktreeFromRoute(): { id: number } | null {
-  if (route.page !== "pulls") return null;
-  if ("selectedWorktree" in route && route.selectedWorktree) {
-    return route.selectedWorktree;
-  }
-  return null;
-}
 
 // --- backward-compat helpers for existing components ---
 
