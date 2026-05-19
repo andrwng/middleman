@@ -51,3 +51,42 @@ export function wrapCodeBlock(
     .map((seg, i) => span(startLine + i, side, escapeHtml(seg)))
     .join("\n");
 }
+
+export interface AnchorRange {
+  startLine: number;
+  endLine: number;
+  side: AnchorSide;
+}
+
+// nearestAnchor walks up from node looking for an ancestor with
+// data-anchor-line. Returns null if none is found inside root.
+function nearestAnchor(node: Node | null, root: HTMLElement): HTMLElement | null {
+  let cur: Node | null = node;
+  while (cur && cur !== root) {
+    if (cur.nodeType === Node.ELEMENT_NODE) {
+      const el = cur as HTMLElement;
+      if (el.dataset.anchorLine != null) return el;
+    }
+    cur = cur.parentNode;
+  }
+  return null;
+}
+
+export function computeRangeFromSelection(
+  root: HTMLElement,
+  sel: Selection | null,
+): AnchorRange | null {
+  if (!sel || sel.rangeCount === 0) return null;
+  const anchorEl = nearestAnchor(sel.anchorNode, root);
+  const focusEl = nearestAnchor(sel.focusNode, root);
+  if (!anchorEl || !focusEl) return null;
+  if (!root.contains(anchorEl) || !root.contains(focusEl)) return null;
+  const aSide = anchorEl.dataset.anchorSide as AnchorSide | undefined;
+  const fSide = focusEl.dataset.anchorSide as AnchorSide | undefined;
+  if (!aSide || !fSide || aSide !== fSide) return null;
+  const a = parseInt(anchorEl.dataset.anchorLine ?? "", 10);
+  const f = parseInt(focusEl.dataset.anchorLine ?? "", 10);
+  if (Number.isNaN(a) || Number.isNaN(f)) return null;
+  const [startLine, endLine] = a < f ? [a, f] : [f, a];
+  return { startLine, endLine, side: aSide };
+}
