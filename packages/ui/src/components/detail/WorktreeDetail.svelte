@@ -2,8 +2,11 @@
   import { onMount, untrack } from "svelte";
   import { getStores } from "../../context.js";
   import type { WorktreeDiffFile } from "../../stores/worktrees.svelte.js";
+  import type { DiffFile } from "../../api/types.js";
+  import DiffFileCore from "../diff/DiffFileCore.svelte";
 
-  const { worktrees } = getStores();
+  const { worktrees, diff: diffStore } = getStores();
+  const layout = $derived(diffStore.getLayout());
 
   interface Props {
     worktreeId: number;
@@ -169,6 +172,22 @@
             no base ref
           </span>
         {/if}
+        <div class="wt-detail__layout-toggle">
+          <button
+            type="button"
+            class="wt-detail__layout-btn"
+            class:wt-detail__layout-btn--active={layout === "unified"}
+            onclick={() => diffStore.setLayout("unified")}
+            title="Unified diff"
+          >Unified</button>
+          <button
+            type="button"
+            class="wt-detail__layout-btn"
+            class:wt-detail__layout-btn--active={layout === "split"}
+            onclick={() => diffStore.setLayout("split")}
+            title="Side-by-side diff"
+          >Split</button>
+        </div>
       </div>
 
       {#if loading && files.length === 0}
@@ -222,25 +241,7 @@
                   {:else if !diff || !diff.hunks || diff.hunks.length === 0}
                     <p class="wt-detail__hunks-msg">No diff content (untracked or no hunks).</p>
                   {:else}
-                    {#each diff.hunks as h, hi (hi)}
-                      <div class="wt-detail__hunk">
-                        <div class="wt-detail__hunk-head">
-                          @@ -{h.old_start},{h.old_count} +{h.new_start},{h.new_count} @@{h.section ? " " + h.section : ""}
-                        </div>
-                        {#each h.lines as ln, li (li)}
-                          <div
-                            class="wt-detail__hunk-line wt-detail__hunk-line--{ln.type}"
-                          >
-                            <span class="wt-detail__hunk-gutter">{ln.old_num || ""}</span>
-                            <span class="wt-detail__hunk-gutter">{ln.new_num || ""}</span>
-                            <span class="wt-detail__hunk-marker">
-                              {ln.type === "add" ? "+" : ln.type === "delete" ? "-" : " "}
-                            </span>
-                            <span class="wt-detail__hunk-content">{ln.content}</span>
-                          </div>
-                        {/each}
-                      </div>
-                    {/each}
+                    <DiffFileCore file={diff as unknown as DiffFile} {layout} />
                   {/if}
                 </div>
               {/if}
@@ -473,17 +474,11 @@
   }
 
   .wt-detail__hunks {
-    padding: 6px 0;
-    background: var(--bg-inset);
     border-top: 1px solid var(--border-muted);
-    font-family: var(--font-mono);
-    font-size: 11px;
-    overflow-x: auto;
   }
 
   .wt-detail__hunks-msg {
     padding: 8px 12px;
-    font-family: var(--font-default, sans-serif);
     color: var(--text-muted);
     margin: 0;
   }
@@ -492,59 +487,29 @@
     color: var(--accent-red);
   }
 
-  .wt-detail__hunk {
-    margin-bottom: 6px;
+  .wt-detail__layout-toggle {
+    display: inline-flex;
+    margin-left: auto;
+    background: var(--bg-inset);
+    border-radius: var(--radius-sm);
+    padding: 2px;
   }
 
-  .wt-detail__hunk:last-child {
-    margin-bottom: 0;
-  }
-
-  .wt-detail__hunk-head {
-    padding: 2px 12px;
-    color: var(--accent-blue);
-    background: color-mix(in srgb, var(--accent-blue) 10%, transparent);
+  .wt-detail__layout-btn {
+    font-size: 10px;
     font-weight: 600;
-  }
-
-  .wt-detail__hunk-line {
-    display: grid;
-    grid-template-columns: 36px 36px 14px 1fr;
-    padding-right: 8px;
-    white-space: pre;
-  }
-
-  .wt-detail__hunk-line--add {
-    background: color-mix(in srgb, var(--accent-green) 12%, transparent);
-  }
-
-  .wt-detail__hunk-line--delete {
-    background: color-mix(in srgb, var(--accent-red) 12%, transparent);
-  }
-
-  .wt-detail__hunk-gutter {
+    padding: 2px 8px;
+    border: none;
+    border-radius: 3px;
+    background: transparent;
     color: var(--text-muted);
-    text-align: right;
-    padding: 0 4px;
-    user-select: none;
+    cursor: pointer;
   }
 
-  .wt-detail__hunk-marker {
-    text-align: center;
-    color: var(--text-secondary);
-    user-select: none;
-  }
-
-  .wt-detail__hunk-line--add .wt-detail__hunk-marker {
-    color: var(--accent-green);
-  }
-
-  .wt-detail__hunk-line--delete .wt-detail__hunk-marker {
-    color: var(--accent-red);
-  }
-
-  .wt-detail__hunk-content {
-    overflow-x: auto;
+  .wt-detail__layout-btn--active {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
   }
 
   .wt-detail__file-status {
