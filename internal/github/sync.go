@@ -3102,6 +3102,12 @@ func (s *Syncer) runBackfillDiscovery(
 		if ctx.Err() != nil {
 			return
 		}
+		if repo.IsLocal() {
+			// Local-only entries have no GitHub side; backfill
+			// would otherwise hit https://local/api/v3/... and
+			// fail DNS lookup. Mirrors the syncRepo short-circuit.
+			continue
+		}
 		rHost := repo.PlatformHost
 		if rHost == "" {
 			rHost = "github.com"

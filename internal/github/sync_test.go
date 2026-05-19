@@ -3876,6 +3876,56 @@ func TestBackfillRepoDoesNotAdvanceIssueCursorWhenLabelPersistenceFails(t *testi
 	require.Empty(stored.Labels)
 }
 
+// TestRunBackfillDiscoverySkipsLocalRepos pins the boundary: local
+// repo entries (platform_host="local") have no GitHub side, so the
+// backfill discovery loop must not hand them to backfillRepo. Before
+// the guard, the configured client for host "local" would issue
+// requests against https://local/api/v3/... producing log noise like
+//   backfill PRs failed ... lookup local on 127.0.0.53:53: server misbehaving
+func TestRunBackfillDiscoverySkipsLocalRepos(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+	ctx := context.Background()
+	d := openTestDB(t)
+
+	_, err := d.UpsertLocalRepo(ctx, "redpanda")
+	require.NoError(err)
+
+	var prCalls, issueCalls atomic.Int32
+	mc := &mockClient{
+		listPullRequestsPageFn: func(context.Context, string, string, string, int) ([]*gh.PullRequest, bool, error) {
+			prCalls.Add(1)
+			return nil, false, nil
+		},
+		listIssuesPageFn: func(context.Context, string, string, string, int) ([]*gh.Issue, bool, error) {
+			issueCalls.Add(1)
+			return nil, false, nil
+		},
+	}
+
+	localRef := RepoRef{
+		Owner:        "local",
+		Name:         "redpanda",
+		PlatformHost: "local",
+		LocalPath:    "/tmp/redpanda",
+	}
+	budgets := map[string]*SyncBudget{
+		"local": NewSyncBudget(10),
+	}
+	syncer := NewSyncer(
+		map[string]Client{"local": mc},
+		d, nil,
+		[]RepoRef{localRef},
+		time.Minute, nil,
+		budgets,
+	)
+
+	syncer.runBackfillDiscovery(ctx, "local", []RepoRef{localRef})
+
+	assert.Equal(int32(0), prCalls.Load(), "ListPullRequestsPage must not be called for local repos")
+	assert.Equal(int32(0), issueCalls.Load(), "ListIssuesPage must not be called for local repos")
+}
+
 // partialFailureMock embeds mockClient and simulates ETag-like
 // behavior for issues: after a successful list fetch, subsequent
 // calls return 304 (not-modified) unless InvalidateListETagsForRepo
