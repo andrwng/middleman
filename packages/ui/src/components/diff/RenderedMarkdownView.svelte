@@ -1,6 +1,11 @@
 <script lang="ts">
   import { Marked, type Token, type Tokens } from "marked";
   import DOMPurify from "dompurify";
+  import {
+    wrapProseBlock,
+    wrapCodeBlock,
+    type AnchorSide,
+  } from "./renderedMarkdownAnchors";
 
   // Renders a markdown file at a given SHA inside the diff surface,
   // annotated with sparse source-line markers.
@@ -44,6 +49,9 @@
   let fetchSeq = 0;
 
   let bodyEl: HTMLDivElement | undefined = $state();
+
+  // The rendered view always represents the new (right) side of the diff.
+  const renderedSide: AnchorSide = "RIGHT";
 
   $effect(() => {
     void load(path, sha);
@@ -103,13 +111,8 @@
   const doc = $derived.by<RenderedDoc>(() => {
     if (raw === null) return { html: "", changedIndexes: new Set() };
 
-    // Custom renderer: only the heading renderer is customised so we
-    // can inline the L<n> badge. Everything else flows through
-    // marked's defaults, which produces standard markdown HTML.
     const m = new Marked({ breaks: true, gfm: true });
 
-    // We need per-heading source-line numbers, so we precompute by
-    // walking the lexer once, mapping (heading-token-index) → line.
     let tokens: Token[];
     try {
       tokens = m.lexer(raw);
@@ -117,57 +120,70 @@
       return { html: "", changedIndexes: new Set() };
     }
 
-    const headingLineByIdx = new Map<number, number>();
-    const changedIndexes = new Set<number>();
-    // Top-level "renderable" tokens — excluding pure whitespace —
-    // are what get mapped to the DOM children of the rendered body.
-    // We track their cursor in `renderIdx`.
-    let line = 1;
-    let renderIdx = 0;
-    let headingPos = 0;
-    for (const t of tokens) {
-      const rawText = (t as { raw?: string }).raw ?? "";
-      const startLine = line;
-      const newlines = countNewlines(rawText);
-      const endLine = line + newlines;
-
-      if (t.type === "heading") {
-        // marked's heading renderer is called once per heading;
-        // it processes them in document order so an index-into-
-        // headings counter aligns with the renderer invocations.
-        headingLineByIdx.set(headingPos, startLine);
-        headingPos++;
-      }
-      if (t.type !== "space") {
-        if (blockOverlapsChanged(startLine, endLine, changedLines)) {
-          changedIndexes.add(renderIdx);
-        }
-        renderIdx++;
-      }
-      line += newlines;
+    // Precompute each token's start line by walking the lexer output once.
+    const startLineByTokenIdx = new Map<number, number>();
+    let cursorLine = 1;
+    for (let i = 0; i < tokens.length; i++) {
+      startLineByTokenIdx.set(i, cursorLine);
+      const rawText = (tokens[i] as { raw?: string }).raw ?? "";
+      cursorLine += countNewlines(rawText);
     }
 
-    let headingRender = 0;
+    // Mutable cell consulted by renderer overrides to know which source
+    // line the block being rendered started on.
+    let currentBlockStart = 1;
+
     m.use({
       renderer: {
-        heading(this: { parser: { parseInline(tokens: Tokens.Generic[]): string } }, token: Tokens.Heading): string {
-          const text = this.parser.parseInline(token.tokens ?? []);
-          const level = token.depth;
-          const myLine = headingLineByIdx.get(headingRender) ?? 0;
-          headingRender++;
-          const label = myLine > 0
-            ? `<span class="rmd-line" title="Line ${myLine}">L${myLine}</span>`
-            : "";
-          return `<h${level}>${text}${label}</h${level}>\n`;
+        paragraph({ tokens: _t, raw: rawText }: Tokens.Paragraph): string {
+          return `<p>${wrapProseBlock(rawText, currentBlockStart, renderedSide, (s) =>
+            m.parseInline(s) as string,
+          )}</p>\n`;
+        },
+        heading({ tokens: _t, raw: rawText, depth }: Tokens.Heading): string {
+          const inner = wrapProseBlock(
+            rawText.replace(/^#+\s*/, ""),
+            currentBlockStart,
+            renderedSide,
+            (s) => m.parseInline(s) as string,
+          );
+          const badge = `<span class="rmd-line" title="Line ${currentBlockStart}">L${currentBlockStart}</span>`;
+          return `<h${depth}>${inner}${badge}</h${depth}>\n`;
+        },
+        code({ text, lang }: Tokens.Code): string {
+          const langAttr = lang ? ` class="language-${lang}"` : "";
+          return `<pre><code${langAttr}>${wrapCodeBlock(text, currentBlockStart, renderedSide)}</code></pre>\n`;
+        },
+        listitem(item: Tokens.ListItem): string {
+          return `<li>${wrapProseBlock(
+            item.raw.replace(/^[-*+]\s+|^\d+\.\s+/, ""),
+            currentBlockStart,
+            renderedSide,
+            (s) => m.parseInline(s) as string,
+          )}</li>\n`;
         },
       },
     });
 
-    let html: string;
-    try {
-      html = m.parser(tokens);
-    } catch {
-      html = "";
+    // Parse one block at a time so currentBlockStart is set before
+    // each renderer override fires. Track a separate render index
+    // (skipping space tokens) so changedIndexes aligns with DOM
+    // child positions, matching the post-mount $effect walker.
+    let html = "";
+    const changedIndexes = new Set<number>();
+    let renderIdx = 0;
+    for (let i = 0; i < tokens.length; i++) {
+      currentBlockStart = startLineByTokenIdx.get(i) ?? 1;
+      const tok = tokens[i]!;
+      const rawText = (tok as { raw?: string }).raw ?? "";
+      const endLine = currentBlockStart + countNewlines(rawText);
+      if (tok.type !== "space") {
+        if (blockOverlapsChanged(currentBlockStart, endLine, changedLines)) {
+          changedIndexes.add(renderIdx);
+        }
+        renderIdx++;
+      }
+      html += m.parser([tok]);
     }
     return { html, changedIndexes };
   });
