@@ -4,7 +4,9 @@
   import {
     wrapProseBlock,
     wrapCodeBlock,
+    computeRangeFromSelection,
     type AnchorSide,
+    type AnchorRange,
   } from "./renderedMarkdownAnchors";
 
   // Renders a markdown file at a given SHA inside the diff surface,
@@ -49,6 +51,20 @@
   let fetchSeq = 0;
 
   let bodyEl: HTMLDivElement | undefined = $state();
+
+  let liveSelection = $state<AnchorRange | null>(null);
+
+  function refreshSelection(): void {
+    if (!bodyEl) return;
+    const sel = typeof window !== "undefined" ? window.getSelection() : null;
+    liveSelection = computeRangeFromSelection(bodyEl, sel);
+  }
+
+  $effect(() => {
+    if (typeof document === "undefined") return;
+    document.addEventListener("selectionchange", refreshSelection);
+    return () => document.removeEventListener("selectionchange", refreshSelection);
+  });
 
   // The rendered view always represents the new (right) side of the diff.
   const renderedSide: AnchorSide = "RIGHT";
