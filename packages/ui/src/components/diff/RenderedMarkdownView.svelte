@@ -411,4 +411,16 @@
   .rmd-body :global(h2.rmd-changed) {
     padding-bottom: 0.4em;
   }
+  /* The base .rmd-changed rule assumes margin-left:0 / padding-left:0
+     (paragraphs, headings, blockquote, pre). Lists carry their own
+     margin-left and padding-left for indent + outside-marker space,
+     so the base override would crush bullets up against the accent
+     bar. Restore the list's natural indent here: keep the bar 13px
+     left of the text column and add the accent's 10px gutter on top
+     of the existing 2em padding so markers don't crowd the bar. */
+  .rmd-body :global(ul.rmd-changed),
+  .rmd-body :global(ol.rmd-changed) {
+    margin-left: calc(1em - 13px);
+    padding-left: calc(2em + 10px);
+  }
 </style>
