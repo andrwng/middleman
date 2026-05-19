@@ -315,7 +315,7 @@
     padding-left: 2em;
   }
   .rmd-body :global(li + li) {
-    margin-top: 4px;
+    margin-top: 8px;
   }
   .rmd-body :global(li > ul),
   .rmd-body :global(li > ol) {
