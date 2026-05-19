@@ -113,9 +113,15 @@ func (s *Server) getPullLocal(
 }
 
 // getDiffLocal dispatches the PR-shaped diff endpoint to the
-// worktree's full-tree diff. Scope params (commit, from, to,
-// patchsets) are ignored for v1 — worktrees don't carry the same
-// history-scoped review surfaces yet.
+// right git diff invocation based on the scope query params.
+//
+//	(none)                 → base..HEAD (committed work since base)
+//	?commit=WORKING-TREE   → working tree vs HEAD (uncommitted)
+//	?commit=<sha>          → that commit's diff (parent..sha)
+//	?from=<sha>&to=<sha>   → arbitrary range from..to
+//
+// Patchset-pair scope is intentionally not handled yet — worktrees
+// don't carry the same observed-patchset history.
 func (s *Server) getDiffLocal(
 	ctx context.Context, input *getDiffInput,
 ) (*getDiffOutput, error) {
@@ -123,21 +129,40 @@ func (s *Server) getDiffLocal(
 	if err != nil {
 		return nil, huma.Error404NotFound("worktree not found")
 	}
-	baseRef := s.lookupBaseRefForWorktree(ctx, *w)
-	ds, err := worktrees.DiffAgainstBase(ctx, w.Path, baseRef)
+
+	var files []gitcloneDiffFile
+	switch {
+	case input.Commit == worktrees.WorkingTreeSentinel:
+		files, err = worktrees.DiffWorkingTreeVsHEAD(ctx, w.Path)
+	case input.Commit != "":
+		files, err = worktrees.DiffSingleCommit(ctx, w.Path, input.Commit)
+	case input.From != "" && input.To != "":
+		files, err = worktrees.DiffRange(ctx, w.Path, input.From, input.To)
+	default:
+		baseRef := s.lookupBaseRefForWorktree(ctx, *w)
+		ds, dsErr := worktrees.DiffBaseToHEAD(ctx, w.Path, baseRef)
+		if dsErr != nil {
+			return nil, huma.Error500InternalServerError("worktree diff failed: " + dsErr.Error())
+		}
+		files = ds.Files
+	}
 	if err != nil {
 		return nil, huma.Error500InternalServerError("worktree diff failed: " + err.Error())
 	}
+
 	return &getDiffOutput{Body: diffResponse{
 		Stale:               false,
 		WhitespaceOnlyCount: 0,
-		Files:               ds.Files,
+		Files:               files,
 	}}, nil
 }
 
 // getCommitsLocal returns the commits between the worktree's
-// resolved base and HEAD. Surfaces in the same commitsResponse
-// shape as the PR endpoint.
+// resolved base and HEAD. When the worktree has uncommitted
+// changes (staged, unstaged, or untracked), a synthetic
+// WorkingTreeSentinel entry is prepended so reviewers can see
+// and pick into the in-flight state from the same commits panel
+// they use to navigate real commits.
 func (s *Server) getCommitsLocal(
 	ctx context.Context, input *repoNumberInput,
 ) (*getCommitsOutput, error) {
@@ -150,27 +175,47 @@ func (s *Server) getCommitsLocal(
 	if err != nil {
 		return nil, huma.Error500InternalServerError("resolve base: " + err.Error())
 	}
+
+	var resp commitsResponse
+
+	// Synthetic "Uncommitted changes" entry first (only if the
+	// worktree is dirty). The sentinel SHA flows through scope
+	// params back to getDiffLocal, where it routes to
+	// DiffWorkingTreeVsHEAD.
+	dirty, _ := worktrees.HasUncommittedChanges(ctx, w.Path)
+	if dirty {
+		resp.Commits = append(resp.Commits, commitResponse{
+			SHA:        worktrees.WorkingTreeSentinel,
+			Message:    "Uncommitted changes",
+			AuthorName: "(working tree)",
+			AuthoredAt: time.Now().UTC(),
+		})
+	}
+
 	commits, err := worktrees.ListCommits(ctx, w.Path, base.SHA)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("list commits: " + err.Error())
 	}
-	resp := commitsResponse{Commits: make([]commitResponse, len(commits))}
-	for i, c := range commits {
-		resp.Commits[i] = commitResponse{
+	for _, c := range commits {
+		resp.Commits = append(resp.Commits, commitResponse{
 			SHA:        c.SHA,
 			Message:    c.Message,
 			Body:       c.Body,
 			AuthorName: c.AuthorName,
 			AuthoredAt: c.AuthoredAt.UTC(),
-		}
+		})
+	}
+	if resp.Commits == nil {
+		resp.Commits = []commitResponse{}
 	}
 	return &getCommitsOutput{Body: resp}, nil
 }
 
-// getFilesLocal returns the lightweight file list for a worktree.
-// Strips hunks from the same DiffSet getDiffLocal would return so
-// callers paying for the cheap endpoint don't get the full patch
-// payload.
+// getFilesLocal returns the lightweight file list for a worktree's
+// default scope (base..HEAD — committed work only). Mirrors the
+// PR /files endpoint: full-PR file list, no per-commit narrowing.
+// Hunks are stripped so callers paying for the cheap endpoint
+// don't get the full patch payload.
 func (s *Server) getFilesLocal(
 	ctx context.Context, input *getFilesInput,
 ) (*getFilesOutput, error) {
@@ -179,7 +224,7 @@ func (s *Server) getFilesLocal(
 		return nil, huma.Error404NotFound("worktree not found")
 	}
 	baseRef := s.lookupBaseRefForWorktree(ctx, *w)
-	ds, err := worktrees.DiffAgainstBase(ctx, w.Path, baseRef)
+	ds, err := worktrees.DiffBaseToHEAD(ctx, w.Path, baseRef)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("worktree files failed: " + err.Error())
 	}

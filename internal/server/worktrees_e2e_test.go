@@ -10,6 +10,7 @@ import (
 
 	Assert "github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/wesm/middleman/internal/apiclient/generated"
 	"github.com/wesm/middleman/internal/db"
 )
 
@@ -205,20 +206,26 @@ func TestAPILocalDispatchPRRoutes(t *testing.T) {
 	client := setupTestClient(t, srv)
 	ctx := context.Background()
 
+	// Set up: origin/main has one commit. The worktree branches off
+	// and adds a committed change AND an uncommitted change.
 	dir := t.TempDir()
 	runGitWT(t, "", "init", "--initial-branch=main", dir)
 	runGitWT(t, dir, "config", "user.email", "test@example.com")
 	runGitWT(t, dir, "config", "user.name", "Test")
-	require.NoError(os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("a\nb\n"), 0o644))
-	runGitWT(t, dir, "add", "hello.txt")
-	runGitWT(t, dir, "commit", "-m", "init")
+	require.NoError(os.WriteFile(filepath.Join(dir, "base.txt"), []byte("base\n"), 0o644))
+	runGitWT(t, dir, "add", "base.txt")
+	runGitWT(t, dir, "commit", "-m", "base commit")
 	originDir := dir + "-origin.git"
 	runGitWT(t, "", "init", "--bare", originDir)
 	runGitWT(t, dir, "remote", "add", "origin", originDir)
 	runGitWT(t, dir, "push", "origin", "main")
 	runGitWT(t, dir, "fetch", "origin")
-	// Diverge so the diff has content.
-	require.NoError(os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("a\nb\nc\n"), 0o644))
+	// Diverge with one committed file plus one uncommitted edit.
+	runGitWT(t, dir, "checkout", "-b", "feat/x")
+	require.NoError(os.WriteFile(filepath.Join(dir, "feature.txt"), []byte("feat\n"), 0o644))
+	runGitWT(t, dir, "add", "feature.txt")
+	runGitWT(t, dir, "commit", "-m", "add feature")
+	require.NoError(os.WriteFile(filepath.Join(dir, "base.txt"), []byte("base\nedit\n"), 0o644))
 
 	repoID, err := database.UpsertLocalRepo(ctx, "demo")
 	require.NoError(err)
@@ -226,11 +233,10 @@ func TestAPILocalDispatchPRRoutes(t *testing.T) {
 	require.NoError(err)
 	w, err := database.UpsertWorktree(ctx, repoID, db.ScannedWorktree{
 		Path:   canonDir,
-		Branch: "main",
+		Branch: "feat/x",
 	})
 	require.NoError(err)
 
-	// /repos/local/demo/pulls/{id} (detail)
 	pullResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberWithResponse(
 		ctx, "local", "demo", w.ID,
 	)
@@ -240,7 +246,7 @@ func TestAPILocalDispatchPRRoutes(t *testing.T) {
 	assert.Equal("local", pullResp.JSON200.RepoOwner)
 	assert.Equal("demo", pullResp.JSON200.RepoName)
 
-	// /repos/local/demo/pulls/{id}/diff (full diff)
+	// Default scope: base..HEAD → only the committed file change.
 	diffResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberDiffWithResponse(
 		ctx, "local", "demo", w.ID, nil,
 	)
@@ -248,9 +254,25 @@ func TestAPILocalDispatchPRRoutes(t *testing.T) {
 	require.Equal(http.StatusOK, diffResp.StatusCode())
 	require.NotNil(diffResp.JSON200)
 	require.NotNil(diffResp.JSON200.Files)
-	require.Len(*diffResp.JSON200.Files, 1)
+	defaultFiles := *diffResp.JSON200.Files
+	require.Len(defaultFiles, 1)
+	assert.Equal("feature.txt", defaultFiles[0].Path)
 
-	// /repos/local/demo/pulls/{id}/files (lightweight list)
+	// ?commit=WORKING-TREE → only the uncommitted edit.
+	wtCommit := "WORKING-TREE"
+	wtResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberDiffWithResponse(
+		ctx, "local", "demo", w.ID,
+		&generated.GetReposByOwnerByNamePullsByNumberDiffParams{Commit: &wtCommit},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, wtResp.StatusCode())
+	require.NotNil(wtResp.JSON200)
+	require.NotNil(wtResp.JSON200.Files)
+	wtFiles := *wtResp.JSON200.Files
+	require.Len(wtFiles, 1)
+	assert.Equal("base.txt", wtFiles[0].Path)
+
+	// Files endpoint matches default diff scope.
 	filesResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberFilesWithResponse(
 		ctx, "local", "demo", w.ID,
 	)
@@ -259,10 +281,19 @@ func TestAPILocalDispatchPRRoutes(t *testing.T) {
 	require.NotNil(filesResp.JSON200)
 	require.NotNil(filesResp.JSON200.Files)
 	require.Len(*filesResp.JSON200.Files, 1)
-	// Files endpoint strips hunks.
-	if (*filesResp.JSON200.Files)[0].Hunks != nil {
-		assert.Empty(*(*filesResp.JSON200.Files)[0].Hunks)
-	}
+
+	// Commits endpoint: the working-tree sentinel is prepended.
+	commitsResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberCommitsWithResponse(
+		ctx, "local", "demo", w.ID,
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, commitsResp.StatusCode())
+	require.NotNil(commitsResp.JSON200)
+	require.NotNil(commitsResp.JSON200.Commits)
+	commits := *commitsResp.JSON200.Commits
+	require.NotEmpty(commits)
+	assert.Equal("WORKING-TREE", commits[0].Sha)
+	assert.Equal("Uncommitted changes", commits[0].Message)
 }
 
 func runGitWT(t *testing.T, dir string, args ...string) {
