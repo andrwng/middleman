@@ -15,6 +15,14 @@
   const { diff: diffStore, pulls: pullsStore } = getStores();
   const client = getClient();
 
+  // The Submit verb for a worktree is supposed to drive the
+  // interactive Claude session (per the design memo) — not POST to
+  // GitHub. That runner isn't wired yet; for now the panel still
+  // lets the reviewer draft a summary + inline comments (those save
+  // to localStorage), but the publish button is replaced with a
+  // placeholder.
+  const isLocal = $derived(owner === "local");
+
   // Draft the user is about to publish. Read once on open to snapshot;
   // we still read live for comment deletion/adds but the body/event
   // come from draft state continuously.
@@ -156,42 +164,44 @@
     oninput={onBodyInput}
   ></textarea>
 
-  <fieldset class="panel__events">
-    <legend class="visually-hidden">Review type</legend>
-    <label class="panel__event">
-      <input
-        type="radio"
-        name="review-event"
-        value="COMMENT"
-        checked={draft.event === "COMMENT"}
-        onchange={() => onEventChange("COMMENT")}
-      />
-      <span>Comment</span>
-      <small>Submit without approval</small>
-    </label>
-    <label class="panel__event">
-      <input
-        type="radio"
-        name="review-event"
-        value="APPROVE"
-        checked={draft.event === "APPROVE"}
-        onchange={() => onEventChange("APPROVE")}
-      />
-      <span>Approve</span>
-      <small>Submit and approve</small>
-    </label>
-    <label class="panel__event">
-      <input
-        type="radio"
-        name="review-event"
-        value="REQUEST_CHANGES"
-        checked={draft.event === "REQUEST_CHANGES"}
-        onchange={() => onEventChange("REQUEST_CHANGES")}
-      />
-      <span>Request changes</span>
-      <small>Submit and request changes</small>
-    </label>
-  </fieldset>
+  {#if !isLocal}
+    <fieldset class="panel__events">
+      <legend class="visually-hidden">Review type</legend>
+      <label class="panel__event">
+        <input
+          type="radio"
+          name="review-event"
+          value="COMMENT"
+          checked={draft.event === "COMMENT"}
+          onchange={() => onEventChange("COMMENT")}
+        />
+        <span>Comment</span>
+        <small>Submit without approval</small>
+      </label>
+      <label class="panel__event">
+        <input
+          type="radio"
+          name="review-event"
+          value="APPROVE"
+          checked={draft.event === "APPROVE"}
+          onchange={() => onEventChange("APPROVE")}
+        />
+        <span>Approve</span>
+        <small>Submit and approve</small>
+      </label>
+      <label class="panel__event">
+        <input
+          type="radio"
+          name="review-event"
+          value="REQUEST_CHANGES"
+          checked={draft.event === "REQUEST_CHANGES"}
+          onchange={() => onEventChange("REQUEST_CHANGES")}
+        />
+        <span>Request changes</span>
+        <small>Submit and request changes</small>
+      </label>
+    </fieldset>
+  {/if}
 
   {#if draft.comments.length > 0}
     <div class="panel__preview">
@@ -231,17 +241,28 @@
   {/if}
 
   <div class="panel__actions">
-    <button
-      type="button"
-      class="panel__btn panel__btn--primary"
-      disabled={submitting ||
-        (draft.event === "REQUEST_CHANGES" &&
-          !draft.body.trim() &&
-          draft.comments.length === 0)}
-      onclick={() => void onSubmit()}
-    >
-      {submitting ? "Publishing..." : "Publish review"}
-    </button>
+    {#if isLocal}
+      <button
+        type="button"
+        class="panel__btn panel__btn--primary"
+        disabled
+        title="Submitting a worktree review will drive the interactive Claude session — not wired yet"
+      >
+        Send to Claude (coming soon)
+      </button>
+    {:else}
+      <button
+        type="button"
+        class="panel__btn panel__btn--primary"
+        disabled={submitting ||
+          (draft.event === "REQUEST_CHANGES" &&
+            !draft.body.trim() &&
+            draft.comments.length === 0)}
+        onclick={() => void onSubmit()}
+      >
+        {submitting ? "Publishing..." : "Publish review"}
+      </button>
+    {/if}
     <button type="button" class="panel__btn" disabled={submitting} onclick={onclose}>
       Cancel
     </button>

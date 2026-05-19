@@ -29,6 +29,12 @@
   const collapsed = $derived(diffStore.isFileCollapsed(owner, name, number, file.path));
   const lang = $derived(langFromPath(file.path));
   const layout = $derived(diffStore.getLayout());
+  // AI Ask threads currently anchor to GitHub MR rows. For local
+  // sources the create-thread endpoint has no dispatch yet, so hide
+  // the buttons until that slice lands. Comment composer is fine —
+  // it saves to localStorage scoped by (owner, name, number) and
+  // doesn't hit the network until the user clicks Submit.
+  const showAskUI = $derived(owner !== "local");
 
   // Markdown files get an optional "Rendered" view alongside the
   // standard "Diff" view. Local toggle state so each file's mode is
@@ -595,14 +601,16 @@
       </svg>
       Comment
     </button>
-    <button
-      type="button"
-      class="selection-toolbar__btn selection-toolbar__btn--ask"
-      onclick={openAskFromToolbar}
-      title="Ask Claude about the selected lines"
-    >
-      ? Ask
-    </button>
+    {#if showAskUI}
+      <button
+        type="button"
+        class="selection-toolbar__btn selection-toolbar__btn--ask"
+        onclick={openAskFromToolbar}
+        title="Ask Claude about the selected lines"
+      >
+        ? Ask
+      </button>
+    {/if}
   </div>
 {/if}
 
@@ -764,18 +772,20 @@
                                 <path d="M5 2V8M2 5H8" stroke-linecap="round" />
                               </svg>
                             </button>
-                            <button
-                              type="button"
-                              class="ask-ai-btn"
-                              class:ask-ai-btn--range={rangeTooltip(leftAnchor.side) != null}
-                              onmousedown={(e) => preserveSelection(leftAnchor.side, e)}
-                              onclick={() => openAskFor(leftAnchor.line, leftAnchor.side)}
-                              title={rangeTooltip(leftAnchor.side)
-                                ? `Ask Claude about ${rangeTooltip(leftAnchor.side)}`
-                                : "Ask Claude about this line"}
-                            >
-                              ?
-                            </button>
+                            {#if showAskUI}
+                              <button
+                                type="button"
+                                class="ask-ai-btn"
+                                class:ask-ai-btn--range={rangeTooltip(leftAnchor.side) != null}
+                                onmousedown={(e) => preserveSelection(leftAnchor.side, e)}
+                                onclick={() => openAskFor(leftAnchor.line, leftAnchor.side)}
+                                title={rangeTooltip(leftAnchor.side)
+                                  ? `Ask Claude about ${rangeTooltip(leftAnchor.side)}`
+                                  : "Ask Claude about this line"}
+                              >
+                                ?
+                              </button>
+                            {/if}
                           </div>
                         {/if}
                       </div>
@@ -816,18 +826,20 @@
                                 <path d="M5 2V8M2 5H8" stroke-linecap="round" />
                               </svg>
                             </button>
-                            <button
-                              type="button"
-                              class="ask-ai-btn"
-                              class:ask-ai-btn--range={rangeTooltip(rightAnchor.side) != null}
-                              onmousedown={(e) => preserveSelection(rightAnchor.side, e)}
-                              onclick={() => openAskFor(rightAnchor.line, rightAnchor.side)}
-                              title={rangeTooltip(rightAnchor.side)
-                                ? `Ask Claude about ${rangeTooltip(rightAnchor.side)}`
-                                : "Ask Claude about this line"}
-                            >
-                              ?
-                            </button>
+                            {#if showAskUI}
+                              <button
+                                type="button"
+                                class="ask-ai-btn"
+                                class:ask-ai-btn--range={rangeTooltip(rightAnchor.side) != null}
+                                onmousedown={(e) => preserveSelection(rightAnchor.side, e)}
+                                onclick={() => openAskFor(rightAnchor.line, rightAnchor.side)}
+                                title={rangeTooltip(rightAnchor.side)
+                                  ? `Ask Claude about ${rangeTooltip(rightAnchor.side)}`
+                                  : "Ask Claude about this line"}
+                              >
+                                ?
+                              </button>
+                            {/if}
                           </div>
                         {/if}
                       </div>
@@ -959,18 +971,20 @@
                           <path d="M5 2V8M2 5H8" stroke-linecap="round" />
                         </svg>
                       </button>
-                      <button
-                        type="button"
-                        class="ask-ai-btn"
-                        class:ask-ai-btn--range={rangeTooltip(anchor.side) != null}
-                        onmousedown={(e) => preserveSelection(anchor.side, e)}
-                        onclick={() => openAskFor(anchor.line, anchor.side)}
-                        title={rangeTooltip(anchor.side)
-                          ? `Ask Claude about ${rangeTooltip(anchor.side)}`
-                          : "Ask Claude about this line"}
-                      >
-                        ?
-                      </button>
+                      {#if showAskUI}
+                        <button
+                          type="button"
+                          class="ask-ai-btn"
+                          class:ask-ai-btn--range={rangeTooltip(anchor.side) != null}
+                          onmousedown={(e) => preserveSelection(anchor.side, e)}
+                          onclick={() => openAskFor(anchor.line, anchor.side)}
+                          title={rangeTooltip(anchor.side)
+                            ? `Ask Claude about ${rangeTooltip(anchor.side)}`
+                            : "Ask Claude about this line"}
+                        >
+                          ?
+                        </button>
+                      {/if}
                     </div>
                   {/if}
                 </div>
