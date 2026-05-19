@@ -6,6 +6,8 @@
   import PullList from "../components/sidebar/PullList.svelte";
   import PullDetail
     from "../components/detail/PullDetail.svelte";
+  import WorktreeConversation
+    from "../components/detail/WorktreeConversation.svelte";
   import DiffView from "../components/diff/DiffView.svelte";
   import DiffSidebar from "../components/diff/DiffSidebar.svelte";
   import ReviewCoverBanner from "../components/detail/ReviewCoverBanner.svelte";
@@ -98,17 +100,15 @@
       >
         Review
       </button>
-      {#if !isLocalPR}
-        <button
-          class="detail-tab"
-          class:detail-tab--active={detailTab === "conversation"}
-          onclick={() => navigate(
-            `/pulls/${selectedPR.owner}/${selectedPR.name}/${selectedPR.number}`,
-          )}
-        >
-          Activity
-        </button>
-      {/if}
+      <button
+        class="detail-tab"
+        class:detail-tab--active={detailTab === "conversation"}
+        onclick={() => navigate(
+          `/pulls/${selectedPR.owner}/${selectedPR.name}/${selectedPR.number}`,
+        )}
+      >
+        Activity
+      </button>
     </div>
     {#if detailTab === "files"}
       {#key `${selectedPR.owner}/${selectedPR.name}/${selectedPR.number}`}
@@ -146,6 +146,8 @@
           </div>
         </div>
       {/key}
+    {:else if isLocalPR}
+      <WorktreeConversation />
     {:else}
       <PullDetail
         owner={selectedPR.owner}
