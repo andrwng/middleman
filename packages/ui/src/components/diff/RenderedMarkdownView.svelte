@@ -476,19 +476,6 @@
     </div>
   {/if}
 
-  {#if liveSelection}
-    <div
-      class="rmd-toolbar"
-      style:top="{toolbarTop}px"
-      style:left="{toolbarLeft}px"
-    >
-      <button type="button" class="rmd-tb-btn" onclick={openComposerFromToolbar}
-        title="Comment on lines {liveSelection.startLine}–{liveSelection.endLine}">+</button>
-      <button type="button" class="rmd-tb-btn" onclick={openAskFromToolbar}
-        title="Ask Claude about lines {liveSelection.startLine}–{liveSelection.endLine}">?</button>
-    </div>
-  {/if}
-
   {#if openComposerKey && rangeSnapshot}
     <div class="rmd-composer-wrap">
       <DiffComposer
@@ -513,9 +500,25 @@
   {/if}
 </div>
 
+{#if liveSelection}
+  <div
+    class="rmd-toolbar"
+    style:top="{toolbarTop}px"
+    style:left="{toolbarLeft}px"
+    onmousedown={(e) => e.preventDefault()}
+    role="toolbar"
+    tabindex="-1"
+    aria-label="Rendered markdown selection actions"
+  >
+    <button type="button" class="rmd-tb-btn" onclick={openComposerFromToolbar}
+      title="Comment on lines {liveSelection.startLine}–{liveSelection.endLine}">+</button>
+    <button type="button" class="rmd-tb-btn" onclick={openAskFromToolbar}
+      title="Ask Claude about lines {liveSelection.startLine}–{liveSelection.endLine}">?</button>
+  </div>
+{/if}
+
 <style>
   .rmd-view {
-    position: relative;
     padding: 16px 24px;
     background: var(--diff-bg);
   }
