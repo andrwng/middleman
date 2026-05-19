@@ -311,7 +311,7 @@
   }
   .rmd-body :global(ul),
   .rmd-body :global(ol) {
-    margin: 0 0 16px 1.5em;
+    margin: 0 0 16px 1em;
     padding-left: 2em;
   }
   .rmd-body :global(li + li) {
