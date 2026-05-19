@@ -135,6 +135,38 @@ func (s *Server) getDiffLocal(
 	}}, nil
 }
 
+// getCommitsLocal returns the commits between the worktree's
+// resolved base and HEAD. Surfaces in the same commitsResponse
+// shape as the PR endpoint.
+func (s *Server) getCommitsLocal(
+	ctx context.Context, input *repoNumberInput,
+) (*getCommitsOutput, error) {
+	w, err := s.resolveLocalWorktree(ctx, input.Name, input.Number)
+	if err != nil {
+		return nil, huma.Error404NotFound("worktree not found")
+	}
+	baseRef := s.lookupBaseRefForWorktree(ctx, *w)
+	base, err := worktrees.ResolveBase(ctx, w.Path, baseRef)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("resolve base: " + err.Error())
+	}
+	commits, err := worktrees.ListCommits(ctx, w.Path, base.SHA)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("list commits: " + err.Error())
+	}
+	resp := commitsResponse{Commits: make([]commitResponse, len(commits))}
+	for i, c := range commits {
+		resp.Commits[i] = commitResponse{
+			SHA:        c.SHA,
+			Message:    c.Message,
+			Body:       c.Body,
+			AuthorName: c.AuthorName,
+			AuthoredAt: c.AuthoredAt.UTC(),
+		}
+	}
+	return &getCommitsOutput{Body: resp}, nil
+}
+
 // getFilesLocal returns the lightweight file list for a worktree.
 // Strips hunks from the same DiffSet getDiffLocal would return so
 // callers paying for the cheap endpoint don't get the full patch

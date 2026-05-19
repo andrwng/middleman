@@ -2186,6 +2186,9 @@ type getCommitsOutput struct {
 }
 
 func (s *Server) getCommits(ctx context.Context, input *repoNumberInput) (*getCommitsOutput, error) {
+	if isLocalSource(input.Owner) {
+		return s.getCommitsLocal(ctx, input)
+	}
 	if s.clones == nil {
 		return nil, huma.Error503ServiceUnavailable("commits not available: clone manager not configured")
 	}

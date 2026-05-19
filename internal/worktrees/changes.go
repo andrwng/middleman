@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/wesm/middleman/internal/gitclone"
 )
 
 // ChangedFile is one entry in a worktree's change set.
@@ -185,6 +188,55 @@ func isUnderAnyWorktree(path string, nestedRels []string) bool {
 		}
 	}
 	return false
+}
+
+// ListCommits returns commits in the worktree between baseSHA
+// (exclusive) and HEAD (inclusive), newest first, following only
+// the first-parent chain. Mirrors gitclone.Manager.ListCommits's
+// behavior so callers can use the same gitclone.Commit shape for
+// PR and worktree review surfaces.
+func ListCommits(
+	ctx context.Context, worktreePath, baseSHA string,
+) ([]gitclone.Commit, error) {
+	if worktreePath == "" {
+		return nil, fmt.Errorf("worktreePath is required")
+	}
+	if baseSHA == "" {
+		return nil, fmt.Errorf("baseSHA is required")
+	}
+	out, err := gitCmd(ctx, worktreePath,
+		"log", "-z", "--first-parent",
+		"--format=%H%x00%an%x00%aI%x00%B",
+		baseSHA+"..HEAD",
+	)
+	if err != nil {
+		return nil, fmt.Errorf("git log: %w", err)
+	}
+	s := strings.TrimSuffix(string(out), "\x00")
+	if s == "" {
+		return nil, nil
+	}
+	fields := strings.Split(s, "\x00")
+	if len(fields)%4 != 0 {
+		return nil, fmt.Errorf("unexpected git log field count: %d", len(fields))
+	}
+	commits := make([]gitclone.Commit, 0, len(fields)/4)
+	for i := 0; i < len(fields); i += 4 {
+		t, err := time.Parse(time.RFC3339, fields[i+2])
+		if err != nil {
+			return nil, fmt.Errorf("parse commit date %q: %w", fields[i+2], err)
+		}
+		msg := strings.TrimRight(fields[i+3], "\n")
+		subject, body, _ := strings.Cut(msg, "\n")
+		commits = append(commits, gitclone.Commit{
+			SHA:        fields[i],
+			AuthorName: fields[i+1],
+			AuthoredAt: t,
+			Message:    subject,
+			Body:       strings.TrimSpace(body),
+		})
+	}
+	return commits, nil
 }
 
 // listUntracked returns paths of files git is aware of but not
