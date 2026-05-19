@@ -476,6 +476,8 @@ func (s *Server) registerAPI(api huma.API) {
 		Path:          "/workspaces/{id}",
 		DefaultStatus: http.StatusNoContent,
 	}, s.deleteWorkspace)
+
+	s.registerSessionRoutes(api)
 }
 
 func NewOpenAPI() *huma.OpenAPI {

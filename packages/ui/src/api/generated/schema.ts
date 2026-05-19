@@ -650,6 +650,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/repos/{owner}/{name}/pulls/{number}/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get repos by owner by name pulls by number session */
+        get: operations["get-repos-by-owner-by-name-pulls-by-number-session"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{owner}/{name}/pulls/{number}/session/turns": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post repos by owner by name pulls by number session turns */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-session-turns"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{owner}/{name}/pulls/{number}/session/turns/{turn_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post repos by owner by name pulls by number session turns by turn ID cancel */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-session-turns-by-turn-id-cancel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/repos/{owner}/{name}/pulls/{number}/stack": {
         parameters: {
             query?: never;
@@ -1356,6 +1407,16 @@ export interface components {
             files: components["schemas"]["DiffFile"][] | null;
             stale: boolean;
         };
+        GetSessionResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/GetSessionResponse.json
+             */
+            readonly $schema?: string;
+            session: components["schemas"]["SessionResponse"];
+            turns: components["schemas"]["SessionTurnResponse"][] | null;
+        };
         GithubStateInputBody: {
             /**
              * Format: uri
@@ -1855,6 +1916,27 @@ export interface components {
             number: number;
             repo_tracked: boolean;
         };
+        SessionResponse: {
+            claude_session_id?: string;
+            /** Format: int64 */
+            id: number;
+            last_activity_at: string;
+            started_at: string;
+            status: string;
+        };
+        SessionTurnResponse: {
+            content: string;
+            /** @description UTC RFC3339 timestamp */
+            created_at: string;
+            error?: string;
+            /** Format: int64 */
+            id: number;
+            metadata_json?: string;
+            /** @description For claude_response: queued | running | done | failed | cancelled. User turns are always done. */
+            status: string;
+            /** @description review_feedback | user_message | claude_response | state */
+            turn_type: string;
+        };
         SetKanbanStateInputBody: {
             /**
              * Format: uri
@@ -1969,6 +2051,29 @@ export interface components {
             /** Format: int64 */
             review_id: number;
             state: string;
+        };
+        SubmitTurnInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/SubmitTurnInputBody.json
+             */
+            readonly $schema?: string;
+            content: string;
+            metadata_json?: string;
+            /** @description review_feedback or user_message */
+            type: string;
+        };
+        SubmitTurnOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/SubmitTurnOutputBody.json
+             */
+            readonly $schema?: string;
+            response_turn: components["schemas"]["SessionTurnResponse"];
+            session: components["schemas"]["SessionResponse"];
+            user_turn: components["schemas"]["SessionTurnResponse"];
         };
         SyncStatus: {
             /**
@@ -3747,6 +3852,108 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SubmitReviewResponseBody"];
                 };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-repos-by-owner-by-name-pulls-by-number-session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GetSessionResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-session-turns": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubmitTurnInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubmitTurnOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-session-turns-by-turn-id-cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+                turn_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Error */
             default: {

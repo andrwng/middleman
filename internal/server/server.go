@@ -64,6 +64,7 @@ type Server struct {
 	clones            *gitclone.Manager
 	workspaces        *workspace.Manager
 	aiReview          *aireview.Runner
+	sessionRunner     *aireview.SessionRunner
 	cfg               *config.Config
 	cfgPath           string
 	cfgMu             sync.Mutex
@@ -341,6 +342,11 @@ func newServer(
 		if err := s.aiReview.ReconcileOnStartup(bgCtx); err != nil {
 			slog.Warn("ai review reconcile on startup failed", "err", err)
 		}
+		// Sessions reuse the same claude binary + db; nothing to
+		// reconcile on startup yet (turns left running across
+		// restarts surface as stale "running" status, which the UI
+		// can flag — proper cleanup is a future slice).
+		s.sessionRunner = aireview.NewSessionRunner(database)
 	}
 
 	if s.workspaces != nil {

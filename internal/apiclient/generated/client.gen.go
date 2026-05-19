@@ -426,6 +426,14 @@ type FilesResponse struct {
 	Stale  bool        `json:"stale"`
 }
 
+// GetSessionResponse defines model for GetSessionResponse.
+type GetSessionResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema  *string                `json:"$schema,omitempty"`
+	Session SessionResponse        `json:"session"`
+	Turns   *[]SessionTurnResponse `json:"turns"`
+}
+
 // GithubStateInputBody defines model for GithubStateInputBody.
 type GithubStateInputBody struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -823,6 +831,32 @@ type ResolveItemResponse struct {
 	RepoTracked bool   `json:"repo_tracked"`
 }
 
+// SessionResponse defines model for SessionResponse.
+type SessionResponse struct {
+	ClaudeSessionId *string `json:"claude_session_id,omitempty"`
+	Id              int64   `json:"id"`
+	LastActivityAt  string  `json:"last_activity_at"`
+	StartedAt       string  `json:"started_at"`
+	Status          string  `json:"status"`
+}
+
+// SessionTurnResponse defines model for SessionTurnResponse.
+type SessionTurnResponse struct {
+	Content string `json:"content"`
+
+	// CreatedAt UTC RFC3339 timestamp
+	CreatedAt    string  `json:"created_at"`
+	Error        *string `json:"error,omitempty"`
+	Id           int64   `json:"id"`
+	MetadataJson *string `json:"metadata_json,omitempty"`
+
+	// Status For claude_response: queued | running | done | failed | cancelled. User turns are always done.
+	Status string `json:"status"`
+
+	// TurnType review_feedback | user_message | claude_response | state
+	TurnType string `json:"turn_type"`
+}
+
 // SetKanbanStateInputBody defines model for SetKanbanStateInputBody.
 type SetKanbanStateInputBody struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -924,6 +958,26 @@ type SubmitReviewResponseBody struct {
 	Schema   *string `json:"$schema,omitempty"`
 	ReviewId int64   `json:"review_id"`
 	State    string  `json:"state"`
+}
+
+// SubmitTurnInputBody defines model for SubmitTurnInputBody.
+type SubmitTurnInputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema       *string `json:"$schema,omitempty"`
+	Content      string  `json:"content"`
+	MetadataJson *string `json:"metadata_json,omitempty"`
+
+	// Type review_feedback or user_message
+	Type string `json:"type"`
+}
+
+// SubmitTurnOutputBody defines model for SubmitTurnOutputBody.
+type SubmitTurnOutputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema       *string             `json:"$schema,omitempty"`
+	ResponseTurn SessionTurnResponse `json:"response_turn"`
+	Session      SessionResponse     `json:"session"`
+	UserTurn     SessionTurnResponse `json:"user_turn"`
 }
 
 // SyncStatus defines model for SyncStatus.
@@ -1189,6 +1243,9 @@ type PutReposByOwnerByNamePullsByNumberNotesJSONRequestBody = PutPRNotesInputBod
 // PostReposByOwnerByNamePullsByNumberReviewJSONRequestBody defines body for PostReposByOwnerByNamePullsByNumberReview for application/json ContentType.
 type PostReposByOwnerByNamePullsByNumberReviewJSONRequestBody = SubmitReviewInputBody
 
+// PostReposByOwnerByNamePullsByNumberSessionTurnsJSONRequestBody defines body for PostReposByOwnerByNamePullsByNumberSessionTurns for application/json ContentType.
+type PostReposByOwnerByNamePullsByNumberSessionTurnsJSONRequestBody = SubmitTurnInputBody
+
 // SetKanbanStateJSONRequestBody defines body for SetKanbanState for application/json ContentType.
 type SetKanbanStateJSONRequestBody = SetKanbanStateInputBody
 
@@ -1448,6 +1505,17 @@ type ClientInterface interface {
 	PostReposByOwnerByNamePullsByNumberReviewWithBody(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	PostReposByOwnerByNamePullsByNumberReview(ctx context.Context, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberReviewJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetReposByOwnerByNamePullsByNumberSession request
+	GetReposByOwnerByNamePullsByNumberSession(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PostReposByOwnerByNamePullsByNumberSessionTurnsWithBody request with any body
+	PostReposByOwnerByNamePullsByNumberSessionTurnsWithBody(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	PostReposByOwnerByNamePullsByNumberSessionTurns(ctx context.Context, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberSessionTurnsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PostReposByOwnerByNamePullsByNumberSessionTurnsByTurnIdCancel request
+	PostReposByOwnerByNamePullsByNumberSessionTurnsByTurnIdCancel(ctx context.Context, owner string, name string, number int64, turnId int64, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetReposByOwnerByNamePullsByNumberStack request
 	GetReposByOwnerByNamePullsByNumberStack(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2242,6 +2310,54 @@ func (c *Client) PostReposByOwnerByNamePullsByNumberReviewWithBody(ctx context.C
 
 func (c *Client) PostReposByOwnerByNamePullsByNumberReview(ctx context.Context, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberReviewJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPostReposByOwnerByNamePullsByNumberReviewRequest(c.Server, owner, name, number, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetReposByOwnerByNamePullsByNumberSession(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetReposByOwnerByNamePullsByNumberSessionRequest(c.Server, owner, name, number)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PostReposByOwnerByNamePullsByNumberSessionTurnsWithBody(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostReposByOwnerByNamePullsByNumberSessionTurnsRequestWithBody(c.Server, owner, name, number, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PostReposByOwnerByNamePullsByNumberSessionTurns(ctx context.Context, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberSessionTurnsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostReposByOwnerByNamePullsByNumberSessionTurnsRequest(c.Server, owner, name, number, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PostReposByOwnerByNamePullsByNumberSessionTurnsByTurnIdCancel(ctx context.Context, owner string, name string, number int64, turnId int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostReposByOwnerByNamePullsByNumberSessionTurnsByTurnIdCancelRequest(c.Server, owner, name, number, turnId)
 	if err != nil {
 		return nil, err
 	}
@@ -5407,6 +5523,170 @@ func NewPostReposByOwnerByNamePullsByNumberReviewRequestWithBody(server string, 
 	return req, nil
 }
 
+// NewGetReposByOwnerByNamePullsByNumberSessionRequest generates requests for GetReposByOwnerByNamePullsByNumberSession
+func NewGetReposByOwnerByNamePullsByNumberSessionRequest(server string, owner string, name string, number int64) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s/session", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPostReposByOwnerByNamePullsByNumberSessionTurnsRequest calls the generic PostReposByOwnerByNamePullsByNumberSessionTurns builder with application/json body
+func NewPostReposByOwnerByNamePullsByNumberSessionTurnsRequest(server string, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberSessionTurnsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPostReposByOwnerByNamePullsByNumberSessionTurnsRequestWithBody(server, owner, name, number, "application/json", bodyReader)
+}
+
+// NewPostReposByOwnerByNamePullsByNumberSessionTurnsRequestWithBody generates requests for PostReposByOwnerByNamePullsByNumberSessionTurns with any type of body
+func NewPostReposByOwnerByNamePullsByNumberSessionTurnsRequestWithBody(server string, owner string, name string, number int64, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s/session/turns", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewPostReposByOwnerByNamePullsByNumberSessionTurnsByTurnIdCancelRequest generates requests for PostReposByOwnerByNamePullsByNumberSessionTurnsByTurnIdCancel
+func NewPostReposByOwnerByNamePullsByNumberSessionTurnsByTurnIdCancelRequest(server string, owner string, name string, number int64, turnId int64) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam3 string
+
+	pathParam3, err = runtime.StyleParamWithOptions("simple", false, "turn_id", turnId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s/session/turns/%s/cancel", pathParam0, pathParam1, pathParam2, pathParam3)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetReposByOwnerByNamePullsByNumberStackRequest generates requests for GetReposByOwnerByNamePullsByNumberStack
 func NewGetReposByOwnerByNamePullsByNumberStackRequest(server string, owner string, name string, number int64) (*http.Request, error) {
 	var err error
@@ -6267,6 +6547,17 @@ type ClientWithResponsesInterface interface {
 	PostReposByOwnerByNamePullsByNumberReviewWithBodyWithResponse(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberReviewResponse, error)
 
 	PostReposByOwnerByNamePullsByNumberReviewWithResponse(ctx context.Context, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberReviewJSONRequestBody, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberReviewResponse, error)
+
+	// GetReposByOwnerByNamePullsByNumberSessionWithResponse request
+	GetReposByOwnerByNamePullsByNumberSessionWithResponse(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberSessionResponse, error)
+
+	// PostReposByOwnerByNamePullsByNumberSessionTurnsWithBodyWithResponse request with any body
+	PostReposByOwnerByNamePullsByNumberSessionTurnsWithBodyWithResponse(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberSessionTurnsResponse, error)
+
+	PostReposByOwnerByNamePullsByNumberSessionTurnsWithResponse(ctx context.Context, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberSessionTurnsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberSessionTurnsResponse, error)
+
+	// PostReposByOwnerByNamePullsByNumberSessionTurnsByTurnIdCancelWithResponse request
+	PostReposByOwnerByNamePullsByNumberSessionTurnsByTurnIdCancelWithResponse(ctx context.Context, owner string, name string, number int64, turnId int64, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberSessionTurnsByTurnIdCancelResponse, error)
 
 	// GetReposByOwnerByNamePullsByNumberStackWithResponse request
 	GetReposByOwnerByNamePullsByNumberStackWithResponse(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberStackResponse, error)
@@ -7426,6 +7717,74 @@ func (r PostReposByOwnerByNamePullsByNumberReviewResponse) StatusCode() int {
 	return 0
 }
 
+type GetReposByOwnerByNamePullsByNumberSessionResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *GetSessionResponse
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r GetReposByOwnerByNamePullsByNumberSessionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetReposByOwnerByNamePullsByNumberSessionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type PostReposByOwnerByNamePullsByNumberSessionTurnsResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *SubmitTurnOutputBody
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r PostReposByOwnerByNamePullsByNumberSessionTurnsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PostReposByOwnerByNamePullsByNumberSessionTurnsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type PostReposByOwnerByNamePullsByNumberSessionTurnsByTurnIdCancelResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r PostReposByOwnerByNamePullsByNumberSessionTurnsByTurnIdCancelResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PostReposByOwnerByNamePullsByNumberSessionTurnsByTurnIdCancelResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type GetReposByOwnerByNamePullsByNumberStackResponse struct {
 	Body                          []byte
 	HTTPResponse                  *http.Response
@@ -8331,6 +8690,41 @@ func (c *ClientWithResponses) PostReposByOwnerByNamePullsByNumberReviewWithRespo
 		return nil, err
 	}
 	return ParsePostReposByOwnerByNamePullsByNumberReviewResponse(rsp)
+}
+
+// GetReposByOwnerByNamePullsByNumberSessionWithResponse request returning *GetReposByOwnerByNamePullsByNumberSessionResponse
+func (c *ClientWithResponses) GetReposByOwnerByNamePullsByNumberSessionWithResponse(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberSessionResponse, error) {
+	rsp, err := c.GetReposByOwnerByNamePullsByNumberSession(ctx, owner, name, number, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetReposByOwnerByNamePullsByNumberSessionResponse(rsp)
+}
+
+// PostReposByOwnerByNamePullsByNumberSessionTurnsWithBodyWithResponse request with arbitrary body returning *PostReposByOwnerByNamePullsByNumberSessionTurnsResponse
+func (c *ClientWithResponses) PostReposByOwnerByNamePullsByNumberSessionTurnsWithBodyWithResponse(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberSessionTurnsResponse, error) {
+	rsp, err := c.PostReposByOwnerByNamePullsByNumberSessionTurnsWithBody(ctx, owner, name, number, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostReposByOwnerByNamePullsByNumberSessionTurnsResponse(rsp)
+}
+
+func (c *ClientWithResponses) PostReposByOwnerByNamePullsByNumberSessionTurnsWithResponse(ctx context.Context, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberSessionTurnsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberSessionTurnsResponse, error) {
+	rsp, err := c.PostReposByOwnerByNamePullsByNumberSessionTurns(ctx, owner, name, number, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostReposByOwnerByNamePullsByNumberSessionTurnsResponse(rsp)
+}
+
+// PostReposByOwnerByNamePullsByNumberSessionTurnsByTurnIdCancelWithResponse request returning *PostReposByOwnerByNamePullsByNumberSessionTurnsByTurnIdCancelResponse
+func (c *ClientWithResponses) PostReposByOwnerByNamePullsByNumberSessionTurnsByTurnIdCancelWithResponse(ctx context.Context, owner string, name string, number int64, turnId int64, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberSessionTurnsByTurnIdCancelResponse, error) {
+	rsp, err := c.PostReposByOwnerByNamePullsByNumberSessionTurnsByTurnIdCancel(ctx, owner, name, number, turnId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostReposByOwnerByNamePullsByNumberSessionTurnsByTurnIdCancelResponse(rsp)
 }
 
 // GetReposByOwnerByNamePullsByNumberStackWithResponse request returning *GetReposByOwnerByNamePullsByNumberStackResponse
@@ -10054,6 +10448,98 @@ func ParsePostReposByOwnerByNamePullsByNumberReviewResponse(rsp *http.Response) 
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetReposByOwnerByNamePullsByNumberSessionResponse parses an HTTP response from a GetReposByOwnerByNamePullsByNumberSessionWithResponse call
+func ParseGetReposByOwnerByNamePullsByNumberSessionResponse(rsp *http.Response) (*GetReposByOwnerByNamePullsByNumberSessionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetReposByOwnerByNamePullsByNumberSessionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest GetSessionResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePostReposByOwnerByNamePullsByNumberSessionTurnsResponse parses an HTTP response from a PostReposByOwnerByNamePullsByNumberSessionTurnsWithResponse call
+func ParsePostReposByOwnerByNamePullsByNumberSessionTurnsResponse(rsp *http.Response) (*PostReposByOwnerByNamePullsByNumberSessionTurnsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PostReposByOwnerByNamePullsByNumberSessionTurnsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SubmitTurnOutputBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePostReposByOwnerByNamePullsByNumberSessionTurnsByTurnIdCancelResponse parses an HTTP response from a PostReposByOwnerByNamePullsByNumberSessionTurnsByTurnIdCancelWithResponse call
+func ParsePostReposByOwnerByNamePullsByNumberSessionTurnsByTurnIdCancelResponse(rsp *http.Response) (*PostReposByOwnerByNamePullsByNumberSessionTurnsByTurnIdCancelResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PostReposByOwnerByNamePullsByNumberSessionTurnsByTurnIdCancelResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest ErrorModel
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
