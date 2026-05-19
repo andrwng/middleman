@@ -392,6 +392,103 @@ func TestAPILocalDispatchBlobServesWorktreeFiles(t *testing.T) {
 	assert.Equal(http.StatusNotFound, missResp.StatusCode())
 }
 
+// TestAPILocalDispatchBlobRangeServesWorktreeFiles pins the same
+// fix shape as TestAPILocalDispatchBlobServesWorktreeFiles for the
+// click-to-expand affordance: GET /blob-range against a local
+// worktree must read from the worktree's git dir / on-disk state,
+// not the (non-existent) bare clone partition.
+func TestAPILocalDispatchBlobRangeServesWorktreeFiles(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on PATH")
+	}
+	require := require.New(t)
+	assert := Assert.New(t)
+	srv, database := setupTestServer(t)
+	client := setupTestClient(t, srv)
+	ctx := context.Background()
+
+	dir := t.TempDir()
+	runGitWT(t, "", "init", "--initial-branch=main", dir)
+	runGitWT(t, dir, "config", "user.email", "test@example.com")
+	runGitWT(t, dir, "config", "user.name", "Test")
+
+	committed := "alpha\nbravo\ncharlie\ndelta\necho\n"
+	require.NoError(os.WriteFile(filepath.Join(dir, "lines.txt"), []byte(committed), 0o644))
+	runGitWT(t, dir, "add", "lines.txt")
+	runGitWT(t, dir, "commit", "-m", "add lines")
+
+	headOut, err := exec.Command("git", "-C", dir, "rev-parse", "HEAD").Output()
+	require.NoError(err)
+	headSHA := string(headOut[:len(headOut)-1])
+
+	working := "alpha\nbravo\ncharlie\nDELTA\nfoxtrot\n"
+	require.NoError(os.WriteFile(filepath.Join(dir, "lines.txt"), []byte(working), 0o644))
+
+	repoID, err := database.UpsertLocalRepo(ctx, "demo")
+	require.NoError(err)
+	canonDir, err := filepath.EvalSymlinks(dir)
+	require.NoError(err)
+	w, err := database.UpsertWorktree(ctx, repoID, db.ScannedWorktree{
+		Path:   canonDir,
+		Branch: "main",
+	})
+	require.NoError(err)
+
+	linesPath := "lines.txt"
+	startTwo, endFour := int64(2), int64(4)
+
+	// 1. Committed slice via HEAD SHA: lines 2..4.
+	headResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberBlobRangeWithResponse(
+		ctx, "local", "demo", w.ID,
+		&generated.GetReposByOwnerByNamePullsByNumberBlobRangeParams{
+			Path:  &linesPath,
+			Sha:   &headSHA,
+			Start: &startTwo,
+			End:   &endFour,
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, headResp.StatusCode())
+	require.NotNil(headResp.JSON200)
+	require.NotNil(headResp.JSON200.Lines)
+	assert.Equal([]string{"bravo", "charlie", "delta"}, *headResp.JSON200.Lines)
+
+	// 2. Working-tree slice via WORKING-TREE sentinel: same range,
+	// different content (line 4 is "DELTA", line 5 is "foxtrot").
+	wtSentinel := "WORKING-TREE"
+	wtResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberBlobRangeWithResponse(
+		ctx, "local", "demo", w.ID,
+		&generated.GetReposByOwnerByNamePullsByNumberBlobRangeParams{
+			Path:  &linesPath,
+			Sha:   &wtSentinel,
+			Start: &startTwo,
+			End:   &endFour,
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, wtResp.StatusCode())
+	require.NotNil(wtResp.JSON200)
+	require.NotNil(wtResp.JSON200.Lines)
+	assert.Equal([]string{"bravo", "charlie", "DELTA"}, *wtResp.JSON200.Lines)
+
+	// 3. Range past EOF clamps to available lines.
+	startOne, endTen := int64(1), int64(10)
+	pastResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberBlobRangeWithResponse(
+		ctx, "local", "demo", w.ID,
+		&generated.GetReposByOwnerByNamePullsByNumberBlobRangeParams{
+			Path:  &linesPath,
+			Sha:   &headSHA,
+			Start: &startOne,
+			End:   &endTen,
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, pastResp.StatusCode())
+	require.NotNil(pastResp.JSON200)
+	require.NotNil(pastResp.JSON200.Lines)
+	assert.Len(*pastResp.JSON200.Lines, 5)
+}
+
 func runGitWT(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)

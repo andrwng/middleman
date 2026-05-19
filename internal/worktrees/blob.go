@@ -1,6 +1,7 @@
 package worktrees
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -48,4 +49,37 @@ func Blob(
 		return nil, fmt.Errorf("cat-file %s:%s: %w", sha, path, err)
 	}
 	return out, nil
+}
+
+// BlobRange returns the 1-based inclusive line range [start, end]
+// of the file at sha/path within the worktree. Mirrors
+// gitclone.Manager.BlobRange semantics: ranges past EOF clamp
+// silently rather than padding or erroring.
+func BlobRange(
+	ctx context.Context,
+	worktreePath, sha, path string,
+	start, end int,
+) ([]string, error) {
+	if start < 1 {
+		start = 1
+	}
+	if end < start {
+		return nil, fmt.Errorf("blob range: end (%d) < start (%d)", end, start)
+	}
+	raw, err := Blob(ctx, worktreePath, sha, path)
+	if err != nil {
+		return nil, err
+	}
+	text := string(bytes.TrimRight(raw, "\n"))
+	if text == "" {
+		return []string{}, nil
+	}
+	lines := strings.Split(text, "\n")
+	if start > len(lines) {
+		return []string{}, nil
+	}
+	if end > len(lines) {
+		end = len(lines)
+	}
+	return lines[start-1 : end], nil
 }

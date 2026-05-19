@@ -2343,6 +2343,9 @@ type getBlobRangeOutput struct {
 // with /diff, even though the underlying clone is already
 // publicly readable.
 func (s *Server) getBlobRange(ctx context.Context, input *getBlobRangeInput) (*getBlobRangeOutput, error) {
+	if isLocalSource(input.Owner) {
+		return s.getBlobRangeLocal(ctx, input)
+	}
 	if s.clones == nil {
 		return nil, huma.Error503ServiceUnavailable("blob range not available: clone manager not configured")
 	}

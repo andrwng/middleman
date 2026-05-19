@@ -285,6 +285,43 @@ func (s *Server) getCommitsLocal(
 	return &getCommitsOutput{Body: resp}, nil
 }
 
+// getBlobRangeLocal serves the PR-shaped /blob-range endpoint for
+// a local worktree. Powers the diff viewer's "+N lines" click-to-
+// expand affordance. Same dispatch shape as getBlobLocal:
+// resolution flows through the worktree's on-disk path, not the
+// bare-clone manager.
+func (s *Server) getBlobRangeLocal(
+	ctx context.Context, input *getBlobRangeInput,
+) (*getBlobRangeOutput, error) {
+	if input.Path == "" {
+		return nil, huma.Error400BadRequest("path is required")
+	}
+	if input.SHA == "" {
+		return nil, huma.Error400BadRequest("sha is required")
+	}
+	if input.Start < 1 {
+		return nil, huma.Error400BadRequest("start must be >= 1")
+	}
+	if input.End < input.Start {
+		return nil, huma.Error400BadRequest("end must be >= start")
+	}
+	if input.End-input.Start+1 > blobRangeMaxLines {
+		return nil, huma.Error400BadRequest(fmt.Sprintf("requested range too large (max %d lines)", blobRangeMaxLines))
+	}
+	w, err := s.resolveLocalWorktree(ctx, input.Name, input.Number)
+	if err != nil {
+		return nil, huma.Error404NotFound("worktree not found")
+	}
+	lines, err := worktrees.BlobRange(ctx, w.Path, input.SHA, input.Path, input.Start, input.End)
+	if err != nil {
+		if errors.Is(err, worktrees.ErrNotFound) {
+			return nil, huma.Error404NotFound("blob not found: " + err.Error())
+		}
+		return nil, huma.Error502BadGateway("read blob: " + err.Error())
+	}
+	return &getBlobRangeOutput{Body: blobRangeResponse{Lines: lines}}, nil
+}
+
 // getBlobLocal serves the PR-shaped /blob endpoint for a local
 // worktree. Reads either a committed file (via git cat-file in the
 // worktree's .git dir) or the working-tree state (via WorkingTreeSentinel
