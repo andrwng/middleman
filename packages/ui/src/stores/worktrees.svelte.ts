@@ -4,6 +4,7 @@ import type { components } from "../api/generated/schema.js";
 
 export type ChangedFile = components["schemas"]["ChangedFileResponse"];
 export type WorktreeBase = components["schemas"]["WorktreeBaseResponse"];
+export type WorktreeDiffFile = components["schemas"]["DiffFile"];
 
 export interface WorktreesStoreOptions {
   client: MiddlemanClient;
@@ -12,6 +13,14 @@ export interface WorktreesStoreOptions {
 interface ChangedFilesEntry {
   base: WorktreeBase | null;
   files: ChangedFile[];
+  loading: boolean;
+  error: string | null;
+  fetchedAt: number;
+}
+
+interface DiffEntry {
+  base: WorktreeBase | null;
+  files: WorktreeDiffFile[];
   loading: boolean;
   error: string | null;
   fetchedAt: number;
@@ -35,6 +44,7 @@ export function createWorktreesStore(opts: WorktreesStoreOptions) {
   let loading = $state(false);
   let storeError = $state<string | null>(null);
   let changedFilesById = $state<Record<number, ChangedFilesEntry>>({});
+  let diffById = $state<Record<number, DiffEntry>>({});
   let selectedId = $state<number | null>(null);
 
   function getWorktrees(): LocalWorktree[] {
@@ -51,6 +61,9 @@ export function createWorktreesStore(opts: WorktreesStoreOptions) {
   }
   function getChangedFiles(id: number): ChangedFilesEntry | null {
     return changedFilesById[id] ?? null;
+  }
+  function getDiff(id: number): DiffEntry | null {
+    return diffById[id] ?? null;
   }
   function getSelectedId(): number | null {
     return selectedId;
@@ -136,6 +149,50 @@ export function createWorktreesStore(opts: WorktreesStoreOptions) {
     }
   }
 
+  async function loadWorktreeDiff(id: number): Promise<void> {
+    const prev = diffById[id] ?? {
+      base: null,
+      files: [],
+      loading: false,
+      error: null,
+      fetchedAt: 0,
+    };
+    diffById = {
+      ...diffById,
+      [id]: { ...prev, loading: true, error: null },
+    };
+    try {
+      const { data, error } = await apiClient.GET(
+        "/worktrees/{id}/diff",
+        { params: { path: { id } } },
+      );
+      if (error) {
+        throw new Error(
+          apiErrorMessage(error, "failed to load worktree diff"),
+        );
+      }
+      diffById = {
+        ...diffById,
+        [id]: {
+          base: data?.base ?? null,
+          files: data?.files ?? [],
+          loading: false,
+          error: null,
+          fetchedAt: Date.now(),
+        },
+      };
+    } catch (err) {
+      diffById = {
+        ...diffById,
+        [id]: {
+          ...prev,
+          loading: false,
+          error: err instanceof Error ? err.message : String(err),
+        },
+      };
+    }
+  }
+
   return {
     getWorktrees,
     isLoading,
@@ -145,6 +202,8 @@ export function createWorktreesStore(opts: WorktreesStoreOptions) {
     loadWorktrees,
     getChangedFiles,
     loadChangedFiles,
+    getDiff,
+    loadWorktreeDiff,
     getSelectedId,
     selectWorktree,
   };

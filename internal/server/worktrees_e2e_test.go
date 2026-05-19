@@ -137,6 +137,54 @@ func TestAPIWorktreeChangedFilesAgainstBase(t *testing.T) {
 	assert.Equal("added", paths["feature.txt"])
 }
 
+func TestAPIWorktreeDiffReturnsHunks(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on PATH")
+	}
+	require := require.New(t)
+	assert := Assert.New(t)
+	srv, database := setupTestServer(t)
+	client := setupTestClient(t, srv)
+	ctx := context.Background()
+
+	dir := t.TempDir()
+	runGitWT(t, "", "init", "--initial-branch=main", dir)
+	runGitWT(t, dir, "config", "user.email", "test@example.com")
+	runGitWT(t, dir, "config", "user.name", "Test")
+	require.NoError(os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("a\nb\n"), 0o644))
+	runGitWT(t, dir, "add", "hello.txt")
+	runGitWT(t, dir, "commit", "-m", "init")
+	originDir := dir + "-origin.git"
+	runGitWT(t, "", "init", "--bare", originDir)
+	runGitWT(t, dir, "remote", "add", "origin", originDir)
+	runGitWT(t, dir, "push", "origin", "main")
+	runGitWT(t, dir, "fetch", "origin")
+	// Diverge: add one line to the existing file.
+	require.NoError(os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("a\nb\nc\n"), 0o644))
+
+	repoID, err := database.UpsertLocalRepo(ctx, "demo")
+	require.NoError(err)
+	canonDir, err := filepath.EvalSymlinks(dir)
+	require.NoError(err)
+	w, err := database.UpsertWorktree(ctx, repoID, db.ScannedWorktree{
+		Path:   canonDir,
+		Branch: "main",
+	})
+	require.NoError(err)
+
+	resp, err := client.HTTP.GetWorktreesByIdDiffWithResponse(ctx, w.ID)
+	require.NoError(err)
+	require.Equal(http.StatusOK, resp.StatusCode())
+	require.NotNil(resp.JSON200)
+	assert.Equal("origin/main", resp.JSON200.Base.Ref)
+	require.NotNil(resp.JSON200.Files)
+	files := *resp.JSON200.Files
+	require.Len(files, 1)
+	assert.Equal("hello.txt", files[0].Path)
+	require.NotNil(files[0].Hunks)
+	require.NotEmpty(*files[0].Hunks)
+}
+
 func TestAPIWorktreeChangedFilesNotFound(t *testing.T) {
 	srv, _ := setupTestServer(t)
 	client := setupTestClient(t, srv)

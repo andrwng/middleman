@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
   import { getStores } from "../../context.js";
+  import type { WorktreeDiffFile } from "../../stores/worktrees.svelte.js";
 
   const { worktrees } = getStores();
 
@@ -44,6 +45,35 @@
   const error = $derived(entry?.error ?? null);
   const fetchedAt = $derived(entry?.fetchedAt ?? 0);
   const base = $derived(entry?.base ?? null);
+
+  // Lazy-loaded full diff (with hunks). Fetched the first time the
+  // user expands any file in this worktree; subsequent expansions
+  // reuse the cached payload.
+  const diffEntry = $derived(worktrees.getDiff(worktreeId));
+  const diffFilesByPath = $derived.by(() => {
+    const map = new Map<string, WorktreeDiffFile>();
+    for (const f of diffEntry?.files ?? []) {
+      map.set(f.path, f);
+    }
+    return map;
+  });
+  let expandedPaths = $state<Set<string>>(new Set());
+
+  function toggleExpanded(path: string): void {
+    const next = new Set(expandedPaths);
+    if (next.has(path)) {
+      next.delete(path);
+    } else {
+      next.add(path);
+      // First expand kicks off the diff fetch if not already cached.
+      if (!diffEntry || diffEntry.fetchedAt === 0) {
+        untrack(() => {
+          void worktrees.loadWorktreeDiff(worktreeId);
+        });
+      }
+    }
+    expandedPaths = next;
+  }
   const baseLabel = $derived(
     base === null
       ? ""
@@ -152,18 +182,67 @@
       {:else}
         <ul class="wt-detail__files">
           {#each files as f (f.path)}
-            <li class="wt-detail__file" title={f.path}>
-              <span class="wt-detail__file-status" style:color={statusColor(f.status)}>
-                {statusLetter(f.status)}
-              </span>
-              <span class="wt-detail__file-path">{f.path}</span>
-              {#if f.is_binary}
-                <span class="wt-detail__file-churn wt-detail__file-churn--bin">bin</span>
-              {:else}
-                <span class="wt-detail__file-churn">
-                  <span class="wt-detail__file-add">+{f.additions}</span>
-                  <span class="wt-detail__file-del">&minus;{f.deletions}</span>
+            {@const expanded = expandedPaths.has(f.path)}
+            {@const diff = diffFilesByPath.get(f.path)}
+            {@const canExpand = !f.is_binary && (f.additions > 0 || f.deletions > 0)}
+            <li class="wt-detail__file-row">
+              <button
+                type="button"
+                class="wt-detail__file"
+                class:wt-detail__file--expanded={expanded}
+                class:wt-detail__file--disabled={!canExpand}
+                disabled={!canExpand}
+                onclick={() => canExpand && toggleExpanded(f.path)}
+                title={f.path}
+              >
+                <span class="wt-detail__file-chevron" class:wt-detail__file-chevron--open={expanded}>
+                  {canExpand ? "▸" : ""}
                 </span>
+                <span class="wt-detail__file-status" style:color={statusColor(f.status)}>
+                  {statusLetter(f.status)}
+                </span>
+                <span class="wt-detail__file-path">{f.path}</span>
+                {#if f.is_binary}
+                  <span class="wt-detail__file-churn wt-detail__file-churn--bin">bin</span>
+                {:else}
+                  <span class="wt-detail__file-churn">
+                    <span class="wt-detail__file-add">+{f.additions}</span>
+                    <span class="wt-detail__file-del">&minus;{f.deletions}</span>
+                  </span>
+                {/if}
+              </button>
+              {#if expanded}
+                <div class="wt-detail__hunks">
+                  {#if diffEntry?.loading && !diff}
+                    <p class="wt-detail__hunks-msg">Loading diff…</p>
+                  {:else if diffEntry?.error}
+                    <p class="wt-detail__hunks-msg wt-detail__hunks-msg--error">
+                      {diffEntry.error}
+                    </p>
+                  {:else if !diff || !diff.hunks || diff.hunks.length === 0}
+                    <p class="wt-detail__hunks-msg">No diff content (untracked or no hunks).</p>
+                  {:else}
+                    {#each diff.hunks as h, hi (hi)}
+                      <div class="wt-detail__hunk">
+                        <div class="wt-detail__hunk-head">
+                          @@ -{h.old_start},{h.old_count} +{h.new_start},{h.new_count} @@{h.section ? " " + h.section : ""}
+                        </div>
+                        {#each h.lines as ln, li (li)}
+                          <div
+                            class="wt-detail__hunk-line wt-detail__hunk-line--{ln.type}"
+                          >
+                            <span class="wt-detail__hunk-gutter">{ln.old_num || ""}</span>
+                            <span class="wt-detail__hunk-gutter">{ln.new_num || ""}</span>
+                            <span class="wt-detail__hunk-marker">
+                              {ln.type === "add" ? "+" : ln.type === "delete" ? "-" : " "}
+                            </span>
+                            <span class="wt-detail__hunk-content">{ln.content}</span>
+                          </div>
+                        {/each}
+                      </div>
+                    {/each}
+                  {/if}
+                </div>
               {/if}
             </li>
           {/each}
@@ -346,6 +425,14 @@
     overflow: hidden;
   }
 
+  .wt-detail__file-row {
+    border-bottom: 1px solid var(--border-muted);
+  }
+
+  .wt-detail__file-row:last-child {
+    border-bottom: none;
+  }
+
   .wt-detail__file {
     display: flex;
     align-items: center;
@@ -353,11 +440,111 @@
     padding: 6px 10px;
     font-size: 12px;
     background: var(--bg-surface);
-    border-bottom: 1px solid var(--border-muted);
+    width: 100%;
+    text-align: left;
+    border: none;
+    cursor: pointer;
+    color: inherit;
   }
 
-  .wt-detail__file:last-child {
-    border-bottom: none;
+  .wt-detail__file:hover:not(.wt-detail__file--disabled) {
+    background: var(--bg-surface-hover);
+  }
+
+  .wt-detail__file--expanded {
+    background: color-mix(in srgb, var(--accent-blue) 8%, var(--bg-surface));
+  }
+
+  .wt-detail__file--disabled {
+    cursor: default;
+  }
+
+  .wt-detail__file-chevron {
+    font-size: 10px;
+    color: var(--text-muted);
+    transition: transform 120ms ease;
+    width: 10px;
+    display: inline-block;
+    text-align: center;
+  }
+
+  .wt-detail__file-chevron--open {
+    transform: rotate(90deg);
+  }
+
+  .wt-detail__hunks {
+    padding: 6px 0;
+    background: var(--bg-inset);
+    border-top: 1px solid var(--border-muted);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    overflow-x: auto;
+  }
+
+  .wt-detail__hunks-msg {
+    padding: 8px 12px;
+    font-family: var(--font-default, sans-serif);
+    color: var(--text-muted);
+    margin: 0;
+  }
+
+  .wt-detail__hunks-msg--error {
+    color: var(--accent-red);
+  }
+
+  .wt-detail__hunk {
+    margin-bottom: 6px;
+  }
+
+  .wt-detail__hunk:last-child {
+    margin-bottom: 0;
+  }
+
+  .wt-detail__hunk-head {
+    padding: 2px 12px;
+    color: var(--accent-blue);
+    background: color-mix(in srgb, var(--accent-blue) 10%, transparent);
+    font-weight: 600;
+  }
+
+  .wt-detail__hunk-line {
+    display: grid;
+    grid-template-columns: 36px 36px 14px 1fr;
+    padding-right: 8px;
+    white-space: pre;
+  }
+
+  .wt-detail__hunk-line--add {
+    background: color-mix(in srgb, var(--accent-green) 12%, transparent);
+  }
+
+  .wt-detail__hunk-line--delete {
+    background: color-mix(in srgb, var(--accent-red) 12%, transparent);
+  }
+
+  .wt-detail__hunk-gutter {
+    color: var(--text-muted);
+    text-align: right;
+    padding: 0 4px;
+    user-select: none;
+  }
+
+  .wt-detail__hunk-marker {
+    text-align: center;
+    color: var(--text-secondary);
+    user-select: none;
+  }
+
+  .wt-detail__hunk-line--add .wt-detail__hunk-marker {
+    color: var(--accent-green);
+  }
+
+  .wt-detail__hunk-line--delete .wt-detail__hunk-marker {
+    color: var(--accent-red);
+  }
+
+  .wt-detail__hunk-content {
+    overflow-x: auto;
   }
 
   .wt-detail__file-status {

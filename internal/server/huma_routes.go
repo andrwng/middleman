@@ -386,6 +386,7 @@ func (s *Server) registerAPI(api huma.API) {
 	huma.Get(api, "/repos", s.listRepos)
 	huma.Get(api, "/worktrees", s.listWorktrees)
 	huma.Get(api, "/worktrees/{id}/changed-files", s.getWorktreeChangedFiles)
+	huma.Get(api, "/worktrees/{id}/diff", s.getWorktreeDiff)
 	huma.Get(api, "/repos/{owner}/{name}", s.getRepo)
 	huma.Get(api, "/repos/{owner}/{name}/comment-autocomplete", s.getCommentAutocomplete)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/approve", s.approvePR)
@@ -1803,6 +1804,41 @@ func (s *Server) lookupBaseRefForWorktree(ctx context.Context, w db.Worktree) st
 		}
 	}
 	return ""
+}
+
+type getWorktreeDiffInput struct {
+	ID int64 `path:"id"`
+}
+
+type getWorktreeDiffOutput struct {
+	Body worktreeDiffResponse
+}
+
+func (s *Server) getWorktreeDiff(
+	ctx context.Context, in *getWorktreeDiffInput,
+) (*getWorktreeDiffOutput, error) {
+	w, err := s.db.GetWorktreeByID(ctx, in.ID)
+	if err != nil {
+		return nil, huma.Error404NotFound("worktree not found")
+	}
+	if w.RemovedAt != nil {
+		return nil, huma.Error404NotFound("worktree no longer exists on disk")
+	}
+	overrideRef := s.lookupBaseRefForWorktree(ctx, w)
+	ds, err := worktrees.DiffAgainstBase(ctx, w.Path, overrideRef)
+	if err != nil {
+		return nil, huma.Error500InternalServerError(
+			"reading worktree diff failed: " + err.Error(),
+		)
+	}
+	return &getWorktreeDiffOutput{Body: worktreeDiffResponse{
+		Base: worktreeBaseResponse{
+			Ref:      ds.Base.Ref,
+			SHA:      ds.Base.SHA,
+			Fallback: ds.Base.Fallback,
+		},
+		Files: ds.Files,
+	}}, nil
 }
 
 func (s *Server) listWorktrees(ctx context.Context, _ *struct{}) (*listWorktreesOutput, error) {

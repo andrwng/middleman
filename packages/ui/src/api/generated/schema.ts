@@ -851,6 +851,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/worktrees/{id}/diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get worktrees by ID diff */
+        get: operations["get-worktrees-by-id-diff"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2043,6 +2060,16 @@ export interface components {
             readonly $schema?: string;
             base: components["schemas"]["WorktreeBaseResponse"];
             files: components["schemas"]["ChangedFileResponse"][] | null;
+        };
+        WorktreeDiffResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/WorktreeDiffResponse.json
+             */
+            readonly $schema?: string;
+            base: components["schemas"]["WorktreeBaseResponse"];
+            files: components["schemas"]["DiffFile"][] | null;
         };
         WorktreeLinkResponse: {
             worktree_branch?: string;
@@ -4189,6 +4216,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorktreeChangedFilesResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-worktrees-by-id-diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorktreeDiffResponse"];
                 };
             };
             /** @description Error */

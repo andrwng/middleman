@@ -1010,6 +1010,14 @@ type WorktreeChangedFilesResponse struct {
 	Files  *[]ChangedFileResponse `json:"files"`
 }
 
+// WorktreeDiffResponse defines model for WorktreeDiffResponse.
+type WorktreeDiffResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string              `json:"$schema,omitempty"`
+	Base   WorktreeBaseResponse `json:"base"`
+	Files  *[]DiffFile          `json:"files"`
+}
+
 // WorktreeLinkResponse defines model for WorktreeLinkResponse.
 type WorktreeLinkResponse struct {
 	WorktreeBranch *string `json:"worktree_branch,omitempty"`
@@ -1495,6 +1503,9 @@ type ClientInterface interface {
 
 	// GetWorktreesByIdChangedFiles request
 	GetWorktreesByIdChangedFiles(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetWorktreesByIdDiff request
+	GetWorktreesByIdDiff(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 func (c *Client) GetActivity(ctx context.Context, params *GetActivityParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -2471,6 +2482,18 @@ func (c *Client) GetWorktrees(ctx context.Context, reqEditors ...RequestEditorFn
 
 func (c *Client) GetWorktreesByIdChangedFiles(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetWorktreesByIdChangedFilesRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetWorktreesByIdDiff(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetWorktreesByIdDiffRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -5996,6 +6019,40 @@ func NewGetWorktreesByIdChangedFilesRequest(server string, id int64) (*http.Requ
 	return req, nil
 }
 
+// NewGetWorktreesByIdDiffRequest generates requests for GetWorktreesByIdDiff
+func NewGetWorktreesByIdDiffRequest(server string, id int64) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/worktrees/%s/diff", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
 	for _, r := range c.RequestEditors {
 		if err := r(ctx, req); err != nil {
@@ -6265,6 +6322,9 @@ type ClientWithResponsesInterface interface {
 
 	// GetWorktreesByIdChangedFilesWithResponse request
 	GetWorktreesByIdChangedFilesWithResponse(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*GetWorktreesByIdChangedFilesResponse, error)
+
+	// GetWorktreesByIdDiffWithResponse request
+	GetWorktreesByIdDiffWithResponse(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*GetWorktreesByIdDiffResponse, error)
 }
 
 type GetActivityResponse struct {
@@ -7706,6 +7766,29 @@ func (r GetWorktreesByIdChangedFilesResponse) StatusCode() int {
 	return 0
 }
 
+type GetWorktreesByIdDiffResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *WorktreeDiffResponse
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r GetWorktreesByIdDiffResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetWorktreesByIdDiffResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 // GetActivityWithResponse request returning *GetActivityResponse
 func (c *ClientWithResponses) GetActivityWithResponse(ctx context.Context, params *GetActivityParams, reqEditors ...RequestEditorFn) (*GetActivityResponse, error) {
 	rsp, err := c.GetActivity(ctx, params, reqEditors...)
@@ -8423,6 +8506,15 @@ func (c *ClientWithResponses) GetWorktreesByIdChangedFilesWithResponse(ctx conte
 		return nil, err
 	}
 	return ParseGetWorktreesByIdChangedFilesResponse(rsp)
+}
+
+// GetWorktreesByIdDiffWithResponse request returning *GetWorktreesByIdDiffResponse
+func (c *ClientWithResponses) GetWorktreesByIdDiffWithResponse(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*GetWorktreesByIdDiffResponse, error) {
+	rsp, err := c.GetWorktreesByIdDiff(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetWorktreesByIdDiffResponse(rsp)
 }
 
 // ParseGetActivityResponse parses an HTTP response from a GetActivityWithResponse call
@@ -10417,6 +10509,39 @@ func ParseGetWorktreesByIdChangedFilesResponse(rsp *http.Response) (*GetWorktree
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest WorktreeChangedFilesResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetWorktreesByIdDiffResponse parses an HTTP response from a GetWorktreesByIdDiffWithResponse call
+func ParseGetWorktreesByIdDiffResponse(rsp *http.Response) (*GetWorktreesByIdDiffResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetWorktreesByIdDiffResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest WorktreeDiffResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

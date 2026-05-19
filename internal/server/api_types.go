@@ -349,6 +349,14 @@ type worktreeChangedFilesResponse struct {
 	Files []changedFileResponse `json:"files"`
 }
 
+// worktreeDiffResponse is the structured diff between a worktree's
+// resolved base and the working tree. Reuses gitclone.DiffFile so
+// the hunk/line shape matches the PR-side endpoints.
+type worktreeDiffResponse struct {
+	Base  worktreeBaseResponse `json:"base"`
+	Files []gitclone.DiffFile  `json:"files"`
+}
+
 type activityItemResponse struct {
 	ID           string `json:"id"`
 	Cursor       string `json:"cursor"`
