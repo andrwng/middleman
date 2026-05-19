@@ -2515,7 +2515,7 @@ type putPRNotesInput struct {
 }
 
 func (s *Server) getPRNotes(ctx context.Context, input *repoNumberInput) (*getPRNotesOutput, error) {
-	mrID, err := s.lookupMRID(ctx, repoNumberPathRef{owner: input.Owner, name: input.Name, number: input.Number})
+	mrID, err := s.resolveOrEnsureMRID(ctx, input.Owner, input.Name, input.Number)
 	if err != nil {
 		return nil, huma.Error404NotFound("pull request not found")
 	}
@@ -2532,7 +2532,7 @@ func (s *Server) putPRNotes(ctx context.Context, input *putPRNotesInput) (*getPR
 			"notes too large: %d bytes (max %d)", len(input.Body.Content), prNotesMaxBytes,
 		))
 	}
-	mrID, err := s.lookupMRID(ctx, repoNumberPathRef{owner: input.Owner, name: input.Name, number: input.Number})
+	mrID, err := s.resolveOrEnsureMRID(ctx, input.Owner, input.Name, input.Number)
 	if err != nil {
 		return nil, huma.Error404NotFound("pull request not found")
 	}

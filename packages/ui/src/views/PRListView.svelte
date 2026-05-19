@@ -117,7 +117,7 @@
             <DiffSidebar />
           </aside>
           <div class="review-main">
-            {#if selectedPRDetail && !isLocalPR}
+            {#if selectedPRDetail}
               <ReviewCoverBanner
                 pr={selectedPRDetail.merge_request}
                 owner={selectedPR.owner}
@@ -130,14 +130,18 @@
               number={selectedPR.number}
             />
             {#if !isLocalPR}
+              <!-- TODO(local-parity): light up for local once the
+                   worktree-side patchset / brief features land. The
+                   notes panel already works because /notes dispatches
+                   through resolveOrEnsureMRID. -->
               <PatchsetPicker />
               <ReviewBriefCard
                 owner={selectedPR.owner}
                 name={selectedPR.name}
                 number={selectedPR.number}
               />
-              <PRNotesPanel />
             {/if}
+            <PRNotesPanel />
             <DiffView
               owner={selectedPR.owner}
               name={selectedPR.name}

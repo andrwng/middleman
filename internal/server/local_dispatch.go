@@ -61,6 +61,25 @@ func (s *Server) resolveLocalWorktree(
 	return &w, nil
 }
 
+// resolveOrEnsureMRID returns the MR id for any PR-shaped (owner,
+// name, number) route. For real GitHub repos it's a straight DB
+// lookup; for local sources it lazily upserts the synthetic MR row
+// the rest of the PR-anchored machinery hangs off. Handlers that
+// would otherwise call lookupMRID can substitute this and get
+// local-source support for free.
+func (s *Server) resolveOrEnsureMRID(
+	ctx context.Context, owner, name string, number int,
+) (int64, error) {
+	if isLocalSource(owner) {
+		w, err := s.resolveLocalWorktree(ctx, name, number)
+		if err != nil {
+			return 0, err
+		}
+		return s.ensureSyntheticMRForWorktree(ctx, w)
+	}
+	return s.lookupMRID(ctx, repoNumberPathRef{owner: owner, name: name, number: number})
+}
+
 // ensureSyntheticMRForWorktree upserts a row in
 // middleman_merge_requests for the given worktree so the rest of
 // the PR-anchored machinery (AI threads, AI briefs, commit
