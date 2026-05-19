@@ -9,6 +9,7 @@
     type AnchorRange,
   } from "./renderedMarkdownAnchors";
   import DiffComposer from "./DiffComposer.svelte";
+  import AIAskComposer from "./AIAskComposer.svelte";
   import { getStores } from "../../context.js";
 
   // Renders a markdown file at a given SHA inside the diff surface,
@@ -46,7 +47,7 @@
 
   const { owner, name, number, path, sha, hunks }: Props = $props();
 
-  const { diff: diffStore } = getStores();
+  const { diff: diffStore, ai: aiStore } = getStores();
 
   let raw = $state<string | null>(null);
   let truncated = $state(false);
@@ -111,6 +112,56 @@
       body,
     });
     closeComposer();
+  }
+
+  let openAskKey = $state<string | null>(null);
+  let askError = $state<string | null>(null);
+  let askSubmitting = $state(false);
+  let selectionSnapshot = $state<string | null>(null);
+
+  function openAskFromToolbar(): void {
+    if (!liveSelection) return;
+    rangeSnapshot = liveSelection;
+    const sel = typeof window !== "undefined" ? window.getSelection() : null;
+    selectionSnapshot = sel?.toString().trim() || null;
+    openAskKey = `${liveSelection.endLine}:${liveSelection.side}`;
+    askError = null;
+  }
+
+  function closeAsk(): void {
+    openAskKey = null;
+    rangeSnapshot = null;
+    selectionSnapshot = null;
+    askError = null;
+    askSubmitting = false;
+  }
+
+  async function submitAsk(question: string): Promise<void> {
+    const range = rangeSnapshot;
+    if (!range || askSubmitting) return;
+    askSubmitting = true;
+    askError = null;
+    try {
+      const body: Parameters<typeof aiStore.createThread>[0] = {
+        path,
+        anchor_side: range.side,
+        anchor_line: range.endLine,
+        commit_sha: sha,
+        question,
+      };
+      if (range.startLine !== range.endLine) {
+        body.hunk_start_line = range.startLine;
+        body.hunk_end_line = range.endLine;
+      }
+      const result = await aiStore.createThread(body);
+      if (result.ok) {
+        closeAsk();
+      } else {
+        askError = result.error;
+      }
+    } finally {
+      askSubmitting = false;
+    }
   }
 
   // The rendered view always represents the new (right) side of the diff.
@@ -318,6 +369,8 @@
     >
       <button type="button" class="rmd-tb-btn" onclick={openComposerFromToolbar}
         title="Comment on lines {liveSelection.startLine}–{liveSelection.endLine}">+</button>
+      <button type="button" class="rmd-tb-btn" onclick={openAskFromToolbar}
+        title="Ask Claude about lines {liveSelection.startLine}–{liveSelection.endLine}">?</button>
     </div>
   {/if}
 
@@ -327,6 +380,19 @@
         anchor={{ line: rangeSnapshot.endLine, side: rangeSnapshot.side, startLine: rangeSnapshot.startLine }}
         onsave={saveDraft}
         oncancel={closeComposer}
+      />
+    </div>
+  {/if}
+
+  {#if openAskKey && rangeSnapshot}
+    <div class="rmd-composer-wrap">
+      <AIAskComposer
+        anchor={{ line: rangeSnapshot.endLine, side: rangeSnapshot.side, startLine: rangeSnapshot.startLine }}
+        {...(selectionSnapshot ? { selectionPreview: selectionSnapshot } : {})}
+        error={askError}
+        submitting={askSubmitting}
+        onsubmit={(q) => void submitAsk(q)}
+        oncancel={closeAsk}
       />
     </div>
   {/if}

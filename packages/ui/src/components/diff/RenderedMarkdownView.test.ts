@@ -3,6 +3,7 @@ import { render } from "@testing-library/svelte";
 import RenderedMarkdownView from "./RenderedMarkdownView.svelte";
 import { STORES_KEY } from "../../context.js";
 import { createDiffStore } from "../../stores/diff.svelte.js";
+import { createAIStore } from "../../stores/ai.svelte.js";
 
 beforeEach(() => {
   globalThis.fetch = vi.fn(async () => ({
@@ -25,7 +26,7 @@ function renderView() {
       sha: "abc",
       hunks: [],
     },
-    context: new Map([[STORES_KEY, { diff: createDiffStore() }]]),
+    context: new Map([[STORES_KEY, { diff: createDiffStore(), ai: createAIStore() }]]),
   });
 }
 
