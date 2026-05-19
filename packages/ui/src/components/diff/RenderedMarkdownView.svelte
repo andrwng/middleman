@@ -319,7 +319,7 @@
   }
   .rmd-body :global(li > ul),
   .rmd-body :global(li > ol) {
-    margin: 4px 0 0;
+    margin: 4px 0 0 1em;
   }
 
   .rmd-body :global(blockquote) {
