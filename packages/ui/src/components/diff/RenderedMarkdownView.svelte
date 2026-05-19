@@ -8,6 +8,8 @@
     type AnchorSide,
     type AnchorRange,
   } from "./renderedMarkdownAnchors";
+  import DiffComposer from "./DiffComposer.svelte";
+  import { getStores } from "../../context.js";
 
   // Renders a markdown file at a given SHA inside the diff surface,
   // annotated with sparse source-line markers.
@@ -44,6 +46,8 @@
 
   const { owner, name, number, path, sha, hunks }: Props = $props();
 
+  const { diff: diffStore } = getStores();
+
   let raw = $state<string | null>(null);
   let truncated = $state(false);
   let loading = $state(false);
@@ -53,6 +57,10 @@
   let bodyEl: HTMLDivElement | undefined = $state();
 
   let liveSelection = $state<AnchorRange | null>(null);
+  let rangeSnapshot = $state<AnchorRange | null>(null);
+  let toolbarTop = $state(0);
+  let toolbarLeft = $state(0);
+  let openComposerKey = $state<string | null>(null);
 
   function refreshSelection(): void {
     if (!bodyEl) return;
@@ -65,6 +73,45 @@
     document.addEventListener("selectionchange", refreshSelection);
     return () => document.removeEventListener("selectionchange", refreshSelection);
   });
+
+  function updateToolbarPosition(): void {
+    if (typeof window === "undefined" || !liveSelection) return;
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const rect = sel.getRangeAt(0).getBoundingClientRect();
+    if (rect.width === 0 && rect.height === 0) return;
+    toolbarTop = rect.bottom + window.scrollY + 4;
+    toolbarLeft = rect.right + window.scrollX - 90;
+  }
+
+  $effect(() => {
+    if (liveSelection) updateToolbarPosition();
+  });
+
+  function openComposerFromToolbar(): void {
+    if (!liveSelection) return;
+    rangeSnapshot = liveSelection;
+    openComposerKey = `${liveSelection.endLine}:${liveSelection.side}`;
+  }
+
+  function closeComposer(): void {
+    openComposerKey = null;
+    rangeSnapshot = null;
+  }
+
+  function saveDraft(body: string): void {
+    const range = rangeSnapshot;
+    if (!range) return;
+    diffStore.addDraftComment({
+      path,
+      line: range.endLine,
+      side: range.side,
+      ...(range.startLine !== range.endLine ? { startLine: range.startLine } : {}),
+      commitSha: sha,
+      body,
+    });
+    closeComposer();
+  }
 
   // The rendered view always represents the new (right) side of the diff.
   const renderedSide: AnchorSide = "RIGHT";
@@ -262,10 +309,32 @@
       {@html sanitize(doc.html)}
     </div>
   {/if}
+
+  {#if liveSelection}
+    <div
+      class="rmd-toolbar"
+      style:top="{toolbarTop}px"
+      style:left="{toolbarLeft}px"
+    >
+      <button type="button" class="rmd-tb-btn" onclick={openComposerFromToolbar}
+        title="Comment on lines {liveSelection.startLine}–{liveSelection.endLine}">+</button>
+    </div>
+  {/if}
+
+  {#if openComposerKey && rangeSnapshot}
+    <div class="rmd-composer-wrap">
+      <DiffComposer
+        anchor={{ line: rangeSnapshot.endLine, side: rangeSnapshot.side, startLine: rangeSnapshot.startLine }}
+        onsave={saveDraft}
+        oncancel={closeComposer}
+      />
+    </div>
+  {/if}
 </div>
 
 <style>
   .rmd-view {
+    position: relative;
     padding: 16px 24px;
     background: var(--diff-bg);
   }
@@ -454,5 +523,29 @@
   .rmd-body :global(ul.rmd-changed),
   .rmd-body :global(ol.rmd-changed) {
     padding-left: calc(2em + 10px);
+  }
+
+  .rmd-toolbar {
+    position: absolute;
+    display: flex;
+    gap: 4px;
+    padding: 4px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-muted);
+    border-radius: var(--radius-md);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    z-index: 5;
+  }
+  .rmd-tb-btn {
+    width: 24px;
+    height: 24px;
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+    color: var(--text-primary);
+  }
+  .rmd-composer-wrap {
+    position: relative;
+    margin-top: 12px;
   }
 </style>

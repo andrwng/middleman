@@ -1,6 +1,8 @@
 import { beforeEach, describe, it, expect, vi } from "vitest";
 import { render } from "@testing-library/svelte";
 import RenderedMarkdownView from "./RenderedMarkdownView.svelte";
+import { STORES_KEY } from "../../context.js";
+import { createDiffStore } from "../../stores/diff.svelte.js";
 
 beforeEach(() => {
   globalThis.fetch = vi.fn(async () => ({
@@ -13,16 +15,23 @@ beforeEach(() => {
   }) as unknown as Response);
 });
 
-describe("RenderedMarkdownView", () => {
-  it("renders per-line anchor spans in the body", async () => {
-    const { container } = render(RenderedMarkdownView, {
+function renderView() {
+  return render(RenderedMarkdownView, {
+    props: {
       owner: "local",
       name: "demo",
       number: 1,
       path: "doc.md",
       sha: "abc",
       hunks: [],
-    });
+    },
+    context: new Map([[STORES_KEY, { diff: createDiffStore() }]]),
+  });
+}
+
+describe("RenderedMarkdownView", () => {
+  it("renders per-line anchor spans in the body", async () => {
+    const { container } = renderView();
     await new Promise((r) => setTimeout(r, 0));
     const anchors = container.querySelectorAll(".rmd-anchor");
     expect(anchors.length).toBeGreaterThanOrEqual(2);
