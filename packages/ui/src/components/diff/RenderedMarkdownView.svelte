@@ -8,8 +8,12 @@
     type AnchorSide,
     type AnchorRange,
   } from "./renderedMarkdownAnchors";
+  import { mount, unmount } from "svelte";
   import DiffComposer from "./DiffComposer.svelte";
   import AIAskComposer from "./AIAskComposer.svelte";
+  import ReviewCommentCard from "./ReviewCommentCard.svelte";
+  import PendingCommentCard from "./PendingCommentCard.svelte";
+  import AIThreadCard from "./AIThreadCard.svelte";
   import { getStores } from "../../context.js";
 
   // Renders a markdown file at a given SHA inside the diff surface,
@@ -47,7 +51,7 @@
 
   const { owner, name, number, path, sha, hunks }: Props = $props();
 
-  const { diff: diffStore, ai: aiStore } = getStores();
+  const { diff: diffStore, ai: aiStore, detail: detailStore } = getStores();
 
   let raw = $state<string | null>(null);
   let truncated = $state(false);
@@ -168,6 +172,46 @@
   // The rendered view always represents the new (right) side of the diff.
   const renderedSide: AnchorSide = "RIGHT";
 
+  const drafts = $derived(diffStore.getDraftCommentsForPath(path));
+  const publishedForFile = $derived(
+    detailStore.getReviewCommentsByFilePath().get(path) ?? [],
+  );
+  const aiThreadsForFile = $derived(aiStore.getThreadsForFile(path));
+
+  const outdatedCount = $derived(
+    publishedForFile.filter((c: { line: number }) => c.line <= 0).length,
+  );
+
+  type CardSpec =
+    | { kind: "draft"; key: string; comment: (typeof drafts)[number] }
+    | { kind: "published"; key: string; comment: (typeof publishedForFile)[number] }
+    | { kind: "ai"; key: string; thread: (typeof aiThreadsForFile)[number] };
+
+  function cardsForRange(start: number, end: number): CardSpec[] {
+    const out: CardSpec[] = [];
+    for (const c of drafts) {
+      const cStart = c.startLine ?? c.line;
+      if (c.side === renderedSide && cStart <= end && c.line >= start) {
+        out.push({ kind: "draft", key: `d:${c.id ?? `${c.line}:${c.side}`}`, comment: c });
+      }
+    }
+    for (const c of publishedForFile) {
+      if (c.line <= 0) continue;
+      const cStart = (c as { startLine?: number }).startLine ?? c.line;
+      if (c.side === renderedSide && cStart <= end && c.line >= start) {
+        out.push({ kind: "published", key: `p:${c.id}`, comment: c });
+      }
+    }
+    for (const t of aiThreadsForFile) {
+      const tStart = t.hunk_start_line ?? t.anchor_line;
+      const tEnd = t.hunk_end_line ?? t.anchor_line;
+      if (t.anchor_side === renderedSide && tStart <= end && tEnd >= start) {
+        out.push({ kind: "ai", key: `a:${t.id}`, thread: t });
+      }
+    }
+    return out;
+  }
+
   $effect(() => {
     void load(path, sha);
   });
@@ -221,10 +265,11 @@
   interface RenderedDoc {
     html: string;
     changedIndexes: Set<number>;
+    blockRangeByIdx: Map<number, [number, number]>;
   }
 
   const doc = $derived.by<RenderedDoc>(() => {
-    if (raw === null) return { html: "", changedIndexes: new Set() };
+    if (raw === null) return { html: "", changedIndexes: new Set(), blockRangeByIdx: new Map() };
 
     const m = new Marked({ breaks: true, gfm: true });
 
@@ -232,7 +277,7 @@
     try {
       tokens = m.lexer(raw);
     } catch {
-      return { html: "", changedIndexes: new Set() };
+      return { html: "", changedIndexes: new Set(), blockRangeByIdx: new Map() };
     }
 
     // Precompute each token's start line by walking the lexer output once.
@@ -286,6 +331,7 @@
     // child positions, matching the post-mount $effect walker.
     let html = "";
     const changedIndexes = new Set<number>();
+    const blockRangeByIdx = new Map<number, [number, number]>();
     let renderIdx = 0;
     for (let i = 0; i < tokens.length; i++) {
       currentBlockStart = startLineByTokenIdx.get(i) ?? 1;
@@ -296,11 +342,12 @@
         if (blockOverlapsChanged(currentBlockStart, endLine, changedLines)) {
           changedIndexes.add(renderIdx);
         }
+        blockRangeByIdx.set(renderIdx, [currentBlockStart, endLine]);
         renderIdx++;
       }
       html += m.parser([tok]);
     }
-    return { html, changedIndexes };
+    return { html, changedIndexes, blockRangeByIdx };
   });
 
   function countNewlines(s: string): number {
@@ -327,24 +374,78 @@
   }
 
   // After the HTML mounts, walk the body's direct children and mark
-  // the ones whose source-line range overlapped a changed hunk. The
-  // index alignment relies on the fact that marked's parser emits
+  // the ones whose source-line range overlapped a changed hunk. Also
+  // mount inline thread cards (drafts, published comments, AI threads)
+  // anchored to each block's source-line range.
+  //
+  // The index alignment relies on the fact that marked's parser emits
   // top-level tokens in source order, so the Nth direct child of
   // the body corresponds to the Nth non-space top-level token we
   // counted while lexing.
+  const mountedInstances = new Set<ReturnType<typeof mount>>();
+
   $effect(() => {
     if (!bodyEl) return;
-    // Reactive deps: rerun whenever the rendered html or the set
-    // changes (e.g., scope switch, hunks update).
+    // Touch all reactive deps so the effect re-runs when any changes.
     const _ = doc;
-    const children = bodyEl.children;
+    const __ = drafts;
+    const ___ = publishedForFile;
+    const ____ = aiThreadsForFile;
+
+    for (const inst of mountedInstances) unmount(inst);
+    mountedInstances.clear();
+    bodyEl.querySelectorAll(".rmd-thread-wrap").forEach((el) => el.remove());
+
+    const children = Array.from(bodyEl.children) as HTMLElement[];
     for (let i = 0; i < children.length; i++) {
-      const el = children[i] as HTMLElement;
+      const el = children[i]!;
       if (doc.changedIndexes.has(i)) {
         el.classList.add("rmd-changed");
       } else {
         el.classList.remove("rmd-changed");
       }
+
+      const range = doc.blockRangeByIdx.get(i);
+      if (!range) continue;
+      const cards = cardsForRange(range[0], range[1]);
+      if (cards.length === 0) continue;
+
+      const wrap = document.createElement("div");
+      wrap.className = "rmd-thread-wrap";
+      for (const spec of cards) {
+        const host = document.createElement("div");
+        host.className = "rmd-thread-host";
+        wrap.appendChild(host);
+        if (spec.kind === "ai") {
+          const inst = mount(AIThreadCard, {
+            target: host,
+            props: { thread: spec.thread, repoOwner: owner, repoName: name },
+          });
+          mountedInstances.add(inst);
+        } else if (spec.kind === "published") {
+          const inst = mount(ReviewCommentCard, {
+            target: host,
+            props: {
+              comment: spec.comment,
+              repoOwner: owner,
+              repoName: name,
+              currentHeadSha: sha,
+            },
+          });
+          mountedInstances.add(inst);
+        } else {
+          const inst = mount(PendingCommentCard, {
+            target: host,
+            props: {
+              comment: spec.comment,
+              currentHeadSha: sha,
+              ondelete: () => diffStore.removeDraftComment(spec.comment.id),
+            },
+          });
+          mountedInstances.add(inst);
+        }
+      }
+      el.after(wrap);
     }
   });
 </script>
@@ -357,6 +458,11 @@
   {:else if truncated}
     <div class="rmd-state rmd-state--error">File too large to render inline.</div>
   {:else if raw !== null}
+    {#if outdatedCount > 0}
+      <div class="outdated-banner" title="These comments don't resolve in the current rendered view.">
+        {outdatedCount} outdated review comment{outdatedCount === 1 ? "" : "s"} on this file
+      </div>
+    {/if}
     <div class="rmd-body markdown-body" bind:this={bodyEl}>
       {@html sanitize(doc.html)}
     </div>
@@ -590,6 +696,15 @@
   .rmd-body :global(ul.rmd-changed),
   .rmd-body :global(ol.rmd-changed) {
     padding-left: calc(2em + 10px);
+  }
+
+  .outdated-banner {
+    padding: 6px 14px;
+    font-size: 11px;
+    color: var(--accent-amber);
+    background: color-mix(in srgb, var(--accent-amber) 8%, var(--bg-inset));
+    border-bottom: 1px solid color-mix(in srgb, var(--accent-amber) 30%, var(--diff-border));
+    cursor: help;
   }
 
   .rmd-toolbar {
