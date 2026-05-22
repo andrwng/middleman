@@ -162,5 +162,6 @@ describe("hide/unhide actions", () => {
     await store.hideReviewThread(70);
 
     expect(store.getHiddenRootSet().has(70)).toBe(false);
+    expect(store.getDetailError()).toBe("boom");
   });
 });

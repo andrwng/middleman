@@ -120,6 +120,24 @@ export function createDetailStore(
     return root;
   }
 
+  // Memoize the root map by `detail` identity. Every mutation to
+  // detail reassigns it via `detail = { ...detail, ... }`, so a
+  // reference-equality check is sufficient for invalidation. This
+  // keeps getReviewCommentsByFilePath / getReviewCommentRootForPlatformID
+  // from rebuilding the parent walk on every call.
+  let cachedRootMapDetail: PullDetail | null = null;
+  let cachedRootMap: Map<number, number> = new Map();
+
+  function getReviewCommentRootMap(): Map<number, number> {
+    if (detail === null) return new Map();
+    if (cachedRootMapDetail === detail) return cachedRootMap;
+    cachedRootMap = buildReviewCommentRootMap(
+      detail.events ?? [],
+    );
+    cachedRootMapDetail = detail;
+    return cachedRootMap;
+  }
+
   // Per-PR monotonic counters for kanban updates.
   const kanbanSeqByPR = new Map<string, number>();
 
@@ -183,7 +201,7 @@ export function createDetailStore(
     const events = detail?.events;
     if (!events) return out;
     const hidden = getHiddenRootSet();
-    const roots = buildReviewCommentRootMap(events);
+    const roots = getReviewCommentRootMap();
 
     for (const e of events) {
       if (e.EventType !== "review_comment") continue;
@@ -754,8 +772,7 @@ export function createDetailStore(
   function getReviewCommentRootForPlatformID(
     platformID: number,
   ): number {
-    const events = detail?.events ?? [];
-    const roots = buildReviewCommentRootMap(events);
+    const roots = getReviewCommentRootMap();
     return roots.get(platformID) ?? platformID;
   }
 
@@ -782,6 +799,18 @@ export function createDetailStore(
       },
     );
     if (error) {
+      // Guard against PR navigation between optimistic write and
+      // error response -- the original PR's state is no longer in
+      // memory, so there is nothing to revert.
+      if (
+        !isDetailShowing(
+          ownerRepo.owner,
+          ownerRepo.name,
+          ownerRepo.number,
+        )
+      ) {
+        return;
+      }
       // Roll back
       const reverted = (
         detail?.hidden_thread_root_ids ?? []
@@ -792,6 +821,10 @@ export function createDetailStore(
           hidden_thread_root_ids: reverted,
         } as PullDetail;
       }
+      storeError = apiErrorMessage(
+        error,
+        "failed to hide review thread",
+      );
     }
   }
 
@@ -824,6 +857,18 @@ export function createDetailStore(
       },
     );
     if (error) {
+      // Guard against PR navigation between optimistic write and
+      // error response -- the original PR's state is no longer in
+      // memory, so there is nothing to revert.
+      if (
+        !isDetailShowing(
+          ownerRepo.owner,
+          ownerRepo.name,
+          ownerRepo.number,
+        )
+      ) {
+        return;
+      }
       if (detail) {
         detail = {
           ...detail,
@@ -833,6 +878,10 @@ export function createDetailStore(
           ],
         } as PullDetail;
       }
+      storeError = apiErrorMessage(
+        error,
+        "failed to unhide review thread",
+      );
     }
   }
 
