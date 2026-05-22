@@ -547,6 +547,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/repos/{owner}/{name}/pulls/{number}/hidden-threads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["hide-review-thread"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{owner}/{name}/pulls/{number}/hidden-threads/{root_comment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["unhide-review-thread"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/repos/{owner}/{name}/pulls/{number}/import-metadata": {
         parameters: {
             query?: never;
@@ -1468,6 +1500,19 @@ export interface components {
              */
             readonly $schema?: string;
             state: string;
+        };
+        HideReviewThreadInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/HideReviewThreadInputBody.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: int64
+             * @description GitHub platform id of the thread's root review comment
+             */
+            root_comment_id: number;
         };
         Hunk: {
             lines: components["schemas"]["Line"][] | null;
@@ -3658,6 +3703,73 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["GithubStateOutputBody"];
                 };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "hide-review-thread": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HideReviewThreadInputBody"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "unhide-review-thread": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+                root_comment_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Error */
             default: {

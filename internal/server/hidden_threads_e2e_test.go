@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/wesm/middleman/internal/apiclient/generated"
 	"github.com/wesm/middleman/internal/db"
 )
 
@@ -108,4 +109,79 @@ func TestLocalSourcePullDetailIncludesEmptyHiddenSet(t *testing.T) {
 	require.NotNil(resp.JSON200)
 	require.NotNil(resp.JSON200.HiddenThreadRootIds, "field should be present and non-nil")
 	assert.Empty(*resp.JSON200.HiddenThreadRootIds)
+}
+
+func TestHideThreadAddsToActiveHiddenSet(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srv, database := setupTestServer(t)
+	mrID := seedPR(t, database, "acme", "widget", 1)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	seedReviewComments(t, database, mrID, []seedReviewComment{
+		{ID: 1001, InReplyTo: 0, CreatedAt: now.Add(-2 * time.Hour)},
+		{ID: 1002, InReplyTo: 1001, CreatedAt: now.Add(-time.Hour)},
+	})
+
+	client := setupTestClient(t, srv)
+
+	hideResp, err := client.HTTP.HideReviewThreadWithResponse(
+		context.Background(), "acme", "widget", 1,
+		generated.HideReviewThreadInputBody{RootCommentId: 1001},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusNoContent, hideResp.StatusCode(), string(hideResp.Body))
+
+	getResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberWithResponse(
+		context.Background(), "acme", "widget", 1,
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, getResp.StatusCode())
+	require.NotNil(getResp.JSON200)
+	require.NotNil(getResp.JSON200.HiddenThreadRootIds)
+	assert.ElementsMatch([]int64{1001}, *getResp.JSON200.HiddenThreadRootIds)
+
+	// Events themselves are still in the response — the client is the
+	// one that filters based on the hidden set.
+	require.NotNil(getResp.JSON200.Events)
+	var rootPresent, replyPresent bool
+	for _, e := range *getResp.JSON200.Events {
+		if e.PlatformID == nil {
+			continue
+		}
+		switch *e.PlatformID {
+		case 1001:
+			rootPresent = true
+		case 1002:
+			replyPresent = true
+		}
+	}
+	assert.True(rootPresent && replyPresent, "events should still include all comments")
+}
+
+func TestHideThreadIs400IfRootIsNotAReviewCommentOnPR(t *testing.T) {
+	require := require.New(t)
+	srv, database := setupTestServer(t)
+	seedPR(t, database, "acme", "widget", 1)
+	client := setupTestClient(t, srv)
+
+	resp, err := client.HTTP.HideReviewThreadWithResponse(
+		context.Background(), "acme", "widget", 1,
+		generated.HideReviewThreadInputBody{RootCommentId: 99999},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusBadRequest, resp.StatusCode())
+}
+
+func TestHideThreadIs404ForUnknownPR(t *testing.T) {
+	require := require.New(t)
+	srv, _ := setupTestServer(t)
+	client := setupTestClient(t, srv)
+
+	resp, err := client.HTTP.HideReviewThreadWithResponse(
+		context.Background(), "acme", "widget", 999,
+		generated.HideReviewThreadInputBody{RootCommentId: 1},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusNotFound, resp.StatusCode())
 }
