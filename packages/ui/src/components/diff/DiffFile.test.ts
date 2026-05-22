@@ -59,6 +59,7 @@ import DiffFile from "./DiffFile.svelte";
 import type { DiffFile as DiffFileType } from "../../api/types.js";
 import { STORES_KEY } from "../../context.js";
 import { createDiffStore } from "../../stores/diff.svelte.js";
+import { createAIStore } from "../../stores/ai.svelte.js";
 
 function makeFile(overrides: Partial<DiffFileType> = {}): DiffFileType {
   return {
@@ -93,7 +94,24 @@ function uniqueOwner(): string {
 function renderDiffFile(file: DiffFileType) {
   return render(DiffFile, {
     props: { file, owner: uniqueOwner(), name: "n", number: 1 },
-    context: new Map([[STORES_KEY, { diff: createDiffStore() }]]),
+    context: new Map<symbol, unknown>([
+      [
+        STORES_KEY,
+        {
+          diff: createDiffStore(),
+          ai: createAIStore(),
+          detail: {
+            getReviewCommentsByFilePath: () => new Map(),
+            getHiddenRootSet: () => new Set<number>(),
+            isShowingHiddenThreads: () => false,
+            getHiddenThreadCount: () => 0,
+            hideReviewThread: () => Promise.resolve(),
+            unhideReviewThread: () => Promise.resolve(),
+            getReviewCommentRootForPlatformID: (pid: number) => pid,
+          },
+        },
+      ],
+    ]),
   });
 }
 
