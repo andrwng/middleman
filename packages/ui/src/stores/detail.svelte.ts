@@ -16,6 +16,10 @@ export interface PublishedReviewComment {
   commitId: string;
   htmlUrl: string;
   inReplyTo: number;
+  // True when this comment belongs to a thread whose root id is in
+  // the active hidden set. The card renders dimmed instead of being
+  // dropped from the map when `showHiddenThreads` is true.
+  isHidden: boolean;
 }
 
 export interface DetailStoreOptions {
@@ -66,6 +70,55 @@ export function createDetailStore(
   let storeError = $state<string | null>(null);
   let detailLoaded = $state(false);
   let syncGeneration = 0;
+
+  let showHiddenThreads = $state(false);
+
+  // platform_id → root platform_id, computed when needed. Mirrors
+  // the server walk in db.ActiveHiddenReviewThreadRoots so hidden
+  // replies surface the same way the server's predicate sees them.
+  function buildReviewCommentRootMap(
+    events: PullDetail["events"],
+  ): Map<number, number> {
+    const parent = new Map<number, number>();
+    if (!events) return new Map();
+    for (const e of events) {
+      if (
+        e.EventType !== "review_comment" ||
+        e.PlatformID == null
+      )
+        continue;
+      try {
+        const meta = JSON.parse(
+          e.MetadataJSON ?? "{}",
+        ) as { in_reply_to?: number };
+        const pid = e.PlatformID as number;
+        if (
+          meta.in_reply_to &&
+          meta.in_reply_to !== pid
+        ) {
+          parent.set(pid, meta.in_reply_to);
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    const root = new Map<number, number>();
+    for (const e of events) {
+      if (
+        e.EventType !== "review_comment" ||
+        e.PlatformID == null
+      )
+        continue;
+      let cur = e.PlatformID as number;
+      for (let i = 0; i < 32; i++) {
+        const p = parent.get(cur);
+        if (p == null) break;
+        cur = p;
+      }
+      root.set(e.PlatformID as number, cur);
+    }
+    return root;
+  }
 
   // Per-PR monotonic counters for kanban updates.
   const kanbanSeqByPR = new Map<string, number>();
@@ -129,6 +182,9 @@ export function createDetailStore(
     const out = new Map<string, PublishedReviewComment[]>();
     const events = detail?.events;
     if (!events) return out;
+    const hidden = getHiddenRootSet();
+    const roots = buildReviewCommentRootMap(events);
+
     for (const e of events) {
       if (e.EventType !== "review_comment") continue;
       const raw = e.MetadataJSON;
@@ -146,13 +202,17 @@ export function createDetailStore(
         const path = meta.path;
         if (!path) continue;
         const side = meta.side === "LEFT" ? "LEFT" : "RIGHT";
-        const list = out.get(path) ?? [];
         // e.ID is our local DB row id; the PR review-comment API
         // expects the GitHub comment id, which we store as
         // PlatformID. Mixing these up made "reply to a comment"
         // send our autoincrement, which GitHub doesn't recognize.
         const ghID = (e.PlatformID ?? 0) as number;
         if (!ghID) continue;
+
+        const isHidden = hidden.has(roots.get(ghID) ?? ghID);
+        if (isHidden && !showHiddenThreads) continue;
+
+        const list = out.get(path) ?? [];
         list.push({
           id: ghID,
           author: e.Author,
@@ -165,6 +225,7 @@ export function createDetailStore(
           commitId: meta.commit_id ?? "",
           htmlUrl: meta.html_url ?? "",
           inReplyTo: meta.in_reply_to ?? 0,
+          isHidden,
         });
         out.set(path, list);
       } catch {
@@ -673,6 +734,108 @@ export function createDetailStore(
     }
   }
 
+  function getHiddenRootSet(): Set<number> {
+    const ids = detail?.hidden_thread_root_ids ?? [];
+    return new Set(ids);
+  }
+
+  function getHiddenThreadCount(): number {
+    return detail?.hidden_thread_root_ids?.length ?? 0;
+  }
+
+  function isShowingHiddenThreads(): boolean {
+    return showHiddenThreads;
+  }
+
+  function setShowHiddenThreads(next: boolean): void {
+    showHiddenThreads = next;
+  }
+
+  function getReviewCommentRootForPlatformID(
+    platformID: number,
+  ): number {
+    const events = detail?.events ?? [];
+    const roots = buildReviewCommentRootMap(events);
+    return roots.get(platformID) ?? platformID;
+  }
+
+  async function hideReviewThread(
+    rootPlatformID: number,
+  ): Promise<void> {
+    if (!detail) return;
+    const ownerRepo = {
+      owner: detail.repo_owner,
+      name: detail.repo_name,
+      number: detail.merge_request.Number,
+    };
+    const prev = detail.hidden_thread_root_ids ?? [];
+    if (prev.includes(rootPlatformID)) return;
+    detail = {
+      ...detail,
+      hidden_thread_root_ids: [...prev, rootPlatformID],
+    } as PullDetail;
+    const { error } = await apiClient.POST(
+      "/repos/{owner}/{name}/pulls/{number}/hidden-threads",
+      {
+        params: { path: ownerRepo },
+        body: { root_comment_id: rootPlatformID },
+      },
+    );
+    if (error) {
+      // Roll back
+      const reverted = (
+        detail?.hidden_thread_root_ids ?? []
+      ).filter((id) => id !== rootPlatformID);
+      if (detail) {
+        detail = {
+          ...detail,
+          hidden_thread_root_ids: reverted,
+        } as PullDetail;
+      }
+    }
+  }
+
+  async function unhideReviewThread(
+    rootPlatformID: number,
+  ): Promise<void> {
+    if (!detail) return;
+    const ownerRepo = {
+      owner: detail.repo_owner,
+      name: detail.repo_name,
+      number: detail.merge_request.Number,
+    };
+    const prev = detail.hidden_thread_root_ids ?? [];
+    if (!prev.includes(rootPlatformID)) return;
+    detail = {
+      ...detail,
+      hidden_thread_root_ids: prev.filter(
+        (id) => id !== rootPlatformID,
+      ),
+    } as PullDetail;
+    const { error } = await apiClient.DELETE(
+      "/repos/{owner}/{name}/pulls/{number}/hidden-threads/{root_comment_id}",
+      {
+        params: {
+          path: {
+            ...ownerRepo,
+            root_comment_id: rootPlatformID,
+          },
+        },
+      },
+    );
+    if (error) {
+      if (detail) {
+        detail = {
+          ...detail,
+          hidden_thread_root_ids: [
+            ...(detail.hidden_thread_root_ids ?? []),
+            rootPlatformID,
+          ],
+        } as PullDetail;
+      }
+    }
+  }
+
   return {
     getDetail,
     isDetailLoading,
@@ -682,6 +845,13 @@ export function createDetailStore(
     isStaleRefreshing,
     getCommitCommentCounts,
     getReviewCommentsByFilePath,
+    getHiddenRootSet,
+    getHiddenThreadCount,
+    isShowingHiddenThreads,
+    setShowHiddenThreads,
+    getReviewCommentRootForPlatformID,
+    hideReviewThread,
+    unhideReviewThread,
     clearDetail,
     loadDetail,
     refreshDetailOnly,
