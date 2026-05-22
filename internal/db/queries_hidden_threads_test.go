@@ -82,6 +82,9 @@ func TestActiveHiddenReviewThreadRoots(t *testing.T) {
 	id200 := int64(200)
 	id201 := int64(201)
 	id300 := int64(300)
+	id400 := int64(400)
+	id401 := int64(401)
+	id402 := int64(402)
 
 	require.NoError(d.UpsertMREvents(ctx, []MREvent{
 		{
@@ -114,12 +117,31 @@ func TestActiveHiddenReviewThreadRoots(t *testing.T) {
 			MetadataJSON: `{"path":"c.go","line":3,"side":"RIGHT"}`,
 			DedupeKey:    "review-comment-300",
 		},
+		{
+			MergeRequestID: mrID, PlatformID: &id400, EventType: "review_comment",
+			Author: "u", Body: "root A (chain)", CreatedAt: beforeHide.Add(-3 * time.Hour),
+			MetadataJSON: `{"path":"d.go","line":4,"side":"RIGHT"}`,
+			DedupeKey:    "review-comment-400",
+		},
+		{
+			MergeRequestID: mrID, PlatformID: &id401, EventType: "review_comment",
+			Author: "u", Body: "B reply on A (before hide)", CreatedAt: beforeHide,
+			MetadataJSON: `{"path":"d.go","line":4,"side":"RIGHT","in_reply_to":400}`,
+			DedupeKey:    "review-comment-401",
+		},
+		{
+			MergeRequestID: mrID, PlatformID: &id402, EventType: "review_comment",
+			Author: "u", Body: "C reply on B (after hide)", CreatedAt: afterHide,
+			MetadataJSON: `{"path":"d.go","line":4,"side":"RIGHT","in_reply_to":401}`,
+			DedupeKey:    "review-comment-402",
+		},
 	}))
 
-	// Hide all three roots at t0.
+	// Hide all four roots at t0.
 	require.NoError(d.UpsertHiddenReviewThread(ctx, mrID, 100, t0))
 	require.NoError(d.UpsertHiddenReviewThread(ctx, mrID, 200, t0))
 	require.NoError(d.UpsertHiddenReviewThread(ctx, mrID, 300, t0))
+	require.NoError(d.UpsertHiddenReviewThread(ctx, mrID, 400, t0))
 
 	events, err := d.ListMREvents(ctx, mrID)
 	require.NoError(err)
@@ -127,5 +149,5 @@ func TestActiveHiddenReviewThreadRoots(t *testing.T) {
 	active, err := d.ActiveHiddenReviewThreadRoots(ctx, mrID, events)
 	require.NoError(err)
 	assert.ElementsMatch([]int64{100, 300}, active,
-		"thread 200 has a reply after hidden_at — should not be active")
+		"threads 200 and 400 each have a reply newer than hidden_at — should not be active")
 }
