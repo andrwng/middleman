@@ -428,6 +428,18 @@ func (s *Server) registerAPI(api huma.API) {
 	huma.Post(api, "/repos/{owner}/{name}/resolve-files", s.resolveFiles)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/notes", s.getPRNotes)
 	huma.Put(api, "/repos/{owner}/{name}/pulls/{number}/notes", s.putPRNotes)
+	huma.Register(api, huma.Operation{
+		OperationID:   "hide-review-thread",
+		Method:        http.MethodPost,
+		Path:          "/repos/{owner}/{name}/pulls/{number}/hidden-threads",
+		DefaultStatus: http.StatusNoContent,
+	}, s.hideReviewThread)
+	huma.Register(api, huma.Operation{
+		OperationID:   "unhide-review-thread",
+		Method:        http.MethodDelete,
+		Path:          "/repos/{owner}/{name}/pulls/{number}/hidden-threads/{root_comment_id}",
+		DefaultStatus: http.StatusNoContent,
+	}, s.unhideReviewThread)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/ai-threads", s.createAIThread)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/ai-threads", s.listAIThreads)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/ai-threads/{thread_id}", s.getAIThread)
@@ -635,16 +647,27 @@ func (s *Server) buildPullDetailResponse(
 			"load repo failed",
 		)
 	}
+	hidden, err := s.db.ActiveHiddenReviewThreadRoots(ctx, mr.ID, events)
+	if err != nil {
+		return mergeRequestDetailResponse{}, huma.Error500InternalServerError(
+			"compute hidden review threads failed",
+		)
+	}
+	if hidden == nil {
+		hidden = []int64{}
+	}
+
 	resp := mergeRequestDetailResponse{
-		MergeRequest:     mr,
-		Events:           events,
-		RepoOwner:        repo.Owner,
-		RepoName:         repo.Name,
-		PlatformHost:     repo.PlatformHost,
-		WorktreeLinks:    toWorktreeLinkResponses(dbLinks),
-		WorkflowApproval: s.workflowApprovalState(ctx, repo.Owner, repo.Name, mr, wfMode),
-		Warnings:         s.diffWarnings(mr),
-		DetailLoaded:     mr.DetailFetchedAt != nil,
+		MergeRequest:        mr,
+		Events:              events,
+		RepoOwner:           repo.Owner,
+		RepoName:            repo.Name,
+		PlatformHost:        repo.PlatformHost,
+		WorktreeLinks:       toWorktreeLinkResponses(dbLinks),
+		WorkflowApproval:    s.workflowApprovalState(ctx, repo.Owner, repo.Name, mr, wfMode),
+		Warnings:            s.diffWarnings(mr),
+		DetailLoaded:        mr.DetailFetchedAt != nil,
+		HiddenThreadRootIDs: hidden,
 	}
 	if mr.DetailFetchedAt != nil {
 		resp.DetailFetchedAt = formatUTCRFC3339(*mr.DetailFetchedAt)

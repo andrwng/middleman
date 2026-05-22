@@ -57,6 +57,11 @@ type mergeRequestDetailResponse struct {
 	DetailLoaded     bool                     `json:"detail_loaded"`
 	DetailFetchedAt  string                   `json:"detail_fetched_at,omitempty"`
 	Workspace        *workspaceMRRef          `json:"workspace,omitempty"`
+	// HiddenThreadRootIDs lists the GitHub platform comment ids of
+	// review thread roots that are currently hidden in the UI for
+	// this PR. Computed by ActiveHiddenReviewThreadRoots; a stored
+	// hide is omitted if the thread has a reply newer than hidden_at.
+	HiddenThreadRootIDs []int64 `json:"hidden_thread_root_ids"`
 }
 
 var validKanbanStates = map[string]bool{

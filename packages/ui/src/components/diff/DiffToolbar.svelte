@@ -7,7 +7,7 @@
 
   const { onReviewClick }: Props = $props();
 
-  const { diff } = getStores();
+  const { diff, detail: detailStore } = getStores();
   const tabOptions = [1, 2, 4, 8] as const;
   const layoutOptions = [
     { value: "unified", label: "Unified" },
@@ -16,6 +16,8 @@
 
   const pendingCount = $derived(diff.getDraft().comments.length);
   const draftEvent = $derived(diff.getDraft().event);
+  const hiddenCount = $derived(detailStore.getHiddenThreadCount());
+  const showingHidden = $derived(detailStore.isShowingHiddenThreads());
 </script>
 
 <div class="diff-toolbar">
@@ -61,6 +63,18 @@
     </button>
   </div>
   <div class="toolbar-group toolbar-group--right">
+    {#if hiddenCount > 0}
+      <button
+        type="button"
+        class="hidden-toggle"
+        class:hidden-toggle--on={showingHidden}
+        title={showingHidden ? "Hide these threads again" : "Show threads you've hidden"}
+        onclick={() => detailStore.setShowHiddenThreads(!showingHidden)}
+      >
+        {showingHidden ? "Hide hidden" : "Show hidden"}
+        <span class="hidden-toggle__count">{hiddenCount}</span>
+      </button>
+    {/if}
     <button
       type="button"
       class="refresh-btn"
@@ -289,4 +303,32 @@
     transform: translateX(16px);
   }
 
+  .hidden-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    color: var(--text-muted);
+    background: var(--bg-inset);
+    border: 1px solid var(--border-muted);
+    cursor: pointer;
+  }
+
+  .hidden-toggle:hover {
+    color: var(--text-primary);
+    background: var(--bg-surface-hover);
+  }
+
+  .hidden-toggle--on {
+    color: var(--text-primary);
+    border-color: var(--accent-blue);
+  }
+
+  .hidden-toggle__count {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-muted);
+  }
 </style>

@@ -3,6 +3,7 @@
   import { renderMarkdown } from "../../utils/markdown.js";
   import { timeAgo } from "../../utils/time.js";
   import { copyToClipboard } from "../../utils/clipboard.js";
+  import { getStores } from "../../context.js";
 
   interface Props {
     events: Array<PREvent | IssueEvent>;
@@ -11,6 +12,7 @@
   }
 
   const { events, repoOwner, repoName }: Props = $props();
+  const { detail: detailStore } = getStores();
 
   const typeLabels: Record<string, string> = {
     issue_comment: "Comment",
@@ -76,8 +78,24 @@
   }
 
   const mechanicsCount = $derived(events.filter((e) => isMechanics(e.EventType)).length);
+
+  const hiddenSet = $derived(detailStore.getHiddenRootSet());
+  const showingHidden = $derived(detailStore.isShowingHiddenThreads());
+  const hiddenCount = $derived(detailStore.getHiddenThreadCount());
+
+  function isReviewCommentInHiddenThread(event: PREvent | IssueEvent): boolean {
+    if (event.EventType !== "review_comment") return false;
+    if (event.PlatformID == null) return false;
+    const root = detailStore.getReviewCommentRootForPlatformID(event.PlatformID as number);
+    return hiddenSet.has(root);
+  }
+
   const visibleEvents = $derived(
-    showMechanics ? events : events.filter((e) => !isMechanics(e.EventType)),
+    events.filter((e) => {
+      if (!showMechanics && isMechanics(e.EventType)) return false;
+      if (!showingHidden && isReviewCommentInHiddenThread(e)) return false;
+      return true;
+    }),
   );
 
   // threadStarts[i] is the path that a review-comment thread begins at
@@ -120,23 +138,37 @@
   }
 </script>
 
-{#if events.length === 0}
-  <p class="empty">No activity yet</p>
-{:else}
-  {#if mechanicsCount > 0}
-    <div class="mechanics-toggle">
+{#if mechanicsCount > 0 || hiddenCount > 0}
+  <div class="timeline-toggles">
+    {#if mechanicsCount > 0}
       <button
         type="button"
-        class="mechanics-toggle__btn"
-        class:mechanics-toggle__btn--on={showMechanics}
+        class="toggle-pill"
+        class:toggle-pill--on={showMechanics}
         onclick={toggleMechanics}
         title="Show or hide commit and force-push events"
       >
         {showMechanics ? "Hide" : "Show"} mechanics
-        <span class="mechanics-toggle__count">{mechanicsCount}</span>
+        <span class="toggle-pill__count">{mechanicsCount}</span>
       </button>
-    </div>
-  {/if}
+    {/if}
+    {#if hiddenCount > 0}
+      <button
+        type="button"
+        class="toggle-pill hidden-toggle"
+        class:toggle-pill--on={showingHidden}
+        onclick={() => detailStore.setShowHiddenThreads(!showingHidden)}
+        title={showingHidden ? "Hide these threads again" : "Show threads you've hidden"}
+      >
+        {showingHidden ? "Hide hidden" : "Show hidden"}
+        <span class="toggle-pill__count">{hiddenCount}</span>
+      </button>
+    {/if}
+  </div>
+{/if}
+{#if events.length === 0}
+  <p class="empty">No activity yet</p>
+{:else}
   <ol class="timeline">
     {#each visibleEvents as event, i (event.ID)}
       {#if threadStarts.has(i)}
@@ -223,13 +255,14 @@
     padding: 16px 0;
   }
 
-  .mechanics-toggle {
+  .timeline-toggles {
     display: flex;
     justify-content: flex-end;
+    gap: 6px;
     padding: 0 0 8px;
   }
 
-  .mechanics-toggle__btn {
+  .toggle-pill {
     display: inline-flex;
     align-items: center;
     gap: 6px;
@@ -242,17 +275,17 @@
     cursor: pointer;
   }
 
-  .mechanics-toggle__btn:hover {
+  .toggle-pill:hover {
     color: var(--text-primary);
     background: var(--bg-surface-hover);
   }
 
-  .mechanics-toggle__btn--on {
+  .toggle-pill--on {
     color: var(--text-primary);
     border-color: var(--accent-blue);
   }
 
-  .mechanics-toggle__count {
+  .toggle-pill__count {
     font-family: var(--font-mono);
     font-size: 10px;
     color: var(--text-muted);

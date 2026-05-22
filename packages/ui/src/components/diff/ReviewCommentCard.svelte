@@ -16,7 +16,7 @@
   }
 
   const { comment, repoOwner, repoName, currentHeadSha }: Props = $props();
-  const { diff: diffStore } = getStores();
+  const { diff: diffStore, detail: detailStore } = getStores();
 
   let replying = $state(false);
   let replyBody = $state("");
@@ -33,6 +33,18 @@
     }
     return `${sign}${comment.line}`;
   });
+
+  const isRoot = $derived(comment.inReplyTo === 0);
+  const isHidden = $derived(comment.isHidden === true);
+
+  function onHideClick(): void {
+    if (!isRoot) return;
+    if (isHidden) {
+      void detailStore.unhideReviewThread(comment.id);
+    } else {
+      void detailStore.hideReviewThread(comment.id);
+    }
+  }
 
   function startReply(): void {
     replying = true;
@@ -80,7 +92,7 @@
   }
 </script>
 
-<div class="rc" class:rc--outdated={outdated} class:rc--reply={!!comment.inReplyTo}>
+<div class="rc" class:rc--outdated={outdated} class:rc--reply={!!comment.inReplyTo} class:rc--hidden={isHidden}>
   <div class="rc__header">
     {#if comment.inReplyTo}
       <span class="rc__badge rc__badge--reply">Reply</span>
@@ -110,6 +122,27 @@
           <path d="M8 3L3 8l5 5" stroke-linecap="round" stroke-linejoin="round" />
           <path d="M3 8h7a3 3 0 0 1 3 3v2" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
+      </button>
+    {/if}
+    {#if isRoot}
+      <button
+        type="button"
+        class="rc__action rc__action--hide"
+        onclick={onHideClick}
+        title={isHidden ? "Show this thread again" : "Hide this thread from the review window"}
+        aria-label={isHidden ? "Unhide thread" : "Hide thread"}
+      >
+        {#if isHidden}
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6">
+            <path d="M2 8s2.5-4 6-4 6 4 6 4-2.5 4-6 4-6-4-6-4z" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle cx="8" cy="8" r="2" />
+          </svg>
+        {:else}
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6">
+            <path d="M3 3l10 10" stroke-linecap="round"/>
+            <path d="M2 8s2.5-4 6-4c1.5 0 2.7.5 3.6 1.2M14 8s-2.5 4-6 4c-1.4 0-2.6-.4-3.5-1" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        {/if}
       </button>
     {/if}
     {#if comment.htmlUrl}
@@ -340,5 +373,10 @@
   .rc__btn:disabled {
     opacity: 0.5;
     cursor: default;
+  }
+
+  .rc--hidden {
+    opacity: 0.55;
+    border-left-color: var(--text-muted);
   }
 </style>

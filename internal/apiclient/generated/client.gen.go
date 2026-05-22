@@ -448,6 +448,15 @@ type GithubStateOutputBody struct {
 	State  string  `json:"state"`
 }
 
+// HideReviewThreadInputBody defines model for HideReviewThreadInputBody.
+type HideReviewThreadInputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+
+	// RootCommentId GitHub platform id of the thread's root review comment
+	RootCommentId int64 `json:"root_comment_id"`
+}
+
 // Hunk defines model for Hunk.
 type Hunk struct {
 	Lines    *[]Line `json:"lines"`
@@ -628,18 +637,19 @@ type MergeRequest struct {
 // MergeRequestDetailResponse defines model for MergeRequestDetailResponse.
 type MergeRequestDetailResponse struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema           *string                  `json:"$schema,omitempty"`
-	DetailFetchedAt  *string                  `json:"detail_fetched_at,omitempty"`
-	DetailLoaded     bool                     `json:"detail_loaded"`
-	Events           *[]MREvent               `json:"events"`
-	MergeRequest     MergeRequest             `json:"merge_request"`
-	PlatformHost     string                   `json:"platform_host"`
-	RepoName         string                   `json:"repo_name"`
-	RepoOwner        string                   `json:"repo_owner"`
-	Warnings         *[]string                `json:"warnings,omitempty"`
-	WorkflowApproval WorkflowApprovalResponse `json:"workflow_approval"`
-	Workspace        *WorkspaceMRRef          `json:"workspace,omitempty"`
-	WorktreeLinks    *[]WorktreeLinkResponse  `json:"worktree_links"`
+	Schema              *string                  `json:"$schema,omitempty"`
+	DetailFetchedAt     *string                  `json:"detail_fetched_at,omitempty"`
+	DetailLoaded        bool                     `json:"detail_loaded"`
+	Events              *[]MREvent               `json:"events"`
+	HiddenThreadRootIds *[]int64                 `json:"hidden_thread_root_ids"`
+	MergeRequest        MergeRequest             `json:"merge_request"`
+	PlatformHost        string                   `json:"platform_host"`
+	RepoName            string                   `json:"repo_name"`
+	RepoOwner           string                   `json:"repo_owner"`
+	Warnings            *[]string                `json:"warnings,omitempty"`
+	WorkflowApproval    WorkflowApprovalResponse `json:"workflow_approval"`
+	Workspace           *WorkspaceMRRef          `json:"workspace,omitempty"`
+	WorktreeLinks       *[]WorktreeLinkResponse  `json:"worktree_links"`
 }
 
 // MergeRequestResponse defines model for MergeRequestResponse.
@@ -1249,6 +1259,9 @@ type PostPrCommentJSONRequestBody = PostCommentInputBody
 // SetPrGithubStateJSONRequestBody defines body for SetPrGithubState for application/json ContentType.
 type SetPrGithubStateJSONRequestBody = GithubStateInputBody
 
+// HideReviewThreadJSONRequestBody defines body for HideReviewThread for application/json ContentType.
+type HideReviewThreadJSONRequestBody = HideReviewThreadInputBody
+
 // PostReposByOwnerByNamePullsByNumberMergeJSONRequestBody defines body for PostReposByOwnerByNamePullsByNumberMerge for application/json ContentType.
 type PostReposByOwnerByNamePullsByNumberMergeJSONRequestBody = MergePRInputBody
 
@@ -1493,6 +1506,14 @@ type ClientInterface interface {
 	SetPrGithubStateWithBody(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	SetPrGithubState(ctx context.Context, owner string, name string, number int64, body SetPrGithubStateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// HideReviewThreadWithBody request with any body
+	HideReviewThreadWithBody(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	HideReviewThread(ctx context.Context, owner string, name string, number int64, body HideReviewThreadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UnhideReviewThread request
+	UnhideReviewThread(ctx context.Context, owner string, name string, number int64, rootCommentId int64, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetReposByOwnerByNamePullsByNumberImportMetadata request
 	GetReposByOwnerByNamePullsByNumberImportMetadata(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2211,6 +2232,42 @@ func (c *Client) SetPrGithubStateWithBody(ctx context.Context, owner string, nam
 
 func (c *Client) SetPrGithubState(ctx context.Context, owner string, name string, number int64, body SetPrGithubStateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetPrGithubStateRequest(c.Server, owner, name, number, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) HideReviewThreadWithBody(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewHideReviewThreadRequestWithBody(c.Server, owner, name, number, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) HideReviewThread(ctx context.Context, owner string, name string, number int64, body HideReviewThreadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewHideReviewThreadRequest(c.Server, owner, name, number, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UnhideReviewThread(ctx context.Context, owner string, name string, number int64, rootCommentId int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUnhideReviewThreadRequest(c.Server, owner, name, number, rootCommentId)
 	if err != nil {
 		return nil, err
 	}
@@ -5193,6 +5250,122 @@ func NewSetPrGithubStateRequestWithBody(server string, owner string, name string
 	return req, nil
 }
 
+// NewHideReviewThreadRequest calls the generic HideReviewThread builder with application/json body
+func NewHideReviewThreadRequest(server string, owner string, name string, number int64, body HideReviewThreadJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewHideReviewThreadRequestWithBody(server, owner, name, number, "application/json", bodyReader)
+}
+
+// NewHideReviewThreadRequestWithBody generates requests for HideReviewThread with any type of body
+func NewHideReviewThreadRequestWithBody(server string, owner string, name string, number int64, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s/hidden-threads", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewUnhideReviewThreadRequest generates requests for UnhideReviewThread
+func NewUnhideReviewThreadRequest(server string, owner string, name string, number int64, rootCommentId int64) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam3 string
+
+	pathParam3, err = runtime.StyleParamWithOptions("simple", false, "root_comment_id", rootCommentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s/hidden-threads/%s", pathParam0, pathParam1, pathParam2, pathParam3)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetReposByOwnerByNamePullsByNumberImportMetadataRequest generates requests for GetReposByOwnerByNamePullsByNumberImportMetadata
 func NewGetReposByOwnerByNamePullsByNumberImportMetadataRequest(server string, owner string, name string, number int64) (*http.Request, error) {
 	var err error
@@ -6641,6 +6814,14 @@ type ClientWithResponsesInterface interface {
 
 	SetPrGithubStateWithResponse(ctx context.Context, owner string, name string, number int64, body SetPrGithubStateJSONRequestBody, reqEditors ...RequestEditorFn) (*SetPrGithubStateResponse, error)
 
+	// HideReviewThreadWithBodyWithResponse request with any body
+	HideReviewThreadWithBodyWithResponse(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*HideReviewThreadResponse, error)
+
+	HideReviewThreadWithResponse(ctx context.Context, owner string, name string, number int64, body HideReviewThreadJSONRequestBody, reqEditors ...RequestEditorFn) (*HideReviewThreadResponse, error)
+
+	// UnhideReviewThreadWithResponse request
+	UnhideReviewThreadWithResponse(ctx context.Context, owner string, name string, number int64, rootCommentId int64, reqEditors ...RequestEditorFn) (*UnhideReviewThreadResponse, error)
+
 	// GetReposByOwnerByNamePullsByNumberImportMetadataWithResponse request
 	GetReposByOwnerByNamePullsByNumberImportMetadataWithResponse(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberImportMetadataResponse, error)
 
@@ -7676,6 +7857,50 @@ func (r SetPrGithubStateResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r SetPrGithubStateResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type HideReviewThreadResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r HideReviewThreadResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r HideReviewThreadResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type UnhideReviewThreadResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r UnhideReviewThreadResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UnhideReviewThreadResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -8774,6 +8999,32 @@ func (c *ClientWithResponses) SetPrGithubStateWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseSetPrGithubStateResponse(rsp)
+}
+
+// HideReviewThreadWithBodyWithResponse request with arbitrary body returning *HideReviewThreadResponse
+func (c *ClientWithResponses) HideReviewThreadWithBodyWithResponse(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*HideReviewThreadResponse, error) {
+	rsp, err := c.HideReviewThreadWithBody(ctx, owner, name, number, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseHideReviewThreadResponse(rsp)
+}
+
+func (c *ClientWithResponses) HideReviewThreadWithResponse(ctx context.Context, owner string, name string, number int64, body HideReviewThreadJSONRequestBody, reqEditors ...RequestEditorFn) (*HideReviewThreadResponse, error) {
+	rsp, err := c.HideReviewThread(ctx, owner, name, number, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseHideReviewThreadResponse(rsp)
+}
+
+// UnhideReviewThreadWithResponse request returning *UnhideReviewThreadResponse
+func (c *ClientWithResponses) UnhideReviewThreadWithResponse(ctx context.Context, owner string, name string, number int64, rootCommentId int64, reqEditors ...RequestEditorFn) (*UnhideReviewThreadResponse, error) {
+	rsp, err := c.UnhideReviewThread(ctx, owner, name, number, rootCommentId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUnhideReviewThreadResponse(rsp)
 }
 
 // GetReposByOwnerByNamePullsByNumberImportMetadataWithResponse request returning *GetReposByOwnerByNamePullsByNumberImportMetadataResponse
@@ -10406,6 +10657,58 @@ func ParseSetPrGithubStateResponse(rsp *http.Response) (*SetPrGithubStateRespons
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseHideReviewThreadResponse parses an HTTP response from a HideReviewThreadWithResponse call
+func ParseHideReviewThreadResponse(rsp *http.Response) (*HideReviewThreadResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &HideReviewThreadResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUnhideReviewThreadResponse parses an HTTP response from a UnhideReviewThreadWithResponse call
+func ParseUnhideReviewThreadResponse(rsp *http.Response) (*UnhideReviewThreadResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UnhideReviewThreadResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest ErrorModel
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {

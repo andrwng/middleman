@@ -167,14 +167,15 @@ func (s *Server) getPullLocal(
 		DetailFetchedAt: &now,
 	}
 	resp := mergeRequestDetailResponse{
-		MergeRequest:    mr,
-		Events:          []db.MREvent{},
-		RepoOwner:       localOwner,
-		RepoName:        input.Name,
-		PlatformHost:    "local",
-		WorktreeLinks:   []worktreeLinkResponse{},
-		DetailLoaded:    true,
-		DetailFetchedAt: formatUTCRFC3339(now),
+		MergeRequest:        mr,
+		Events:              []db.MREvent{},
+		RepoOwner:           localOwner,
+		RepoName:            input.Name,
+		PlatformHost:        "local",
+		WorktreeLinks:       []worktreeLinkResponse{},
+		HiddenThreadRootIDs: []int64{},
+		DetailLoaded:        true,
+		DetailFetchedAt:     formatUTCRFC3339(now),
 	}
 	return &getPullOutput{Body: resp}, nil
 }
