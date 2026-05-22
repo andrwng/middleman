@@ -165,3 +165,30 @@ describe("hide/unhide actions", () => {
     expect(store.getDetailError()).toBe("boom");
   });
 });
+
+describe("showHiddenThreads lifecycle", () => {
+  it("resets to off when the user navigates to another PR", async () => {
+    const events: PREvent[] = [];
+    const detail = buildDetailWith({ events, hiddenRootIds: [] });
+    const client = makeStubClient(detail);
+    const store = createDetailStore({ client });
+
+    await store.loadDetail("acme", "widget", 1);
+    store.setShowHiddenThreads(true);
+    expect(store.isShowingHiddenThreads()).toBe(true);
+
+    await store.loadDetail("acme", "widget", 2);
+    expect(store.isShowingHiddenThreads()).toBe(false);
+  });
+
+  it("also resets on clearDetail", async () => {
+    const events: PREvent[] = [];
+    const detail = buildDetailWith({ events, hiddenRootIds: [] });
+    const store = createDetailStore({ client: makeStubClient(detail) });
+
+    await store.loadDetail("acme", "widget", 1);
+    store.setShowHiddenThreads(true);
+    store.clearDetail();
+    expect(store.isShowingHiddenThreads()).toBe(false);
+  });
+});

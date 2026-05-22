@@ -375,6 +375,7 @@ export function createDetailStore(
     syncing = false;
     storeError = null;
     detailLoaded = false;
+    showHiddenThreads = false;
   }
 
   async function loadDetail(
@@ -389,6 +390,7 @@ export function createDetailStore(
     storeError = null;
     detail = null;
     detailLoaded = false;
+    showHiddenThreads = false;
     try {
       const { data, error: requestError } =
         await apiClient.GET(
