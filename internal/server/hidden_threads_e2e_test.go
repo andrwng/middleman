@@ -185,3 +185,116 @@ func TestHideThreadIs404ForUnknownPR(t *testing.T) {
 	require.NoError(err)
 	require.Equal(http.StatusNotFound, resp.StatusCode())
 }
+
+func TestUnhideThreadRemovesFromActiveSet(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srv, database := setupTestServer(t)
+	mrID := seedPR(t, database, "acme", "widget", 1)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	seedReviewComments(t, database, mrID, []seedReviewComment{
+		{ID: 5001, InReplyTo: 0, CreatedAt: now.Add(-time.Hour)},
+	})
+
+	client := setupTestClient(t, srv)
+
+	hideResp, err := client.HTTP.HideReviewThreadWithResponse(
+		context.Background(), "acme", "widget", 1,
+		generated.HideReviewThreadInputBody{RootCommentId: 5001},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusNoContent, hideResp.StatusCode())
+
+	unhideResp, err := client.HTTP.UnhideReviewThreadWithResponse(
+		context.Background(), "acme", "widget", 1, 5001,
+	)
+	require.NoError(err)
+	require.Equal(http.StatusNoContent, unhideResp.StatusCode())
+
+	getResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberWithResponse(
+		context.Background(), "acme", "widget", 1,
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, getResp.StatusCode())
+	require.NotNil(getResp.JSON200)
+	require.NotNil(getResp.JSON200.HiddenThreadRootIds)
+	assert.Empty(*getResp.JSON200.HiddenThreadRootIds)
+
+	// Idempotent — deleting again is a no-op 204.
+	unhideResp2, err := client.HTTP.UnhideReviewThreadWithResponse(
+		context.Background(), "acme", "widget", 1, 5001,
+	)
+	require.NoError(err)
+	assert.Equal(http.StatusNoContent, unhideResp2.StatusCode())
+}
+
+func TestHiddenThreadAutoUnhidesOnNewReply(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srv, database := setupTestServer(t)
+	mrID := seedPR(t, database, "acme", "widget", 1)
+
+	// Seed only the root, hide it, then add a later reply.
+	now := time.Now().UTC().Truncate(time.Second)
+	seedReviewComments(t, database, mrID, []seedReviewComment{
+		{ID: 7001, InReplyTo: 0, CreatedAt: now.Add(-2 * time.Hour)},
+	})
+
+	client := setupTestClient(t, srv)
+	hideResp, err := client.HTTP.HideReviewThreadWithResponse(
+		context.Background(), "acme", "widget", 1,
+		generated.HideReviewThreadInputBody{RootCommentId: 7001},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusNoContent, hideResp.StatusCode())
+
+	// Confirm it's hidden.
+	getResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberWithResponse(
+		context.Background(), "acme", "widget", 1,
+	)
+	require.NoError(err)
+	require.NotNil(getResp.JSON200.HiddenThreadRootIds)
+	require.ElementsMatch([]int64{7001}, *getResp.JSON200.HiddenThreadRootIds)
+
+	// Read back hidden_at and stamp the reply just after it so the
+	// reply unambiguously supersedes the hide. Using wall-clock-future
+	// timestamps would break the re-hide step below.
+	hiddenRows, err := database.ListHiddenReviewThreads(context.Background(), mrID)
+	require.NoError(err)
+	require.Len(hiddenRows, 1)
+	replyAt := hiddenRows[0].HiddenAt.Add(time.Millisecond)
+
+	// New reply arrives after the hide.
+	seedReviewComments(t, database, mrID, []seedReviewComment{
+		{ID: 7002, InReplyTo: 7001, CreatedAt: replyAt},
+	})
+
+	getResp2, err := client.HTTP.GetReposByOwnerByNamePullsByNumberWithResponse(
+		context.Background(), "acme", "widget", 1,
+	)
+	require.NoError(err)
+	require.NotNil(getResp2.JSON200.HiddenThreadRootIds)
+	assert.Empty(*getResp2.JSON200.HiddenThreadRootIds,
+		"reply newer than hidden_at should supersede the hide")
+
+	// Sleep long enough that the re-hide's time.Now() is strictly
+	// after the reply's CreatedAt; otherwise the predicate still
+	// treats the reply as superseding the (refreshed) hide.
+	time.Sleep(5 * time.Millisecond)
+
+	// Re-hide refreshes the timestamp; thread is hidden again.
+	hideResp2, err := client.HTTP.HideReviewThreadWithResponse(
+		context.Background(), "acme", "widget", 1,
+		generated.HideReviewThreadInputBody{RootCommentId: 7001},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusNoContent, hideResp2.StatusCode())
+
+	getResp3, err := client.HTTP.GetReposByOwnerByNamePullsByNumberWithResponse(
+		context.Background(), "acme", "widget", 1,
+	)
+	require.NoError(err)
+	require.NotNil(getResp3.JSON200.HiddenThreadRootIds)
+	assert.ElementsMatch([]int64{7001}, *getResp3.JSON200.HiddenThreadRootIds)
+}
