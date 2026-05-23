@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PR focus mode — proposed layout</title>
+<style>
+  :root {
+    --bg-page: #0e0f12;
+    --bg-surface: #1a1c20;
+    --bg-inset: #14161a;
+    --bg-card: #1a1c20;
+    --border-default: #2a2e34;
+    --border-muted: #232629;
+    --text-primary: #e6e7e9;
+    --text-secondary: #b2b6bc;
+    --text-muted: #7f848c;
+    --accent-blue: #4a90e2;
+  }
+  html, body { margin: 0; padding: 0; background: var(--bg-page); color: var(--text-primary);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+  .page { max-width: 1280px; margin: 0 auto; padding: 32px 24px 56px; }
+  h2 { margin: 0 0 4px; font-size: 22px; font-weight: 600; }
+  h3 { margin: 16px 0 8px; font-size: 14px; font-weight: 600; color: var(--text-secondary); }
+  .subtitle { color: var(--text-muted); font-size: 13px; margin: 0 0 24px; }
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .mockup { background: var(--bg-card); border: 1px solid var(--border-muted);
+    border-radius: 8px; overflow: hidden; }
+  .mockup-header { padding: 8px 12px; background: var(--bg-inset);
+    border-bottom: 1px solid var(--border-muted); font-size: 11px; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.04em; }
+  .mockup-body { padding: 12px; }
+  .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 16px; }
+  .card { background: var(--bg-card); border: 1px solid var(--border-muted); border-radius: 6px; }
+  .card-body { padding: 12px 14px; }
+  .card-body h3 { margin-top: 0; color: var(--text-primary); }
+  .card-body p { color: var(--text-secondary); font-size: 12px; line-height: 1.5; margin: 0; }
+
+  .pr-mockup { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.5; }
+  .pr-mockup .row { display: flex; gap: 4px; }
+  .pr-mockup .stack { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+  .pr-mockup .box { border: 1px solid var(--border-default); border-radius: 4px;
+    padding: 6px 8px; background: var(--bg-inset); color: var(--text-secondary); }
+  .pr-mockup .box--accent { border-color: var(--accent-blue); }
+  .pr-mockup .box--diff { min-height: 180px; background: var(--bg-surface); }
+  .pr-mockup .box--diff-tall { min-height: 280px; background: var(--bg-surface); }
+  .pr-mockup .strip {
+    border: 1px dashed var(--accent-blue); border-radius: 999px; padding: 4px 10px;
+    background: var(--bg-inset); font-size: 10px; color: var(--text-primary);
+    display: flex; gap: 8px; align-items: center;
+  }
+  .pr-mockup .strip .chev { color: var(--accent-blue); font-weight: 700; }
+  .pr-mockup .strip .pip { padding: 1px 6px; border-radius: 999px;
+    background: var(--bg-surface); cursor: pointer; }
+  .pr-mockup .strip .pip--muted { opacity: 0.55; }
+  .pr-mockup .sb { width: 30px; min-height: 320px;
+    border: 1px solid var(--border-default); border-radius: 4px;
+    display: flex; flex-direction: column; align-items: center;
+    padding-top: 6px; gap: 6px; background: var(--bg-inset); color: var(--text-muted); }
+  .pr-mockup .sb--wide { width: 130px; align-items: stretch; padding: 6px; }
+  .pr-mockup .sb--wide .label { font-size: 10px; color: var(--text-muted); margin-bottom: 4px; }
+  .pr-mockup .sb--wide .row-item { padding: 2px 4px; border-radius: 3px; }
+  .pr-mockup .sb--wide .row-item.active { background: var(--bg-surface); color: var(--text-primary); }
+  .pr-mockup .fl { width: 28px; border: 1px solid var(--border-default); border-radius: 4px;
+    background: var(--bg-inset); color: var(--text-muted);
+    display: flex; flex-direction: column; align-items: center; padding-top: 6px; gap: 4px; }
+  .pr-mockup .fl--wide { width: 180px; align-items: stretch; padding: 6px; }
+  .pr-mockup .fl--wide .nav-section { font-size: 9px; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.04em; margin-top: 4px; }
+  .pr-mockup .fl--wide .nav-row { padding: 1px 4px; color: var(--text-secondary); }
+  .pr-mockup .header-bar { background: var(--bg-surface); border: 1px solid var(--border-muted);
+    padding: 6px 10px; border-radius: 4px; color: var(--text-secondary);
+    display: flex; gap: 12px; align-items: center; }
+  .pr-mockup .tabs { padding: 4px 10px; color: var(--text-muted); }
+  .pr-mockup .anno { color: var(--accent-blue); font-size: 10px; margin-top: 6px; }
+  .pr-mockup .vrail { writing-mode: vertical-rl; transform: rotate(180deg);
+    text-orientation: mixed; font-size: 9px; color: var(--text-muted); align-self: center; }
+</style>
+</head>
+<body>
+<div class="page">
+<h2>PR focus mode — proposed layout</h2>
+<p class="subtitle">Left: today's PR detail. Right: focused state with everything collapsed and top sections consolidated into one bar.</p>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">Today — everything visible</div>
+    <div class="mockup-body pr-mockup">
+      <div class="header-bar">middleman · repo▾ · Activity│PRs│Issues · Sync</div>
+      <div class="row" style="margin-top: 4px;">
+        <div class="sb sb--wide">
+          <div class="label">acme/widget</div>
+          <div class="row-item active">#42 selective sync</div>
+          <div class="row-item">#41 audit logs</div>
+          <div class="row-item">#40 refactor</div>
+        </div>
+        <div class="stack">
+          <div class="tabs">Review · Activity</div>
+          <div class="row">
+            <div class="fl fl--wide">
+              <div class="nav-section">Commits (4)</div>
+              <div class="nav-row">refactor sync</div>
+              <div class="nav-row">add endpoint</div>
+              <div class="nav-section">Drafts (2)</div>
+              <div class="nav-row">app.go · L120</div>
+              <div class="nav-section">AI Q&amp;A (1)</div>
+              <div class="nav-section">Files (12)</div>
+              <div class="nav-row">app.go</div>
+              <div class="nav-row">sync.go</div>
+              <div class="nav-row">db.sql</div>
+              <div class="nav-row">…</div>
+            </div>
+            <div class="stack">
+              <div class="box">Cover banner — title, status, merge button</div>
+              <div class="box">Commit message — full body</div>
+              <div class="box">Patchset picker — patch 1 / 2 / 3</div>
+              <div class="box">Claude review brief — auto summary</div>
+              <div class="box box--diff">Diff view (cramped)</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mockup">
+    <div class="mockup-header">Focused — strip + collapsed rails</div>
+    <div class="mockup-body pr-mockup">
+      <div class="header-bar">middleman · repo▾ · Activity│PRs│Issues · Sync</div>
+      <div class="row" style="margin-top: 4px;">
+        <div class="sb"><div class="vrail">acme/widget · 12 PRs</div></div>
+        <div class="stack">
+          <div class="tabs">Review · Activity</div>
+          <div class="row">
+            <div class="fl"><div class="vrail">4c · 2d · 1q · 12f</div></div>
+            <div class="stack">
+              <div class="strip box--accent">
+                <span class="chev">›</span>
+                <span class="pip">cover</span>
+                <span class="pip pip--muted">message</span>
+                <span class="pip pip--muted">patchset 2/3</span>
+                <span class="pip pip--muted">brief</span>
+              </div>
+              <div class="box box--diff-tall">Diff view (full height)</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="anno">Collapsed nav rail labels its four sections: commits · drafts · questions · files. Strip pips remember their underlying collapsed state; ‹ expands the whole stack; click a pip to peek one section.</div>
+    </div>
+  </div>
+</div>
+
+<h3>Mechanics for each surface</h3>
+<div class="cards">
+  <div class="card"><div class="card-body">
+    <h3>Outer sidebar strip</h3>
+    <p>Already collapsible (persisted). Bug to fix: the resize handle is invisible at default width — move it to a clearly hoverable handle on the right edge.</p>
+  </div></div>
+  <div class="card"><div class="card-body">
+    <h3>Stack sidebar</h3>
+    <p>New: collapse-to-rail with a vertical label. Persists per-PR (or global — we'll decide).</p>
+  </div></div>
+  <div class="card"><div class="card-body">
+    <h3>Review nav (DiffSidebar)</h3>
+    <p>Holds commits + drafts + AI questions + file tree. New: resize handle (port the sidebar-strip pattern) and collapse-to-rail showing the four counts at a glance.</p>
+  </div></div>
+  <div class="card"><div class="card-body">
+    <h3>Top sections</h3>
+    <p>Today: ReviewCoverBanner + CommitMessageBanner persist their own collapsed state; Patchset + Brief don't. Fill the gap, then add a "consolidate" chevron at the top-right that folds them into the one-line strip above.</p>
+  </div></div>
+</div>
+
+</div>
+</body>
+</html>
