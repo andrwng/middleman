@@ -22,6 +22,16 @@
   let selectedNumber = $state<number | null>(null);
   let baseNumber = $state<number | null>(null);
 
+  let collapsed = $state(
+    typeof localStorage !== "undefined" && localStorage.getItem("pr-patchset-collapsed") === "true",
+  );
+  function toggleCollapsed(): void {
+    collapsed = !collapsed;
+    try {
+      localStorage.setItem("pr-patchset-collapsed", String(collapsed));
+    } catch { /* ignore */ }
+  }
+
   $effect(() => {
     void diff.loadPatchsets();
   });
@@ -119,49 +129,67 @@
   }
 </script>
 
-{#if patchsets && patchsets.length > 1}
-  <div class="ps-picker" role="toolbar" aria-label="Patchsets">
-    <span class="ps-picker__label">Patchsets</span>
-    <div class="ps-picker__chips">
-      {#each patchsets as p (p.id)}
-        {@const isSelected = p.number === selectedNumber}
-        {@const isBase = p.number === baseNumber}
-        <button
-          type="button"
-          class="ps-chip"
-          class:ps-chip--selected={isSelected}
-          class:ps-chip--base={isBase}
-          onclick={(e) => pick(p.number, e)}
-          title={
-            (isBase ? "Comparing FROM this patchset.\n" : "") +
-            (isSelected ? "Currently viewing this patchset.\n" : "") +
-            `Head: ${p.head_sha.slice(0, 7)}\n` +
-            `Observed: ${timeAgo(p.observed_at)}\n\n` +
-            "Click to view this patchset (compares with the previous one).\n" +
-            "Shift-click to set as compare base for an explicit pair."
-          }
-        >
-          PS{p.number}
-        </button>
-      {/each}
-    </div>
-    {#if baseNumber !== null}
-      <button
-        type="button"
-        class="ps-picker__reset"
-        onclick={clearBase}
-        title="Clear compare base"
-      >
-        compare PS{baseNumber} → PS{selectedNumber} ✕
-      </button>
-    {:else}
-      <span class="ps-picker__hint">shift-click a chip to compare</span>
-    {/if}
-  </div>
-{:else if loading}
+{#if loading}
   <div class="ps-picker ps-picker--idle">Loading patchsets…</div>
 {:else if errorMsg}
   <div class="ps-picker ps-picker--error">Failed to load patchsets: {errorMsg}</div>
+{:else if patchsets && patchsets.length > 1}
+  <div class="ps-picker" role="toolbar" aria-label="Patchsets">
+    <button
+      type="button"
+      class="ps-picker__chevron-btn"
+      onclick={toggleCollapsed}
+      aria-label={collapsed ? "Expand patchsets" : "Collapse patchsets"}
+      title={collapsed ? "Expand patchsets" : "Collapse patchsets"}
+    >
+      <svg
+        class="ps-picker__chevron"
+        class:ps-picker__chevron--collapsed={collapsed}
+        width="10" height="10" viewBox="0 0 10 10" fill="none"
+        stroke="currentColor" stroke-width="1.6"
+      >
+        <polyline points="2,3.5 5,6.5 8,3.5" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+    </button>
+    <span class="ps-picker__label">Patchsets</span>
+    {#if !collapsed}
+      <div class="ps-picker__chips">
+        {#each patchsets as p (p.id)}
+          {@const isSelected = p.number === selectedNumber}
+          {@const isBase = p.number === baseNumber}
+          <button
+            type="button"
+            class="ps-chip"
+            class:ps-chip--selected={isSelected}
+            class:ps-chip--base={isBase}
+            onclick={(e) => pick(p.number, e)}
+            title={
+              (isBase ? "Comparing FROM this patchset.\n" : "") +
+              (isSelected ? "Currently viewing this patchset.\n" : "") +
+              `Head: ${p.head_sha.slice(0, 7)}\n` +
+              `Observed: ${timeAgo(p.observed_at)}\n\n` +
+              "Click to view this patchset (compares with the previous one).\n" +
+              "Shift-click to set as compare base for an explicit pair."
+            }
+          >
+            PS{p.number}
+          </button>
+        {/each}
+      </div>
+      {#if baseNumber !== null}
+        <button
+          type="button"
+          class="ps-picker__reset"
+          onclick={clearBase}
+          title="Clear compare base"
+        >
+          compare PS{baseNumber} → PS{selectedNumber} ✕
+        </button>
+      {:else}
+        <span class="ps-picker__hint">shift-click a chip to compare</span>
+      {/if}
+    {/if}
+  </div>
 {/if}
 
 <style>
@@ -255,5 +283,31 @@
     font-size: 10px;
     color: var(--text-muted);
     font-style: italic;
+  }
+
+  .ps-picker__chevron-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: var(--radius-sm);
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+
+  .ps-picker__chevron-btn:hover {
+    background: var(--bg-surface-hover);
+    color: var(--text-primary);
+  }
+
+  .ps-picker__chevron {
+    transition: transform 0.15s;
+  }
+
+  .ps-picker__chevron--collapsed {
+    transform: rotate(-90deg);
   }
 </style>
