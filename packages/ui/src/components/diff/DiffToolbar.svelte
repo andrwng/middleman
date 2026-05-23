@@ -94,7 +94,9 @@
       Refresh
     </button>
     {#if diff.getRefreshError()}
-      <span class="refresh-error" title={diff.getRefreshError()}>sync failed</span>
+      <span class="refresh-error" title={diff.getRefreshError()}>
+        {diff.getRefreshError()}
+      </span>
     {/if}
   </div>
   {#if onReviewClick}
@@ -220,6 +222,11 @@
   }
 
   .refresh-error {
+    display: inline-block;
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     font-size: 10px;
     color: var(--accent-red);
     font-style: italic;
