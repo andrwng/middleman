@@ -20,15 +20,49 @@
     commits && commits.length > 0 ? commits[0]!.sha : "",
   );
 
-  let expanded = $state(false);
-  // Collapsed by default until the user opens it; auto-expand when a
-  // new brief finishes so the reviewer can see the result without
-  // clicking twice.
+  // Persisted collapse state — matches the pr-cover-collapsed /
+  // pr-commit-msg-collapsed precedent so reloads keep the user's
+  // chosen layout. The polarity is `collapsed` (inverse of the old
+  // in-memory `expanded`); a derived alias keeps the existing template
+  // markup working without a sweeping rename.
+  let collapsed = $state(
+    typeof localStorage !== "undefined" &&
+      localStorage.getItem("pr-brief-collapsed") === "true",
+  );
+  function toggleCollapsed(): void {
+    collapsed = !collapsed;
+    try {
+      localStorage.setItem("pr-brief-collapsed", String(collapsed));
+    } catch {
+      /* ignore */
+    }
+  }
+  // Backwards-compatible alias for the existing template — `expanded`
+  // is the inverse of `collapsed`. Avoids renaming every callsite.
+  const expanded = $derived(!collapsed);
+
+  // Auto-expand when a new brief finishes so the reviewer can see the
+  // result without clicking twice. We update the persisted collapsed
+  // state so the auto-open survives reload as well. The first effect
+  // run is treated as a seed — it records the initial status without
+  // expanding so a page that loads with an already-done brief honors
+  // the user's persisted collapsed preference.
   let lastSeenStatus = $state<string | null>(null);
+  let effectSeeded = $state(false);
   $effect(() => {
     const s = brief?.status ?? null;
-    if (s === "done" && lastSeenStatus !== "done") {
-      expanded = true;
+    if (!effectSeeded) {
+      lastSeenStatus = s;
+      effectSeeded = true;
+      return;
+    }
+    if (s === "done" && lastSeenStatus !== "done" && collapsed) {
+      collapsed = false;
+      try {
+        localStorage.setItem("pr-brief-collapsed", "false");
+      } catch {
+        /* ignore */
+      }
     }
     lastSeenStatus = s;
   });
@@ -160,7 +194,7 @@
       <button
         type="button"
         class="brief__toggle"
-        onclick={() => (expanded = !expanded)}
+        onclick={toggleCollapsed}
         title={expanded ? "Collapse brief" : "Expand brief"}
         aria-expanded={expanded}
       >
