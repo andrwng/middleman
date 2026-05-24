@@ -8,7 +8,38 @@
   // Reusable file-tree + commit-list panel for the diff Files view.
   // Mounted by PRListView and PullDetail as the left pane of the
   // Files tab.
-  const { diff, pulls } = getStores();
+  const { diff, pulls, ai } = getStores();
+
+  // Persisted collapse-to-rail state. When collapsed we render a
+  // narrow vertical rail with a tiny counts label; the outer
+  // <aside class="files-sidebar"> wrapper in PullDetail listens for
+  // the same key (and our custom pr-ui-state event) so its width
+  // shrinks in lockstep.
+  let collapsed = $state(
+    typeof localStorage !== "undefined" &&
+      localStorage.getItem("pr-review-nav-collapsed") === "true",
+  );
+  function toggleCollapsed(): void {
+    collapsed = !collapsed;
+    try {
+      localStorage.setItem("pr-review-nav-collapsed", String(collapsed));
+      if (typeof window !== "undefined") {
+        // The browser only fires 'storage' across tabs; dispatch a
+        // custom event so same-tab listeners (PullDetail's wrapper)
+        // can react immediately.
+        window.dispatchEvent(new CustomEvent("pr-ui-state"));
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // Counts for the rail label so the collapsed sidebar still gives
+  // a glanceable signal of "how much is in here right now".
+  const commitCount = $derived((diff.getCommits() ?? []).length);
+  const draftCount = $derived((diff.getDraft()?.comments ?? []).length);
+  const questionCount = $derived(ai.all().questions.length);
+  const fileCount = $derived(diff.getFileList()?.files?.length ?? 0);
 
   function filename(path: string): string {
     const i = path.lastIndexOf("/");
@@ -81,62 +112,88 @@
   });
 </script>
 
-<CommitListSection />
-<PendingCommentsSection />
-<QuestionsSection />
-<div class="diff-files">
-  {#if diff.isFileListLoading() && !diff.getFileList()}
-    <div class="diff-files-state diff-files-state--loading">Loading files</div>
-  {:else if filteredDiffFiles}
-    {#if showFileFilter}
-      <div class="diff-files-filter">
-        <input
-          type="text"
-          class="diff-files-filter__input"
-          placeholder="Filter files..."
-          bind:value={fileFilterText}
-        />
-      </div>
-    {/if}
-    {@const progress = diff.getFileReviewProgress()}
-    {#if progress && progress.total > 0}
-      <div class="diff-files-progress" title="Files viewed in the current diff scope">
-        <span class="diff-files-progress__count">{progress.reviewed}/{progress.total}</span>
-        <span class="diff-files-progress__label">viewed</span>
-      </div>
-    {/if}
-    {@const grouped = groupByDir(filteredDiffFiles)}
-    {#each grouped as group, gi (gi)}
-      {#if group.dir}
-        <div class="diff-dir-header">{group.dir}/</div>
+{#if collapsed}
+  <button
+    type="button"
+    class="diff-sidebar--rail"
+    onclick={toggleCollapsed}
+    aria-label="Expand review nav"
+    title="Expand review nav"
+  >
+    <span class="diff-sidebar__rail-label">
+      {commitCount}c &middot; {draftCount}d &middot; {questionCount}q &middot; {fileCount}f
+    </span>
+  </button>
+{:else}
+  <button
+    type="button"
+    class="diff-sidebar__collapse"
+    onclick={toggleCollapsed}
+    aria-label="Collapse review nav"
+    title="Collapse review nav"
+  >
+    <svg width="10" height="10" viewBox="0 0 10 10" fill="none"
+         stroke="currentColor" stroke-width="1.6">
+      <polyline points="6.5,2 3.5,5 6.5,8" stroke-linecap="round" stroke-linejoin="round" />
+    </svg>
+  </button>
+  <CommitListSection />
+  <PendingCommentsSection />
+  <QuestionsSection />
+  <div class="diff-files">
+    {#if diff.isFileListLoading() && !diff.getFileList()}
+      <div class="diff-files-state diff-files-state--loading">Loading files</div>
+    {:else if filteredDiffFiles}
+      {#if showFileFilter}
+        <div class="diff-files-filter">
+          <input
+            type="text"
+            class="diff-files-filter__input"
+            placeholder="Filter files..."
+            bind:value={fileFilterText}
+          />
+        </div>
       {/if}
-      {#each group.files as f (f.path)}
-        <button
-          class="diff-file-row"
-          class:diff-file-row--active={diff.getActiveFile() === f.path}
-          class:diff-file-row--nested={!!group.dir}
-          class:diff-file-row--viewed={diff.isFileReviewed(f.path)}
-          onclick={() => diff.requestScrollToFile(f.path)}
-          title={f.path}
-        >
-          <span class="diff-file-status" style="color: {statusColor(f.status)}">{statusLetter(f.status)}</span>
-          <span class="diff-file-name" class:diff-file-name--deleted={f.status === "deleted"}>{filename(f.path)}</span>
-          {#if f.is_binary}
-            <span class="diff-file-churn diff-file-churn--binary" title="Binary file">bin</span>
-          {:else}
-            <span class="diff-file-churn" title="+{f.additions} / -{f.deletions}">
-              <span class="diff-file-add">+{f.additions}</span>
-              <span class="diff-file-del">&minus;{f.deletions}</span>
-            </span>
-          {/if}
-          {#if diff.isFileReviewed(f.path)}
-            <span class="diff-file-check" aria-hidden="true">&check;</span>
-          {/if}
-        </button>
+      {@const progress = diff.getFileReviewProgress()}
+      {#if progress && progress.total > 0}
+        <div class="diff-files-progress" title="Files viewed in the current diff scope">
+          <span class="diff-files-progress__count">{progress.reviewed}/{progress.total}</span>
+          <span class="diff-files-progress__label">viewed</span>
+        </div>
+      {/if}
+      {@const grouped = groupByDir(filteredDiffFiles)}
+      {#each grouped as group, gi (gi)}
+        {#if group.dir}
+          <div class="diff-dir-header">{group.dir}/</div>
+        {/if}
+        {#each group.files as f (f.path)}
+          <button
+            class="diff-file-row"
+            class:diff-file-row--active={diff.getActiveFile() === f.path}
+            class:diff-file-row--nested={!!group.dir}
+            class:diff-file-row--viewed={diff.isFileReviewed(f.path)}
+            onclick={() => diff.requestScrollToFile(f.path)}
+            title={f.path}
+          >
+            <span class="diff-file-status" style="color: {statusColor(f.status)}">{statusLetter(f.status)}</span>
+            <span class="diff-file-name" class:diff-file-name--deleted={f.status === "deleted"}>{filename(f.path)}</span>
+            {#if f.is_binary}
+              <span class="diff-file-churn diff-file-churn--binary" title="Binary file">bin</span>
+            {:else}
+              <span class="diff-file-churn" title="+{f.additions} / -{f.deletions}">
+                <span class="diff-file-add">+{f.additions}</span>
+                <span class="diff-file-del">&minus;{f.deletions}</span>
+              </span>
+            {/if}
+            {#if diff.isFileReviewed(f.path)}
+              <span class="diff-file-check" aria-hidden="true">&check;</span>
+            {/if}
+          </button>
+        {/each}
       {/each}
-    {/each}
-  {/if}
-</div>
+    {/if}
+  </div>
+{/if}
 
 <style>
   .diff-files {
@@ -283,5 +340,53 @@
 
   .diff-file-del {
     color: var(--diff-del-text, var(--accent-red));
+  }
+
+  .diff-sidebar--rail {
+    width: 30px;
+    height: 100%;
+    min-height: 200px;
+    border: none;
+    background: var(--bg-inset);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 0;
+  }
+
+  .diff-sidebar--rail:hover {
+    background: var(--bg-surface-hover);
+    color: var(--text-primary);
+  }
+
+  .diff-sidebar__rail-label {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    text-orientation: mixed;
+    font-size: 10px;
+    white-space: nowrap;
+  }
+
+  .diff-sidebar__collapse {
+    position: sticky;
+    top: 0;
+    margin-left: auto;
+    margin-right: 4px;
+    margin-top: 4px;
+    width: 18px;
+    height: 18px;
+    border-radius: var(--radius-sm);
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    z-index: 1;
+  }
+
+  .diff-sidebar__collapse:hover {
+    background: var(--bg-surface-hover);
+    color: var(--text-primary);
   }
 </style>

@@ -45,6 +45,28 @@
   let activeTab = $state<"review" | "activity">("review");
   let ciExpanded = $state(false);
 
+  // Mirror the DiffSidebar collapse-to-rail state so the wrapper
+  // <aside class="files-sidebar"> can shrink to a 30px rail width
+  // when the inner sidebar collapses. DiffSidebar owns the storage
+  // write; we just observe via the cross-tab `storage` event and a
+  // same-tab custom `pr-ui-state` event it dispatches.
+  let reviewNavCollapsed = $state(
+    typeof localStorage !== "undefined" &&
+      localStorage.getItem("pr-review-nav-collapsed") === "true",
+  );
+  $effect(() => {
+    if (typeof window === "undefined") return;
+    const handler = (): void => {
+      reviewNavCollapsed = localStorage.getItem("pr-review-nav-collapsed") === "true";
+    };
+    window.addEventListener("storage", handler);
+    window.addEventListener("pr-ui-state", handler);
+    return () => {
+      window.removeEventListener("storage", handler);
+      window.removeEventListener("pr-ui-state", handler);
+    };
+  });
+
   $effect(() => {
     void detailStore.loadDetail(owner, name, number);
     detailStore.startDetailPolling(owner, name, number);
@@ -362,7 +384,7 @@
       {/if}
       {#if !hideTabs && activeTab === "review"}
         <div class="files-layout">
-          <aside class="files-sidebar">
+          <aside class="files-sidebar" class:files-sidebar--collapsed={reviewNavCollapsed}>
             <DiffSidebar />
           </aside>
           <div class="files-main">
@@ -864,6 +886,11 @@
     overflow-y: auto;
     display: flex;
     flex-direction: column;
+  }
+
+  .files-sidebar--collapsed {
+    width: 30px;
+    min-width: 30px;
   }
 
   .files-main {
