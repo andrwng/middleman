@@ -415,6 +415,12 @@ func (s *Server) registerAPI(api huma.API) {
 		Path:          "/sync",
 		DefaultStatus: http.StatusAccepted,
 	}, s.triggerSync)
+	huma.Register(api, huma.Operation{
+		OperationID:   "sync-repo",
+		Method:        http.MethodPost,
+		Path:          "/repos/{owner}/{name}/sync",
+		DefaultStatus: http.StatusAccepted,
+	}, s.syncRepo)
 	huma.Get(api, "/sync/status", s.syncStatus)
 	huma.Get(api, "/me", s.getViewer)
 	huma.Get(api, "/ai/sessions", s.getAISessions)
@@ -1925,11 +1931,6 @@ func (s *Server) listWorktrees(ctx context.Context, _ *struct{}) (*listWorktrees
 		})
 	}
 	return &listWorktreesOutput{Body: out}, nil
-}
-
-func (s *Server) triggerSync(ctx context.Context, _ *struct{}) (*acceptedOutput, error) {
-	s.syncer.TriggerRun(context.WithoutCancel(ctx))
-	return &acceptedOutput{Status: http.StatusAccepted}, nil
 }
 
 func (s *Server) syncStatus(_ context.Context, _ *struct{}) (*syncStatusOutput, error) {

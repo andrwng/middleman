@@ -1572,6 +1572,9 @@ type ClientInterface interface {
 
 	PostReposByOwnerByNameResolveFiles(ctx context.Context, owner string, name string, body PostReposByOwnerByNameResolveFilesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// SyncRepo request
+	SyncRepo(ctx context.Context, owner string, name string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListStacks request
 	ListStacks(ctx context.Context, params *ListStacksParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -2520,6 +2523,18 @@ func (c *Client) PostReposByOwnerByNameResolveFilesWithBody(ctx context.Context,
 
 func (c *Client) PostReposByOwnerByNameResolveFiles(ctx context.Context, owner string, name string, body PostReposByOwnerByNameResolveFilesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPostReposByOwnerByNameResolveFilesRequest(c.Server, owner, name, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) SyncRepo(ctx context.Context, owner string, name string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSyncRepoRequest(c.Server, owner, name)
 	if err != nil {
 		return nil, err
 	}
@@ -6164,6 +6179,47 @@ func NewPostReposByOwnerByNameResolveFilesRequestWithBody(server string, owner s
 	return req, nil
 }
 
+// NewSyncRepoRequest generates requests for SyncRepo
+func NewSyncRepoRequest(server string, owner string, name string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/sync", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListStacksRequest generates requests for ListStacks
 func NewListStacksRequest(server string, params *ListStacksParams) (*http.Request, error) {
 	var err error
@@ -6878,6 +6934,9 @@ type ClientWithResponsesInterface interface {
 	PostReposByOwnerByNameResolveFilesWithBodyWithResponse(ctx context.Context, owner string, name string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNameResolveFilesResponse, error)
 
 	PostReposByOwnerByNameResolveFilesWithResponse(ctx context.Context, owner string, name string, body PostReposByOwnerByNameResolveFilesJSONRequestBody, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNameResolveFilesResponse, error)
+
+	// SyncRepoWithResponse request
+	SyncRepoWithResponse(ctx context.Context, owner string, name string, reqEditors ...RequestEditorFn) (*SyncRepoResponse, error)
 
 	// ListStacksWithResponse request
 	ListStacksWithResponse(ctx context.Context, params *ListStacksParams, reqEditors ...RequestEditorFn) (*ListStacksResponse, error)
@@ -8249,6 +8308,28 @@ func (r PostReposByOwnerByNameResolveFilesResponse) StatusCode() int {
 	return 0
 }
 
+type SyncRepoResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r SyncRepoResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SyncRepoResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type ListStacksResponse struct {
 	Body                          []byte
 	HTTPResponse                  *http.Response
@@ -9208,6 +9289,15 @@ func (c *ClientWithResponses) PostReposByOwnerByNameResolveFilesWithResponse(ctx
 		return nil, err
 	}
 	return ParsePostReposByOwnerByNameResolveFilesResponse(rsp)
+}
+
+// SyncRepoWithResponse request returning *SyncRepoResponse
+func (c *ClientWithResponses) SyncRepoWithResponse(ctx context.Context, owner string, name string, reqEditors ...RequestEditorFn) (*SyncRepoResponse, error) {
+	rsp, err := c.SyncRepo(ctx, owner, name, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSyncRepoResponse(rsp)
 }
 
 // ListStacksWithResponse request returning *ListStacksResponse
@@ -11183,6 +11273,32 @@ func ParsePostReposByOwnerByNameResolveFilesResponse(rsp *http.Response) (*PostR
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSyncRepoResponse parses an HTTP response from a SyncRepoWithResponse call
+func ParseSyncRepoResponse(rsp *http.Response) (*SyncRepoResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SyncRepoResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest ErrorModel
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
