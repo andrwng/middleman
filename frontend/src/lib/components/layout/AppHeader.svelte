@@ -25,10 +25,21 @@
 
   async function handleSync(): Promise<void> {
     if (sync.getSyncState()?.running) return;
+    const selected = getGlobalRepo();
+    if (selected) {
+      const slash = selected.indexOf("/");
+      if (slash > 0 && slash < selected.length - 1) {
+        const owner = selected.slice(0, slash);
+        const name = selected.slice(slash + 1);
+        await sync.triggerSyncForRepo(owner, name);
+        return;
+      }
+    }
     await sync.triggerSync();
   }
 
   const syncing = $derived(sync.getSyncState()?.running ?? false);
+  const selectedRepo = $derived(getGlobalRepo());
 </script>
 
 <header class="app-header">
@@ -121,7 +132,13 @@
     <ClaudeSessionsButton />
     {#if !getUIConfig().hideSync}
       <button class="action-btn" onclick={handleSync} disabled={syncing}>
-        {syncing ? "Syncing..." : "Sync"}
+        {#if selectedRepo}
+          {syncing ? "Syncing" : "Sync"}
+          <span class="sync-scope">{selectedRepo}</span>
+          {syncing ? "..." : ""}
+        {:else}
+          {syncing ? "Syncing..." : "Sync"}
+        {/if}
       </button>
     {/if}
     {#if isThemeToggleVisible()}
@@ -235,6 +252,17 @@
   .action-btn:disabled {
     opacity: 0.6;
     cursor: not-allowed;
+  }
+
+  .sync-scope {
+    display: inline-block;
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: bottom;
+    margin-left: 4px;
+    font-weight: 600;
   }
 
   .icon-btn {

@@ -9,18 +9,29 @@ vi.mock("../../api/runtime.js", () => ({
   apiErrorMessage: () => "",
 }));
 
+const mockSync = {
+  getSyncState: vi.fn(() => null as { running: boolean } | null),
+  triggerSync: vi.fn(async () => {}),
+  triggerSyncForRepo: vi.fn(async (_owner: string, _name: string) => {}),
+};
+
+const mockAiSessions = {
+  getThreads: vi.fn(() => []),
+  getBriefs: vi.fn(() => ({})),
+  getTotalCount: vi.fn(() => 0),
+  getRunningCount: vi.fn(() => 0),
+  getError: vi.fn(() => null),
+  load: vi.fn(async () => {}),
+};
+
 // AppHeader reads sync state from the @middleman/ui context.
 vi.mock("@middleman/ui", () => ({
-  getStores: () => ({
-    sync: {
-      getSyncState: () => null,
-      triggerSync: () => Promise.resolve(),
-    },
-  }),
+  getStores: () => ({ sync: mockSync, aiSessions: mockAiSessions }),
 }));
 
 import AppHeader from "./AppHeader.svelte";
 import { initTheme, cleanupTheme } from "../../stores/theme.svelte.js";
+import { setGlobalRepo } from "../../stores/filter.svelte.js";
 
 type MediaChangeCallback = (event: MediaQueryListEvent) => void;
 
@@ -48,6 +59,9 @@ describe("AppHeader", () => {
     document.documentElement.classList.remove("dark");
     localStorage.clear();
     mockMatchMedia(false);
+    mockSync.getSyncState.mockReturnValue(null);
+    mockSync.triggerSync.mockClear();
+    mockSync.triggerSyncForRepo.mockClear();
   });
 
   afterEach(() => {
@@ -162,5 +176,46 @@ describe("AppHeader", () => {
     expect(document.documentElement.classList.contains("dark")).toBe(true);
 
     vi.restoreAllMocks();
+  });
+});
+
+describe("AppHeader scoped sync", () => {
+  beforeEach(() => {
+    document.documentElement.classList.remove("dark");
+    localStorage.clear();
+    mockMatchMedia(false);
+    mockSync.getSyncState.mockReturnValue(null);
+    mockSync.triggerSync.mockClear();
+    mockSync.triggerSyncForRepo.mockClear();
+  });
+
+  afterEach(() => {
+    cleanupTheme();
+    cleanup();
+    document.documentElement.classList.remove("dark");
+    localStorage.clear();
+    setGlobalRepo(undefined);
+  });
+
+  it("calls triggerSyncForRepo with the selected owner/name", async () => {
+    setGlobalRepo("acme/widget");
+    initTheme();
+    render(AppHeader);
+
+    await fireEvent.click(screen.getByRole("button", { name: /Sync/i }));
+
+    expect(mockSync.triggerSyncForRepo).toHaveBeenCalledWith("acme", "widget");
+    expect(mockSync.triggerSync).not.toHaveBeenCalled();
+  });
+
+  it("falls back to full sync when no repo is selected", async () => {
+    setGlobalRepo(undefined);
+    initTheme();
+    render(AppHeader);
+
+    await fireEvent.click(screen.getByRole("button", { name: /Sync/i }));
+
+    expect(mockSync.triggerSync).toHaveBeenCalled();
+    expect(mockSync.triggerSyncForRepo).not.toHaveBeenCalled();
   });
 });
