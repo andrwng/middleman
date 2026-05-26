@@ -11,15 +11,26 @@
     pr: MergeRequest;
     owner: string;
     name: string;
+    // Render the body regardless of the persisted `collapsed` flag.
+    // Used by the consolidated top-sections "peek" flow so a previously
+    // collapsed banner still reveals its body when the user clicks the
+    // pip. Defaults to false so stacked banners honor localStorage.
+    forceExpanded?: boolean;
   }
 
-  const { pr, owner, name }: Props = $props();
+  const { pr, owner, name, forceExpanded = false }: Props = $props();
 
   // Cover-letter collapse state, persisted so the reviewer's preference
   // survives tab/PR switches.
   let collapsed = $state(
     typeof localStorage !== "undefined" && localStorage.getItem("pr-cover-collapsed") === "true",
   );
+  // Effective collapsed state: persisted collapse is overridden by the
+  // peek-flow's forceExpanded prop. The chevron rotation, the wrapper
+  // modifier, and the title text all must reflect what's actually
+  // visible — otherwise a peeked banner shows a "collapsed" chevron
+  // pointing the wrong way over an expanded body.
+  const effectivelyCollapsed = $derived(collapsed && !forceExpanded);
   function toggle(): void {
     collapsed = !collapsed;
     try {
@@ -28,16 +39,16 @@
   }
 </script>
 
-<div class="review-cover" class:review-cover--collapsed={collapsed}>
+<div class="review-cover" class:review-cover--collapsed={effectivelyCollapsed}>
   <button
     type="button"
     class="review-cover__toggle"
     onclick={toggle}
-    title={collapsed ? "Expand description" : "Collapse description"}
+    title={effectivelyCollapsed ? "Expand description" : "Collapse description"}
   >
     <svg
       class="review-cover__chevron"
-      class:review-cover__chevron--collapsed={collapsed}
+      class:review-cover__chevron--collapsed={effectivelyCollapsed}
       width="10" height="10" viewBox="0 0 10 10" fill="none"
       stroke="currentColor" stroke-width="1.6"
     >
@@ -50,7 +61,7 @@
       <span class="review-cover__num">#{pr.Number}</span>
     </span>
   </button>
-  {#if !collapsed}
+  {#if !collapsed || forceExpanded}
     {#if pr.Body}
       <div class="review-cover__body markdown-body">
         {@html renderMarkdown(pr.Body, { owner, name })}

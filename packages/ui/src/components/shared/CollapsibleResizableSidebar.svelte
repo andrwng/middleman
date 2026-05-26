@@ -17,6 +17,7 @@
     maxSidebarWidth?: number;
     onSidebarResize?: ((width: number) => void) | undefined;
     onExpand?: (() => void) | undefined;
+    onCollapse?: (() => void) | undefined;
   }
 
   let {
@@ -35,6 +36,7 @@
     maxSidebarWidth = 600,
     onSidebarResize = undefined,
     onExpand = undefined,
+    onCollapse = undefined,
   }: Props = $props();
 
   // svelte-ignore state_referenced_locally
@@ -80,6 +82,30 @@
       style={`width: ${sidebarOnly || !hasMain ? "100%" : `${currentWidth}px`}`}
     >
       {@render sidebar()}
+      {#if onCollapse && !sidebarOnly && hasMain}
+        <button
+          type="button"
+          class="sidebar-collapse-chevron"
+          onclick={onCollapse}
+          aria-label="Collapse sidebar"
+          title="Collapse sidebar"
+        >
+          <svg
+            width="10"
+            height="10"
+            viewBox="0 0 10 10"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+          >
+            <polyline
+              points="6.5,2 3.5,5 6.5,8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </button>
+      {/if}
     </aside>
     {#if !sidebarOnly && hasMain}
       <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -130,6 +156,7 @@
   }
 
   .sidebar {
+    position: relative;
     width: 340px;
     flex-shrink: 0;
     background: var(--bg-surface);
@@ -137,6 +164,29 @@
     overflow: hidden;
     display: flex;
     flex-direction: column;
+  }
+
+  .sidebar-collapse-chevron {
+    position: absolute;
+    right: -10px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 18px;
+    height: 32px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-default);
+    background: var(--bg-surface);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+  }
+
+  .sidebar-collapse-chevron:hover {
+    color: var(--text-primary);
+    background: var(--bg-surface-hover);
   }
 
   .sidebar--collapsed {

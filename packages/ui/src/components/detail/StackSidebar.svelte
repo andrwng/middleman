@@ -39,6 +39,23 @@
   let visible = $state(false);
   let requestSeq = 0;
 
+  // Persisted collapse state — when collapsed the sidebar renders as a
+  // narrow rail with a rotated label, freeing horizontal space for the
+  // diff. Matches the pr-cover-collapsed / pr-brief-collapsed precedent
+  // so reloads keep the user's chosen layout.
+  let collapsed = $state(
+    typeof localStorage !== "undefined" &&
+      localStorage.getItem("pr-stack-sidebar-collapsed") === "true",
+  );
+  function toggleCollapsed(): void {
+    collapsed = !collapsed;
+    try {
+      localStorage.setItem("pr-stack-sidebar-collapsed", String(collapsed));
+    } catch {
+      /* ignore */
+    }
+  }
+
   function fetchStack(o: string, n: string, num: number): void {
     const seq = ++requestSeq;
     client.GET("/repos/{owner}/{name}/pulls/{number}/stack", {
@@ -121,63 +138,92 @@
   }
 </script>
 
-{#if visible && data && data.members}
-  <aside class="stack-sidebar">
-    <div class="stack-header">STACK &middot; {data.stack_name}</div>
+{#if visible && data}
+  {#if collapsed}
+    <button
+      type="button"
+      class="stack-sidebar stack-sidebar--rail"
+      onclick={toggleCollapsed}
+      aria-label="Expand stack sidebar"
+      title="Expand stack: {data.stack_name} ({data.size} PRs)"
+    >
+      <span class="stack-sidebar__rail-label">Stack: {data.stack_name} &middot; {data.size} PRs</span>
+    </button>
+  {:else}
+    <aside class="stack-sidebar">
+      <button
+        type="button"
+        class="stack-sidebar__collapse"
+        onclick={toggleCollapsed}
+        aria-label="Collapse stack sidebar"
+        title="Collapse stack sidebar"
+      >
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none"
+             stroke="currentColor" stroke-width="1.6">
+          <polyline points="6.5,2 3.5,5 6.5,8" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </button>
+      <div class="stack-header">STACK &middot; {data.stack_name}</div>
 
-    <div class="stack-chain">
-      {#each data.members as member, i}
-        {@const isCurrent = member.number === number}
-        {@const outline = isOutline(member)}
-        {@const ci = ciLabel(member)}
-        {@const review = reviewLabel(member)}
-        {@const isLast = i === data.members.length - 1}
-        <div class="chain-row">
-          <div class="chain-rail">
-            <span
-              class="chain-dot"
-              style:background={isCurrent ? "var(--accent-purple)" : outline ? "transparent" : getDotColor(member)}
-              style:border-color={isCurrent ? "var(--accent-purple)" : outline ? "#30363d" : "transparent"}
-              style:width={isCurrent ? "10px" : "8px"}
-              style:height={isCurrent ? "10px" : "8px"}
-            ></span>
-            {#if !isLast}
-              <span class="chain-line"></span>
-            {/if}
-          </div>
-          <div
-            class="chain-member"
-            class:chain-member--current={isCurrent}
-            class:chain-member--dimmed={member.blocked_by != null && !isCurrent}
-          >
-            {#if isCurrent}
-              <div class="current-label">You are here</div>
-            {/if}
-            <button class="member-link" onclick={() => navigate(`/pulls/${owner}/${name}/${member.number}`)}>
-              #{member.number} {member.title}
-            </button>
-            {#if ci || review}
-              <div class="member-badges">
-                {#if ci}<span style:color={ci.color}>{ci.text}</span>{/if}
-                {#if review}<span style:color={review.color}>{review.text}</span>{/if}
+      {#if data.members && data.members.length > 0}
+        <div class="stack-chain">
+          {#each data.members as member, i}
+            {@const isCurrent = member.number === number}
+            {@const outline = isOutline(member)}
+            {@const ci = ciLabel(member)}
+            {@const review = reviewLabel(member)}
+            {@const isLast = i === data.members.length - 1}
+            <div class="chain-row">
+              <div class="chain-rail">
+                <span
+                  class="chain-dot"
+                  style:background={isCurrent ? "var(--accent-purple)" : outline ? "transparent" : getDotColor(member)}
+                  style:border-color={isCurrent ? "var(--accent-purple)" : outline ? "#30363d" : "transparent"}
+                  style:width={isCurrent ? "10px" : "8px"}
+                  style:height={isCurrent ? "10px" : "8px"}
+                ></span>
+                {#if !isLast}
+                  <span class="chain-line"></span>
+                {/if}
               </div>
-            {/if}
-            {#if isBaseReady(member, i)}
-              <div class="ready-label">Ready to merge &rarr; {member.base_branch || "base"}</div>
-            {/if}
-            {#if member.blocked_by != null}
-              <div class="blocked-label">blocked by #{member.blocked_by}</div>
-            {/if}
-          </div>
+              <div
+                class="chain-member"
+                class:chain-member--current={isCurrent}
+                class:chain-member--dimmed={member.blocked_by != null && !isCurrent}
+              >
+                {#if isCurrent}
+                  <div class="current-label">You are here</div>
+                {/if}
+                <button class="member-link" onclick={() => navigate(`/pulls/${owner}/${name}/${member.number}`)}>
+                  #{member.number} {member.title}
+                </button>
+                {#if ci || review}
+                  <div class="member-badges">
+                    {#if ci}<span style:color={ci.color}>{ci.text}</span>{/if}
+                    {#if review}<span style:color={review.color}>{review.text}</span>{/if}
+                  </div>
+                {/if}
+                {#if isBaseReady(member, i)}
+                  <div class="ready-label">Ready to merge &rarr; {member.base_branch || "base"}</div>
+                {/if}
+                {#if member.blocked_by != null}
+                  <div class="blocked-label">blocked by #{member.blocked_by}</div>
+                {/if}
+              </div>
+            </div>
+          {/each}
         </div>
-      {/each}
-    </div>
+      {:else}
+        <div class="stack-chain stack-chain--empty">No stack members</div>
+      {/if}
 
-  </aside>
+    </aside>
+  {/if}
 {/if}
 
 <style>
   .stack-sidebar {
+    position: relative;
     width: 200px;
     flex-shrink: 0;
     border-left: 1px solid var(--border-default);
@@ -186,6 +232,51 @@
     overflow-y: auto;
     display: flex;
     flex-direction: column;
+  }
+
+  .stack-sidebar--rail {
+    width: 30px;
+    min-height: 200px;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--bg-inset);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 0;
+  }
+
+  .stack-sidebar--rail:hover {
+    background: var(--bg-surface-hover);
+    color: var(--text-primary);
+  }
+
+  .stack-sidebar__rail-label {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    text-orientation: mixed;
+    font-size: 10px;
+    white-space: nowrap;
+  }
+
+  .stack-sidebar__collapse {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 18px;
+    height: 18px;
+    border-radius: var(--radius-sm);
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+
+  .stack-sidebar__collapse:hover {
+    background: var(--bg-surface-hover);
+    color: var(--text-primary);
   }
 
   .stack-header {
@@ -200,6 +291,13 @@
   .stack-chain {
     display: flex;
     flex-direction: column;
+  }
+
+  .stack-chain--empty {
+    padding: 12px;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-style: italic;
   }
 
   .chain-row {

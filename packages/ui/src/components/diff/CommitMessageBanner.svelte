@@ -15,9 +15,14 @@
     owner: string;
     name: string;
     number: number;
+    // Render the body regardless of the persisted `collapsed` flag.
+    // Used by the consolidated top-sections "peek" flow so a previously
+    // collapsed banner still reveals its body when the user clicks the
+    // pip. Defaults to false so stacked banners honor localStorage.
+    forceExpanded?: boolean;
   }
 
-  const { owner, name, number }: Props = $props();
+  const { owner, name, number, forceExpanded = false }: Props = $props();
 
   const { diff: diffStore, commitAnalysis: caStore } = getStores();
 
@@ -32,6 +37,11 @@
     typeof localStorage !== "undefined" &&
       localStorage.getItem("pr-commit-msg-collapsed") === "true",
   );
+  // Effective collapsed state: persisted collapse is overridden by the
+  // peek-flow's forceExpanded prop. The chevron rotation and title
+  // text must reflect what's actually visible — otherwise a peeked
+  // banner shows a "collapsed" chevron over an expanded body.
+  const effectivelyCollapsed = $derived(collapsed && !forceExpanded);
   function toggle(): void {
     collapsed = !collapsed;
     try {
@@ -72,16 +82,16 @@
 </script>
 
 {#if visible && activeCommit && commitIndex}
-  <div class="commit-banner" class:commit-banner--collapsed={collapsed}>
+  <div class="commit-banner" class:commit-banner--collapsed={effectivelyCollapsed}>
     <button
       type="button"
       class="commit-banner__toggle"
       onclick={toggle}
-      title={collapsed ? "Expand commit message" : "Collapse commit message"}
+      title={effectivelyCollapsed ? "Expand commit message" : "Collapse commit message"}
     >
       <svg
         class="commit-banner__chevron"
-        class:commit-banner__chevron--collapsed={collapsed}
+        class:commit-banner__chevron--collapsed={effectivelyCollapsed}
         width="10" height="10" viewBox="0 0 10 10" fill="none"
         stroke="currentColor" stroke-width="1.6"
       >
@@ -100,10 +110,10 @@
       <span class="commit-banner__subject">{activeCommit.message}</span>
       <span class="commit-banner__author">{activeCommit.author_name}</span>
     </button>
-    {#if !collapsed && activeCommit.body}
+    {#if (!collapsed || forceExpanded) && activeCommit.body}
       <div class="commit-banner__body">{activeCommit.body}</div>
     {/if}
-    {#if !collapsed}
+    {#if !collapsed || forceExpanded}
       <div class="commit-banner__analysis">
         <div class="commit-banner__analysis-controls">
           {#if !analysis && !analyzing}

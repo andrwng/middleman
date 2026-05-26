@@ -15,14 +15,7 @@
   import ReadyForReviewButton from "./ReadyForReviewButton.svelte";
   import ActionButton from "../shared/ActionButton.svelte";
   import GitHubLabels from "../shared/GitHubLabels.svelte";
-  import DiffView from "../diff/DiffView.svelte";
-  import DiffSidebar from "../diff/DiffSidebar.svelte";
   import CIStatus from "./CIStatus.svelte";
-  import ReviewCoverBanner from "./ReviewCoverBanner.svelte";
-  import ReviewBriefCard from "./ReviewBriefCard.svelte";
-  import PRNotesPanel from "./PRNotesPanel.svelte";
-  import PatchsetPicker from "../diff/PatchsetPicker.svelte";
-  import CommitMessageBanner from "../diff/CommitMessageBanner.svelte";
 
   const { detail: detailStore, pulls, activity } = getStores();
   const client = getClient();
@@ -360,22 +353,7 @@
           </button>
         </div>
       {/if}
-      {#if !hideTabs && activeTab === "review"}
-        <div class="files-layout">
-          <aside class="files-sidebar">
-            <DiffSidebar />
-          </aside>
-          <div class="files-main">
-            <ReviewCoverBanner {pr} {owner} {name} />
-            <CommitMessageBanner {owner} {name} {number} />
-            <PatchsetPicker />
-            <ReviewBriefCard {owner} {name} {number} />
-            <DiffView {owner} {name} {number} />
-            <PRNotesPanel />
-          </div>
-        </div>
-      {:else}
-        <div class="pull-detail">
+      <div class="pull-detail">
       {#if detailStore.isStaleRefreshing()}
         <div class="refresh-banner">
           <span class="sync-dot"></span>
@@ -819,7 +797,6 @@
         {/if}
       </div>
         </div>
-      {/if}
     </div>
   {/if}
 {/if}
@@ -847,53 +824,6 @@
     flex: 1;
     min-height: 0;
     overflow: hidden;
-  }
-
-  .files-layout {
-    display: flex;
-    flex: 1;
-    min-height: 0;
-    overflow: hidden;
-  }
-
-  .files-sidebar {
-    width: 280px;
-    flex-shrink: 0;
-    border-right: 1px solid var(--border-default);
-    background: var(--bg-surface);
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .files-main {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-
-
-  /* On narrow viewports the fixed 280px sidebar would crush the
-     diff pane. Stack the sidebar above the diff with a capped
-     height so the diff stays readable. */
-  @media (max-width: 720px) {
-    .files-layout {
-      flex-direction: column;
-    }
-
-    .files-sidebar {
-      width: 100%;
-      max-height: 35vh;
-      border-right: none;
-      border-bottom: 1px solid var(--border-default);
-    }
-
-    .files-main {
-      flex: 1;
-      min-height: 0;
-    }
   }
 
   .pull-detail {

@@ -8,14 +8,8 @@
     from "../components/detail/PullDetail.svelte";
   import WorktreeConversation
     from "../components/detail/WorktreeConversation.svelte";
-  import DiffView from "../components/diff/DiffView.svelte";
-  import DiffSidebar from "../components/diff/DiffSidebar.svelte";
-  import ReviewCoverBanner from "../components/detail/ReviewCoverBanner.svelte";
+  import ReviewSurface from "../components/detail/ReviewSurface.svelte";
   import { isLocalSource } from "../utils/sources.js";
-  import ReviewBriefCard from "../components/detail/ReviewBriefCard.svelte";
-  import PRNotesPanel from "../components/detail/PRNotesPanel.svelte";
-  import PatchsetPicker from "../components/diff/PatchsetPicker.svelte";
-  import CommitMessageBanner from "../components/diff/CommitMessageBanner.svelte";
   import StackSidebar
     from "../components/detail/StackSidebar.svelte";
 
@@ -82,6 +76,7 @@
   {onSidebarResize}
   showCollapsedStrip={isSidebarToggleEnabled()}
   onExpand={toggleSidebar}
+  onCollapse={toggleSidebar}
   mainEmpty={selectedPR === null}
 >
   {#snippet sidebar()}
@@ -112,37 +107,12 @@
     </div>
     {#if detailTab === "files"}
       {#key `${selectedPR.owner}/${selectedPR.name}/${selectedPR.number}`}
-        <div class="review-layout">
-          <aside class="review-sidebar">
-            <DiffSidebar />
-          </aside>
-          <div class="review-main">
-            {#if selectedPRDetail}
-              <ReviewCoverBanner
-                pr={selectedPRDetail.merge_request}
-                owner={selectedPR.owner}
-                name={selectedPR.name}
-              />
-            {/if}
-            <CommitMessageBanner
-              owner={selectedPR.owner}
-              name={selectedPR.name}
-              number={selectedPR.number}
-            />
-            <PatchsetPicker />
-            <ReviewBriefCard
-              owner={selectedPR.owner}
-              name={selectedPR.name}
-              number={selectedPR.number}
-            />
-            <PRNotesPanel />
-            <DiffView
-              owner={selectedPR.owner}
-              name={selectedPR.name}
-              number={selectedPR.number}
-            />
-          </div>
-        </div>
+        <ReviewSurface
+          owner={selectedPR.owner}
+          name={selectedPR.name}
+          number={selectedPR.number}
+          pr={selectedPRDetail?.merge_request ?? null}
+        />
       {/key}
     {:else if isLocalPR}
       <WorktreeConversation
@@ -185,47 +155,6 @@
     border-bottom: 1px solid var(--border-default);
     background: var(--bg-surface);
     flex-shrink: 0;
-  }
-
-  .review-layout {
-    display: flex;
-    flex: 1;
-    min-height: 0;
-    overflow: hidden;
-  }
-
-  .review-sidebar {
-    width: 280px;
-    flex-shrink: 0;
-    border-right: 1px solid var(--border-default);
-    background: var(--bg-surface);
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .review-main {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-
-  @media (max-width: 720px) {
-    .review-layout {
-      flex-direction: column;
-    }
-    .review-sidebar {
-      width: 100%;
-      max-height: 35vh;
-      border-right: none;
-      border-bottom: 1px solid var(--border-default);
-    }
-    .review-main {
-      flex: 1;
-      min-height: 0;
-    }
   }
 
   .placeholder-content {

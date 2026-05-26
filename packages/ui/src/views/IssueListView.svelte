@@ -36,6 +36,7 @@
   {onSidebarResize}
   showCollapsedStrip={isSidebarToggleEnabled()}
   onExpand={toggleSidebar}
+  onCollapse={toggleSidebar}
   mainEmpty={selectedIssue === null}
 >
   {#snippet sidebar()}
