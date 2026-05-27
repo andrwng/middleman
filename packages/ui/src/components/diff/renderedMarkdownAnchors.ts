@@ -72,6 +72,25 @@ function nearestAnchor(node: Node | null, root: HTMLElement): HTMLElement | null
   return null;
 }
 
+// anchorOverlapsBlock reports whether an inclusive anchor range
+// [anchorStart, anchorEnd] overlaps a block whose source-line range
+// is stored as half-open [blockStart, blockEnd).
+//
+// The half-open convention matches blockRangeByIdx in
+// RenderedMarkdownView — blockEnd is one past the last source line
+// the block contains, so blocks abut without overlapping at their
+// boundaries. Without this distinction, an anchor on a boundary
+// line would match both the preceding and the succeeding block and
+// the same thread would render twice.
+export function anchorOverlapsBlock(
+  blockStart: number,
+  blockEnd: number,
+  anchorStart: number,
+  anchorEnd: number,
+): boolean {
+  return anchorStart < blockEnd && anchorEnd >= blockStart;
+}
+
 export function computeRangeFromSelection(
   root: HTMLElement,
   sel: Selection | null,

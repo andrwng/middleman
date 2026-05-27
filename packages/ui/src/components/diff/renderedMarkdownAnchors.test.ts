@@ -1,5 +1,45 @@
 import { describe, it, expect } from "vitest";
-import { wrapProseBlock, wrapCodeBlock, computeRangeFromSelection } from "./renderedMarkdownAnchors";
+import {
+  wrapProseBlock,
+  wrapCodeBlock,
+  computeRangeFromSelection,
+  anchorOverlapsBlock,
+} from "./renderedMarkdownAnchors";
+
+describe("anchorOverlapsBlock", () => {
+  // blockRangeByIdx in RenderedMarkdownView stores half-open ranges
+  // [blockStart, blockEnd) so a line that's the boundary between two
+  // adjacent blocks belongs to exactly one. The anchor is inclusive
+  // on both ends; for single-line anchors anchorStart === anchorEnd.
+
+  it("single-line anchor inside a block matches", () => {
+    expect(anchorOverlapsBlock(5, 8, 6, 6)).toBe(true);
+  });
+
+  it("single-line anchor at the block's start matches", () => {
+    expect(anchorOverlapsBlock(5, 8, 5, 5)).toBe(true);
+  });
+
+  it("single-line anchor at the block's exclusive end does NOT match", () => {
+    // Regression: this case used to match both the preceding block
+    // (whose exclusive end == this line) AND the next block (whose
+    // start == this line), which is what caused threads to render
+    // twice in the rendered markdown view.
+    expect(anchorOverlapsBlock(5, 8, 8, 8)).toBe(false);
+  });
+
+  it("single-line anchor before the block does not match", () => {
+    expect(anchorOverlapsBlock(5, 8, 4, 4)).toBe(false);
+  });
+
+  it("single-line anchor after the block does not match", () => {
+    expect(anchorOverlapsBlock(5, 8, 9, 9)).toBe(false);
+  });
+
+  it("multi-line anchor that overlaps the block matches", () => {
+    expect(anchorOverlapsBlock(5, 8, 3, 6)).toBe(true);
+  });
+});
 
 describe("wrapProseBlock", () => {
   it("wraps each source line in an anchor span using the provided inline parser", () => {

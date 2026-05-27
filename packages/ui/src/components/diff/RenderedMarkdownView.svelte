@@ -4,6 +4,7 @@
   import {
     wrapProseBlock,
     wrapCodeBlock,
+    anchorOverlapsBlock,
     type AnchorSide,
     type AnchorRange,
   } from "./renderedMarkdownAnchors";
@@ -150,25 +151,30 @@
     | { kind: "published"; key: string; comment: (typeof publishedForFile)[number] }
     | { kind: "ai"; key: string; thread: (typeof aiThreadsForFile)[number] };
 
+  // start..end is the block's half-open source-line range
+  // [start, end) — matches blockRangeByIdx and blockOverlapsChanged.
+  // Using inclusive end here would double-count anchors that fall on
+  // the boundary between two adjacent blocks; that's the
+  // anchorOverlapsBlock helper's job.
   function cardsForRange(start: number, end: number): CardSpec[] {
     const out: CardSpec[] = [];
     for (const c of drafts) {
       const cStart = c.startLine ?? c.line;
-      if (c.side === renderedSide && cStart <= end && c.line >= start) {
+      if (c.side === renderedSide && anchorOverlapsBlock(start, end, cStart, c.line)) {
         out.push({ kind: "draft", key: `d:${c.id ?? `${c.line}:${c.side}`}`, comment: c });
       }
     }
     for (const c of publishedForFile) {
       if (c.line <= 0) continue;
       const cStart = (c as { startLine?: number }).startLine ?? c.line;
-      if (c.side === renderedSide && cStart <= end && c.line >= start) {
+      if (c.side === renderedSide && anchorOverlapsBlock(start, end, cStart, c.line)) {
         out.push({ kind: "published", key: `p:${c.id}`, comment: c });
       }
     }
     for (const t of aiThreadsForFile) {
       const tStart = t.hunk_start_line ?? t.anchor_line;
       const tEnd = t.hunk_end_line ?? t.anchor_line;
-      if (t.anchor_side === renderedSide && tStart <= end && tEnd >= start) {
+      if (t.anchor_side === renderedSide && anchorOverlapsBlock(start, end, tStart, tEnd)) {
         out.push({ kind: "ai", key: `a:${t.id}`, thread: t });
       }
     }
