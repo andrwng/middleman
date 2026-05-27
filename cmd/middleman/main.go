@@ -259,7 +259,13 @@ func run(configPath string) error {
 		syscall.SIGTERM,
 	)
 
-	syncer.SetOnSyncCompleted(stacks.SyncCompletedHook(ctx, database, nil))
+	{
+		stackHook := stacks.SyncCompletedHook(ctx, database, nil)
+		syncer.SetOnSyncCompleted(func(results []ghclient.RepoSyncResult) {
+			stackHook(results)
+			srv.AutoCloseAIThreadsForClosedPRs()
+		})
+	}
 	syncer.Start(ctx)
 	defer syncer.Stop()
 	defer stop()

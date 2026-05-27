@@ -351,6 +351,43 @@ func (d *DB) UpdateAIThreadSession(ctx context.Context, id int64, sessionID, wor
 	return err
 }
 
+// AIThreadCloseTarget identifies an AI thread that should be
+// auto-closed because its parent PR is no longer open. Returned by
+// ListAIThreadsToAutoClose for the reconciler that runs after each
+// sync.
+type AIThreadCloseTarget struct {
+	ID   int64
+	MRID int64
+}
+
+// ListAIThreadsToAutoClose returns every active AI thread whose
+// parent merge request is in a non-open state ('closed' or 'merged').
+// Used by the post-sync reconciler to enumerate threads that should
+// be closed because their PR is no longer open. Idempotent — already-
+// closed threads are filtered out by the t.status='active' clause.
+func (d *DB) ListAIThreadsToAutoClose(ctx context.Context) ([]AIThreadCloseTarget, error) {
+	rows, err := d.ro.QueryContext(ctx, `
+		SELECT t.id, t.mr_id
+		  FROM middleman_ai_threads t
+		  JOIN middleman_merge_requests m ON m.id = t.mr_id
+		 WHERE t.status = 'active'
+		   AND m.state IN ('closed', 'merged')
+		 ORDER BY t.id ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("list threads to auto-close: %w", err)
+	}
+	defer rows.Close()
+	var out []AIThreadCloseTarget
+	for rows.Next() {
+		var t AIThreadCloseTarget
+		if err := rows.Scan(&t.ID, &t.MRID); err != nil {
+			return nil, fmt.Errorf("scan auto-close target: %w", err)
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 func (d *DB) CloseAIThread(ctx context.Context, id int64) error {
 	_, err := d.rw.ExecContext(ctx,
 		`UPDATE middleman_ai_threads

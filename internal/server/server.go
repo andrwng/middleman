@@ -140,6 +140,24 @@ func (s *Server) trackHTTPConn(_ net.Conn, state http.ConnState) {
 // retain the returned pointer beyond the server's lifetime.
 func (s *Server) Hub() *EventHub { return s.hub }
 
+// AutoCloseAIThreadsForClosedPRs is the post-sync hook companion to
+// ReconcileOnStartup: it closes any AI Q&A threads whose parent PR
+// has transitioned to closed/merged since the previous sync tick.
+// Best-effort and idempotent — safe to call after every RunOnce.
+func (s *Server) AutoCloseAIThreadsForClosedPRs() {
+	if s.aiReview == nil {
+		return
+	}
+	n, err := s.aiReview.AutoCloseClosedPRThreads(s.bgCtx)
+	if err != nil {
+		slog.Warn("auto-close ai threads on closed PRs failed", "err", err)
+		return
+	}
+	if n > 0 {
+		slog.Info("auto-closed AI threads on closed PRs", "count", n, "phase", "post-sync")
+	}
+}
+
 // SetVersion sets the version string returned by GET /api/v1/version.
 func (s *Server) SetVersion(v string) { s.version = v }
 
@@ -341,6 +359,14 @@ func newServer(
 		// cheap and matters before handlers can serve list requests.
 		if err := s.aiReview.ReconcileOnStartup(bgCtx); err != nil {
 			slog.Warn("ai review reconcile on startup failed", "err", err)
+		}
+		// Catch any AI threads whose parent PR closed while middleman
+		// was down. Periodic ticks (via the OnSyncCompleted hook) handle
+		// the same thing during normal operation.
+		if n, err := s.aiReview.AutoCloseClosedPRThreads(bgCtx); err != nil {
+			slog.Warn("ai thread auto-close on startup failed", "err", err)
+		} else if n > 0 {
+			slog.Info("auto-closed AI threads on closed PRs", "count", n, "phase", "startup")
 		}
 		s.sessionRunner = aireview.NewSessionRunner(database)
 		if err := s.sessionRunner.ReconcileOnStartup(bgCtx); err != nil {

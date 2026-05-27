@@ -240,6 +240,36 @@ func (r *Runner) CancelQuestion(ctx context.Context, questionID int64) error {
 	return r.db.MarkAIQuestionCancelled(ctx, questionID)
 }
 
+// AutoCloseClosedPRThreads enumerates every active AI thread whose
+// parent merge request is in 'closed' or 'merged' state and closes
+// each via CloseThread (cancelling subprocesses, tearing down
+// managed worktrees, marking the thread closed in the DB).
+//
+// Intended to run after each sync pass and at server startup so a
+// PR closing on GitHub propagates to its Claude question threads
+// without manual intervention. Best-effort per thread: a failure on
+// one is logged and the rest still get processed; the next tick
+// retries any leftovers.
+//
+// Idempotent: threads already in 'closed' state are filtered out by
+// the underlying DB query, so repeated calls are cheap and safe.
+func (r *Runner) AutoCloseClosedPRThreads(ctx context.Context) (int, error) {
+	targets, err := r.db.ListAIThreadsToAutoClose(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("list threads to auto-close: %w", err)
+	}
+	closed := 0
+	for _, t := range targets {
+		if err := r.CloseThread(ctx, t.ID); err != nil {
+			slog.Warn("auto-close ai thread failed",
+				"thread_id", t.ID, "mr_id", t.MRID, "err", err)
+			continue
+		}
+		closed++
+	}
+	return closed, nil
+}
+
 // CloseThread cancels any in-flight questions, removes the worktree,
 // and marks the thread closed.
 func (r *Runner) CloseThread(ctx context.Context, threadID int64) error {

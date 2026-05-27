@@ -162,6 +162,62 @@ func TestDeleteAIThreadCascadesQuestions(t *testing.T) {
 	assert.Empty(qs)
 }
 
+func TestListAIThreadsToAutoClose(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	d := openTestDB(t)
+	ctx := context.Background()
+
+	openMRID := seedAIQuestionTestMR(t, d)
+
+	// A second MR in 'closed' state on a different (owner,name)
+	// pair so the unique constraint on (repo, number) doesn't collide.
+	repoID, err := d.UpsertRepo(ctx, "github.com", "acme", "other")
+	require.NoError(err)
+	now := time.Now().UTC().Truncate(time.Second)
+	closedMRID, err := d.UpsertMergeRequest(ctx, &MergeRequest{
+		RepoID:         repoID,
+		PlatformID:     200,
+		Number:         2,
+		URL:            "https://github.com/acme/other/pull/2",
+		Title:          "merged pr",
+		Author:         "me",
+		State:          "closed",
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		LastActivityAt: now,
+	})
+	require.NoError(err)
+
+	// Active thread on the still-open MR — must NOT be returned.
+	_, _, err = d.CreateAIThread(ctx, NewAIThreadInput{
+		MergeRequestID: openMRID, Path: "x.go", AnchorSide: "RIGHT",
+		AnchorLine: 1, CommitSHA: "abc", Question: "q1",
+	})
+	require.NoError(err)
+
+	// Active thread on the closed MR — must be returned.
+	_, _, err = d.CreateAIThread(ctx, NewAIThreadInput{
+		MergeRequestID: closedMRID, Path: "y.go", AnchorSide: "RIGHT",
+		AnchorLine: 2, CommitSHA: "def", Question: "q2",
+	})
+	require.NoError(err)
+
+	// A thread that's ALREADY closed on the closed MR — must NOT be
+	// returned (no work to do, prevents redundant subprocess kills).
+	alreadyClosed, _, err := d.CreateAIThread(ctx, NewAIThreadInput{
+		MergeRequestID: closedMRID, Path: "z.go", AnchorSide: "RIGHT",
+		AnchorLine: 3, CommitSHA: "ghi", Question: "q3",
+	})
+	require.NoError(err)
+	require.NoError(d.CloseAIThread(ctx, alreadyClosed.ID))
+
+	targets, err := d.ListAIThreadsToAutoClose(ctx)
+	require.NoError(err)
+	require.Len(targets, 1)
+	assert.Equal(closedMRID, targets[0].MRID)
+}
+
 func TestListAIThreadsForMR(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

@@ -437,6 +437,58 @@ func TestReconcileOnStartup(t *testing.T) {
 	assert.Contains(got.Error, "interrupted")
 }
 
+func TestAutoCloseClosedPRThreads(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	database := openTestDB(t)
+	ctx := context.Background()
+
+	// Two MRs: one still open, one closed/merged.
+	openMRID := seedMR(t, database)
+	repoID, err := database.UpsertRepo(ctx, "github.com", "acme", "other")
+	require.NoError(err)
+	now := time.Now().UTC().Truncate(time.Second)
+	closedMRID, err := database.UpsertMergeRequest(ctx, &db.MergeRequest{
+		RepoID: repoID, PlatformID: 200, Number: 2,
+		URL: "u2", Title: "t2", Author: "a", State: "closed",
+		CreatedAt: now, UpdatedAt: now, LastActivityAt: now,
+	})
+	require.NoError(err)
+
+	openThread, _, err := database.CreateAIThread(ctx, db.NewAIThreadInput{
+		MergeRequestID: openMRID, Path: "x.go", AnchorSide: "RIGHT",
+		AnchorLine: 1, CommitSHA: "abc", Question: "q-open",
+	})
+	require.NoError(err)
+	closedPRThread, _, err := database.CreateAIThread(ctx, db.NewAIThreadInput{
+		MergeRequestID: closedMRID, Path: "y.go", AnchorSide: "RIGHT",
+		AnchorLine: 2, CommitSHA: "def", Question: "q-closed",
+	})
+	require.NoError(err)
+
+	runner := New(RunnerConfig{
+		DB: database, WorktreeDir: t.TempDir(),
+		HostFor: func(string, string) string { return "github.com" },
+	})
+
+	closed, err := runner.AutoCloseClosedPRThreads(ctx)
+	require.NoError(err)
+	assert.Equal(1, closed)
+
+	openAfter, err := database.GetAIThread(ctx, openThread.ID)
+	require.NoError(err)
+	assert.Equal("active", openAfter.Status, "thread on still-open PR must stay active")
+
+	closedAfter, err := database.GetAIThread(ctx, closedPRThread.ID)
+	require.NoError(err)
+	assert.Equal("closed", closedAfter.Status, "thread on closed PR must auto-close")
+
+	// Idempotent: second call closes nothing more.
+	closedAgain, err := runner.AutoCloseClosedPRThreads(ctx)
+	require.NoError(err)
+	assert.Equal(0, closedAgain)
+}
+
 // Ensure `exec.LookPath` resolves the fake binary. If not, tests
 // silently fail — catch that up front.
 func TestFakeClaudeIsExecutable(t *testing.T) {
