@@ -1,149 +1,164 @@
 # middleman
 
-A local-first GitHub dashboard for project maintainers. Syncs PRs and issues from your repos into SQLite, serves a fast Svelte 5 frontend from a single binary, and keeps you out of GitHub's notification inbox.
+A local tool for reviewing code. You do the reviewing; middleman is the surface — a diff viewer, anchored comments, threaded discussions — and an integration layer for Claude as an optional assistant (summarising a PR, answering questions about specific lines, etc.). It does not produce reviews on your behalf.
 
-Middleman runs entirely on your machine -- no hosted service, no telemetry, no account to create. One binary, one config file, and you're up.
+Two things it tries to make easier: reviewing pull requests on GitHub, and reviewing your own local git worktrees before you push.
 
-## Features
+Forked from [wesm/middleman](https://github.com/wesm/middleman), which is a local GitHub notifier / PR dashboard. This fork has diverged: the central feature is now code review — both of others' PRs and of local drafts — with the GitHub-inbox and triage features kept as supporting context. Some of those upstream features may be removed over time.
 
-### Activity feed
+Runs on your machine. One Go binary, one SQLite database, one TOML config. No hosted service or account required.
 
-A unified timeline of comments, reviews, and commits across all your repos. Switch between flat and threaded views. Threaded view groups events by PR/issue and collapses long commit runs for readability.
+## Quick start
 
-Filter by time range (24h / 7d / 30d / 90d), event type, repo, item type (PRs vs issues), or free-text search. Hide closed items and bot noise with a toggle.
-
-### Pull request management
-
-Browse, search, and filter PRs across repos. Group by repo or show a flat list. From the detail view you can:
-
-- **Comment** directly on a PR
-- **Approve** a PR
-- **Merge** with your choice of merge commit, squash, or rebase
-- **Mark draft PRs as ready** for review
-- **Close and reopen** PRs
-- **Star** items for quick filtering
-
-Review decisions, diff stats (additions/deletions), CI status, merge conflict indicators, and branch info are visible at a glance.
-
-### Diff view
-
-Inline diffs with a collapsible file tree sidebar. Files are grouped by directory and show status badges (modified, added, deleted, renamed) with per-file addition/deletion counts. Syntax highlighting via Shiki with light/dark theme support.
-
-Filter the file tree by name, toggle whitespace visibility, and adjust tab width. Navigate between files with `j`/`k`. Each file section is independently collapsible.
-
-### Kanban board
-
-Track PRs through **New / Reviewing / Waiting / Awaiting Merge** columns with drag-and-drop. Kanban state is local to middleman -- it doesn't touch your GitHub labels or projects.
-
-### Issue tracking
-
-Same filtering, search, and detail view as PRs. Post comments, close/reopen, and star issues without context-switching to GitHub.
-
-### CI checks
-
-Expandable check run section on each PR shows pass/fail/pending status with color-coded indicators and direct links to the failing run on GitHub.
-
-### Sync engine
-
-- Runs immediately on startup, then on a configurable interval (default 5 minutes)
-- Opening a PR or issue triggers an immediate sync for that item
-- The active detail view polls every 60 seconds for new comments
-- Progress is visible in the status bar; errors surface clearly
-
-### Keyboard navigation
-
-| Key | Action |
-|-----|--------|
-| `j` / `k` | Move through the list (or between files in diff view) |
-| `1` / `2` | Switch between list and kanban views |
-| `Escape` | Close detail view / clear selection |
-
-### Other
-
-- **Dark mode** -- auto-detects system preference, with a manual toggle
-- **GitHub Enterprise** -- set `platform_host` per repo to connect to GHE instances
-- **Copy to clipboard** -- one-click copy of PR/issue bodies and comments
-- **Settings UI** -- add/remove repos and configure activity feed defaults from the browser
-- **Reverse proxy support** -- deploy behind a proxy with the `base_path` config
-- **Version info** -- `middleman version` prints the version, commit, and build date
-
-## Quickstart
-
-### Requirements
-
-- Go 1.26+
-- [Bun](https://bun.sh/) (or install via [mise](https://mise.jdx.dev/))
-- A GitHub token (classic or fine-grained with repo read access)
-
-### Build and run
+Requirements: Go 1.26+, [Bun](https://bun.sh/), a GitHub token (env var or the `gh` CLI), and `claude` on `PATH` for the AI features.
 
 ```sh
 git clone https://github.com/andrwng/middleman
 cd middleman
 make build
-```
-
-Set your token and start middleman:
-
-```sh
-export MIDDLEMAN_GITHUB_TOKEN=ghp_your_token_here
+export MIDDLEMAN_GITHUB_TOKEN=ghp_…   # or `gh auth login` and skip this
 ./middleman
 ```
 
-If you use the [GitHub CLI](https://cli.github.com/), middleman will use `gh auth token` automatically -- no env var needed.
-
-On first run, middleman creates a default config at `~/.config/middleman/config.toml` and serves the UI at **http://localhost:8091**. Add repositories from the Settings page, or edit the config file directly:
+Open <http://localhost:8091>. On first run middleman writes `~/.config/middleman/config.toml` and starts with no repos. Add them from the Settings page, or edit the file:
 
 ```toml
 [[repos]]
 owner = "your-org"
 name = "your-repo"
-
-[[repos]]
-owner = "your-org"
-name = "another-repo"
 ```
 
-### Install to PATH
+`make install` drops the binary in `~/.local/bin`. `middleman version` prints version, commit, build date.
 
-```sh
-make install   # installs to ~/.local/bin
-```
+## Features
 
-## Configuration
+### Reviewing GitHub PRs
 
-All fields are optional. Repos can be added in the config file or through the Settings UI.
+The diff viewer is the main surface. Each line is anchorable: hover a line to get a `+` button for a review comment or a `?` button to ask Claude about that line. Selections work across multiple lines. Comments are buffered locally as drafts and published as a single GitHub review when you click Review.
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `sync_interval` | `"5m"` | How often to pull from GitHub |
-| `github_token_env` | `"MIDDLEMAN_GITHUB_TOKEN"` | Env var holding your token |
-| `host` | `"127.0.0.1"` | Listen address |
-| `port` | `8091` | Listen port |
-| `base_path` | `"/"` | URL prefix for reverse proxy deployments |
-| `data_dir` | `"~/.config/middleman"` | Directory for the SQLite database |
-| `activity.view_mode` | `"threaded"` | `"flat"` or `"threaded"` |
-| `activity.time_range` | `"7d"` | `"24h"`, `"7d"`, `"30d"`, or `"90d"` |
-| `activity.hide_closed` | `false` | Hide closed/merged items in the feed |
-| `activity.hide_bots` | `false` | Hide bot activity |
+Threaded review comments appear inline next to their anchor. You can hide threads locally to clear them off your screen; hidden state is per-PR, keyed by GitHub comment id, and survives re-sync. A new reply on a hidden thread auto-unhides it on the next sync. Nothing about hiding is propagated to GitHub.
 
-### GitHub Enterprise
+Markdown files are reviewable in **rendered mode**: the `.md` is rendered to HTML and each source line is still anchorable, so highlighting a paragraph and clicking `?` produces a Claude thread anchored to those source lines. The thread appears inline below the rendered block.
 
-Add `platform_host` and optionally `token_env` to repos hosted on a GHE instance:
+### Reviewing your own local worktrees
+
+Add a local checkout to your config:
 
 ```toml
 [[repos]]
-owner = "team"
-name = "internal-app"
-platform_host = "github.corp.example.com"
-token_env = "GHE_TOKEN"
+local_path = "~/code/myproject"
+base_ref = "origin/dev"
 ```
 
-Each distinct host can use a separate token env var. Repos without `platform_host` default to `github.com`.
+Middleman scans that directory for git worktrees on each sync and surfaces each one as a PR-shaped review surface — same diff viewer, same per-line comments, same AI Ask, same rendered-markdown mode. The diff defaults to `merge-base vs. working tree`, so committed work and uncommitted edits are both reviewable in one pass.
+
+Each worktree also gets an **interactive Claude session**. The Review tab's Submit button doesn't post to GitHub (there's nothing upstream); it pushes a turn into a Claude session running with `cwd = <worktree_path>`. The Activity tab streams the back-and-forth, including Claude's tool calls. You can chat with Claude about your draft and have it edit the worktree directly, then re-review the result. The session persists across turns via `--resume`; killing it ends the conversation but leaves the history.
+
+### AI features in detail
+
+- **Brief.** A staff-engineer-style overview of a PR, generated from the diff, commits, and description. Useful as a starting point before scrolling the diff.
+- **Commit analysis.** Per-commit Claude summary, accessible from the commits panel. Separate from the cumulative diff brief.
+- **Ask.** Per-line Claude threads, anchored like review comments. Each thread supports follow-up questions; conversation persists via `--resume`.
+- **Auto-close.** When a PR closes or merges, any active Ask threads on it are closed automatically and any in-flight subprocesses are killed. The thread + history stays in SQLite for later reference.
+
+All AI threads are local-only. Questions and answers live in your middleman SQLite database, not on GitHub.
+
+### Dashboard
+
+The original GitHub-dashboard surface is still present and useful for keeping track of multiple repos:
+
+- Activity feed across all enrolled repos, with threaded or flat view, filter by time range / author / item type / repo / free text, and toggles to hide closed items and bots.
+- PR list with grouping by repo, search, and review-decision/CI status badges.
+- Issue tracking with the same filters and a detail view supporting comment / close / reopen.
+- Kanban board (New / Reviewing / Waiting / Awaiting Merge) with drag-and-drop. Columns are local-only.
+
+These are kept because they're useful, not because they're the focus. The review experience is.
+
+### Keyboard
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` | Move through the list (or between files in the diff) |
+| `1` / `2` | Switch between list and kanban views |
+| `Escape` | Close detail view / clear selection |
+| `Cmd/Ctrl+Enter` | Submit a comment, AI question, or review summary |
+
+---
+
+## Implementation notes
+
+### AI runner
+
+Each AI surface (Brief, Commit Analysis, Ask, Worktree session) spawns the `claude` CLI as a subprocess via `internal/aireview`. First-turn prompts pass diff/hunk/context inline; follow-ups use Claude's `--resume <session-id>` to keep conversation context without replaying the whole prompt history. The `Runner` tracks `pid` plus a per-question `context.CancelFunc` in a map, so cancellation (or PR-close auto-cancel) actually kills the subprocess. On startup, a reconciler walks any turns left in `queued` or `running` state and marks them failed, so an interrupted turn doesn't haunt the UI after a restart.
+
+### Local worktrees
+
+`internal/worktrees` reconciles `git worktree list` output against the DB on each sync of a `local_path` repo entry. Worktrees route through PR-shaped URLs (`/repos/local/<name>/pulls/<worktree_id>/…`) via a synthetic `merge_request` row, so the diff viewer, sidebar, draft comments, and AI threads reuse the existing PR code path. Dispatch happens at the request boundary in `internal/server/local_dispatch.go`; downstream code doesn't need to know which "PRs" are actually local checkouts. The diff endpoint resolves `(base, working_tree)` via git refs; `?commit=WORKING-TREE` is a synthetic sentinel for the uncommitted slice.
+
+### Per-line anchors in rendered markdown
+
+A custom `marked` block renderer (`packages/ui/src/components/diff/renderedMarkdownAnchors.ts`) splits each block's `raw` source on `\n`, runs each segment through `marked.parseInline()`, and wraps it in `<span class="rmd-anchor" data-anchor-line=N data-anchor-side=…>`. Selections resolve to a source-line range by walking from `window.getSelection()` to the nearest anchor span. Block ranges are half-open `[start, end)` so adjacent blocks don't double-claim their boundary line. Threads and comments mount imperatively after the rendered HTML commits; teardown runs on component unmount.
+
+### Hidden review threads
+
+Per-PR set of "I've seen this" markers kept in `middleman_hidden_review_threads`, keyed by GitHub's comment id so they survive re-sync. The reveal toggle in `DiffToolbar` and `EventTimeline` brings hidden threads back, dimmed. New replies that arrive after the hide timestamp re-show the thread on the next sync — computed in SQL via `max(created_at)` per thread.
+
+## Architecture
+
+```
+middleman binary
+  ├── Config loader (TOML)
+  ├── Sync engine ─────────► GitHub API (go-github)
+  │      ├── PR/issue/comment sync
+  │      ├── Worktree scanner (per local_path entry)
+  │      └── Post-sync hooks: stack reconciler, AI auto-close
+  ├── SQLite (WAL, modernc.org/sqlite — pure Go, no CGO)
+  │      └── numbered SQL migrations in internal/db/migrations
+  ├── AI runner (internal/aireview)
+  │      └── claude subprocesses, --resume sessions, kill control,
+  │         startup reconciler for interrupted turns
+  └── HTTP server (Huma) ─► REST API (codegen'd OpenAPI client)
+                          + embedded Svelte 5 SPA
+                          (loopback only — 127.0.0.1 by default)
+```
+
+Frontend lives in `packages/ui` (shared Svelte components) plus `frontend` (the Vite app that wraps and embeds them). The `packages/ui` modules also export reusable views, stores, and a context Provider, so the same UI can be mounted inside a host app — see Embedding.
+
+## Develop
+
+```sh
+make air-install    # one-time: install air for live reload
+make dev            # Go server on :8091 with live reload
+make frontend-dev   # Vite on :5174, proxies /api → Go
+```
+
+Tests:
+
+```sh
+make test           # All Go tests (with -shuffle=on)
+make test-short     # Fast tests only
+make lint           # golangci-lint
+make frontend-check # svelte-check + tsc --noEmit
+make api-generate   # Regenerate OpenAPI spec and Go/TS clients
+```
+
+Pre-commit hooks via [prek](https://github.com/j178/prek): `brew install prek && prek install`.
+
+A Docker Compose dev stack is available via `mise run dev-compose`. It uses `docker/dev-config.toml`, persists SQLite in a Docker volume, exposes the backend on `:18090` and the frontend dev server on `:15173`, and reads the token from your host's `gh auth token`. Override the config file with `MIDDLEMAN_CONFIG=/path/to/config.toml make dev` (and the same env var for `make frontend-dev`).
+
+## Database
+
+SQLite with embedded migrations, applied on startup via `golang-migrate`. Three startup states matter:
+
+- Fresh DB: all migrations apply.
+- Legacy DB without `schema_migrations`: assumed baseline v1, migrated forward.
+- Dirty / failed / newer than the binary: startup fails with a message telling you to either upgrade middleman or delete the file.
+
+Deleting `~/.config/middleman/middleman.db` is always safe — sync data repopulates from GitHub on the next run. Local-only state (kanban columns, stars, hidden threads, AI thread history, worktree links) is lost.
 
 ## Embedding
 
-Middleman can be embedded as a Go library inside another application. The host creates an `Instance`, which provides an `http.Handler` for the API and frontend:
+Middleman can be embedded as a Go library inside another application. The host creates an `Instance`, which exposes an `http.Handler`:
 
 ```go
 inst, err := middleman.New(middleman.Options{
@@ -155,103 +170,63 @@ inst, err := middleman.New(middleman.Options{
         {Owner: "org", Name: "repo"},
     },
 })
-if err != nil {
-    log.Fatal(err)
-}
+if err != nil { log.Fatal(err) }
 defer inst.Close()
 inst.StartSync(ctx)
-
 mux.Handle("/middleman/", inst.Handler())
 ```
 
-The `EmbedConfig` option controls theming (light/dark mode, custom colors, fonts, radii) and UI defaults (hide sync controls, pin to a single repo, collapse sidebar). The `EmbedHooks` option provides lifecycle callbacks (`OnMRSynced`, `OnSyncCompleted`) so the host can react to sync events.
+`EmbedConfig` controls theming and UI defaults. `EmbedHooks` exposes `OnMRSynced` / `OnSyncCompleted` for sync events. The frontend is also available as the `@middleman/ui` Svelte workspace package, exporting individual views, store factories, and a context Provider that accepts an action registry for injecting custom buttons.
 
-The frontend is also available as the `@middleman/ui` Svelte package, which exports individual views (`PRListView`, `KanbanBoardView`, `ActivityFeedView`), store factories, and context accessors. The `@middleman/ui` `Provider` component accepts an action registry for injecting custom buttons into PR and issue detail views.
+## Configuration
 
-## Architecture
+All fields optional. Repos can be added in the config file or through the Settings UI.
 
-Middleman is a single Go binary with the Svelte frontend embedded at build time. No external services -- just SQLite on disk.
+| Field | Default | Description |
+|-------|---------|-------------|
+| `sync_interval` | `"5m"` | How often to pull from GitHub |
+| `github_token_env` | `"MIDDLEMAN_GITHUB_TOKEN"` | Env var holding your token (falls back to `gh auth token`) |
+| `host` | `"127.0.0.1"` | Listen address; non-loopback is rejected |
+| `port` | `8091` | Listen port |
+| `base_path` | `"/"` | URL prefix for reverse-proxy deployments |
+| `data_dir` | `"~/.config/middleman"` | Directory for the SQLite database |
+| `sync_budget_per_hour` | `0` | Per-host hourly GitHub API budget; 0 = unlimited |
+| `sync_recent_days` | `7` | How far back the closed-item backfill goes |
+| `activity.view_mode` | `"threaded"` | `"flat"` or `"threaded"` |
+| `activity.time_range` | `"7d"` | `"24h"`, `"7d"`, `"30d"`, or `"90d"` |
+| `activity.hide_closed` | `false` | Hide closed/merged items in the feed |
+| `activity.hide_bots` | `false` | Hide bot activity |
+| `roborev.endpoint` | `""` | Endpoint of an external roborev daemon, if you use one. Middleman proxies `/api/roborev/*` to this address when set. |
+| `tmux.command` | `[]` | Custom command middleman shells out to when launching tmux-backed terminal workspaces. Defaults to plain `tmux`. |
 
-```
-middleman binary
-  |- Config loader (TOML)
-  |- Sync engine -> GitHub API (go-github)
-  |- SQLite database (WAL mode, pure Go driver)
-  +- HTTP server (Huma) -> REST API + embedded SPA
-```
+### Local worktree review
 
-- **No CGO required** -- uses [modernc.org/sqlite](https://pkg.go.dev/modernc.org/sqlite), a pure Go SQLite implementation
-- **Loopback only** -- binds to 127.0.0.1 by default; this is a personal tool, not a shared service
-- **Graceful shutdown** -- handles SIGINT/SIGTERM cleanly
-
-## Database
-
-Middleman uses SQLite with embedded SQL migrations in `internal/db/migrations/`, applied on startup via `github.com/golang-migrate/migrate/v4`.
-
-On startup:
-
-- **Fresh database**: all embedded migrations are applied.
-- **Legacy database without `schema_migrations`**: middleman assumes the pre-migration schema is baseline version 1 and migrates forward.
-- **Dirty or failed migration state**: startup fails and instructs you to delete the database file and let middleman recreate it.
-- **Newer database** (migration version > binary): startup fails and instructs you to upgrade middleman.
-
-If a migration cannot be applied cleanly, delete `~/.config/middleman/middleman.db` and let middleman recreate it. Sync data will be repopulated from GitHub on the next run; local-only state (kanban columns, stars, and worktree links) is lost.
-
-## Development
-
-Run the Go backend and Vite dev server in parallel:
-
-```sh
-make air-install    # one-time: install air for live reload
-make dev            # Go server on :8091 with live reload
-make frontend-dev   # Vite on :5174, proxies /api to Go
+```toml
+[[repos]]
+local_path = "~/code/myproject"
+# base_ref = "origin/main"   # optional override
 ```
 
-### Docker Compose dev stack
+| Field | Description |
+|-------|-------------|
+| `local_path` | Directory middleman scans for git worktrees on each sync. Mutually exclusive with `owner`/`name`/`platform_host`/`token_env`. |
+| `base_ref` | Optional. Overrides the auto-detected base ref used to compute each worktree's change set. Defaults to whichever of `origin/main`, `origin/master`, `origin/develop`, `origin/dev` resolves first. Set this when the auto-pick isn't what you'd diff against (e.g. `origin/main` is a release branch and you develop off `origin/develop`). Only valid on local-only entries. |
 
-Use the `mise` tasks to manage compose stack with a token fetched from host GitHub CLI:
+### GitHub Enterprise
 
-```sh
-mise run dev-compose       # docker compose up
-mise run dev-compose-logs  # docker compose logs -f
-mise run dev-compose-down  # docker compose down
+```toml
+[[repos]]
+owner = "team"
+name = "internal-app"
+platform_host = "github.corp.example.com"
+token_env = "GHE_TOKEN"
 ```
 
-Compose behavior:
-- Uses repo-local `docker/dev-config.toml` so compose config stays isolated from native runs
-- Stores SQLite state in Docker volume as `/data/middleman.db` via `data_dir = "/data"`
-- Exposes backend on `http://127.0.0.1:18090` and frontend dev server on `http://127.0.0.1:15173`
+Each distinct host can use a separate token env var. Repos without `platform_host` default to `github.com`.
 
-### Custom config file
+### Network exposure
 
-Use custom config file for both processes with shared env override:
-
-```sh
-MIDDLEMAN_CONFIG=/path/to/config.toml make dev
-MIDDLEMAN_CONFIG=/path/to/config.toml make frontend-dev
-```
-
-Other targets:
-
-```sh
-make build          # Debug build with embedded frontend
-make build-release  # Optimized, stripped release binary
-make test           # All Go tests
-make test-short     # Fast tests only
-make lint           # golangci-lint
-make frontend-check # Svelte and TypeScript checks
-make api-generate   # Regenerate OpenAPI spec and clients
-make clean          # Remove build artifacts
-```
-
-### Pre-commit hooks
-
-Managed with [prek](https://github.com/j178/prek):
-
-```sh
-brew install prek
-prek install
-```
+The default `host = "127.0.0.1"` is enforced — middleman refuses to bind a non-loopback address. To reach the UI from another machine, put a reverse proxy (Caddy, nginx, socat) in front of the loopback port. Middleman has no built-in auth, so a proxy is also the right place to add HTTP basic auth, TLS, or an IP allowlist.
 
 ## License
 
