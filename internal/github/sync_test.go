@@ -651,6 +651,49 @@ func TestSyncMRReplacesLabelsOnResync(t *testing.T) {
 	require.Equal(int64(702), stored.Labels[0].PlatformID)
 }
 
+func TestSyncMRRecordsPatchsetOnNewHeadSHA(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+	ctx := context.Background()
+	d := openTestDB(t)
+
+	now := time.Date(2024, 7, 1, 12, 0, 0, 0, time.UTC)
+	pr := buildOpenPR(1, now)
+	// Force a known head SHA by mutating the helper-built struct.
+	origSHA := "1111111111111111111111111111111111111111"
+	pr.Head.SHA = &origSHA
+
+	mc := &mockClient{singlePR: pr, comments: []*gh.IssueComment{}, reviews: []*gh.PullRequestReview{}, commits: []*gh.RepositoryCommit{}}
+	syncer := NewSyncer(map[string]Client{"github.com": mc}, d, nil, []RepoRef{{Owner: "owner", Name: "repo", PlatformHost: "github.com"}}, time.Minute, nil, testBudget(500))
+
+	require.NoError(syncer.SyncMR(ctx, "owner", "repo", 1))
+
+	stored, err := d.GetMergeRequest(ctx, "owner", "repo", 1)
+	require.NoError(err)
+	require.NotNil(stored)
+
+	psAfterFirst, err := d.ListPatchsets(ctx, stored.ID)
+	require.NoError(err)
+	require.Len(psAfterFirst, 1, "first SyncMR must record a patchset for the head SHA")
+	assert.Equal(origSHA, psAfterFirst[0].HeadSHA)
+
+	// Simulate a force-push: PR now has a different head SHA.
+	newSHA := "2222222222222222222222222222222222222222"
+	pr.Head.SHA = &newSHA
+	pr.UpdatedAt = makeTimestamp(now.Add(time.Minute))
+
+	require.NoError(syncer.SyncMR(ctx, "owner", "repo", 1))
+
+	psAfterSecond, err := d.ListPatchsets(ctx, stored.ID)
+	require.NoError(err)
+	require.Len(psAfterSecond, 2, "second SyncMR on a new head SHA must record a second patchset")
+	// Ordered oldest-first by number.
+	assert.Equal(origSHA, psAfterSecond[0].HeadSHA)
+	assert.Equal(newSHA, psAfterSecond[1].HeadSHA)
+	assert.Equal(1, psAfterSecond[0].Number)
+	assert.Equal(2, psAfterSecond[1].Number)
+}
+
 func TestSyncIssueReplacesLabelsOnResync(t *testing.T) {
 	require := require.New(t)
 	ctx := context.Background()

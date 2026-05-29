@@ -3500,10 +3500,48 @@ func (s *Syncer) syncMRWithHost(
 		return fmt.Errorf("ensure kanban state for MR #%d: %w", number, err)
 	}
 
+	// Mirror syncOpenMRFromBulk: record a patchset row for the
+	// current head SHA so a force-push observed via the per-PR
+	// watch/detail-polling path shows up in the patchset history
+	// immediately, not only after the next full bulk sync. The
+	// row is keyed by (mr_id, head_sha) so repeat calls with the
+	// same SHA silently no-op; merge_base is filled in by the
+	// post-diff block below.
+	if headSHA := normalized.PlatformHeadSHA; headSHA != "" {
+		if _, _, psErr := s.db.RecordPatchset(ctx, mrID, db.RecordPatchsetOpts{
+			HeadSHA: headSHA,
+			BaseSHA: normalized.PlatformBaseSHA,
+		}); psErr != nil {
+			slog.Warn("record patchset failed",
+				"repo", repo.Owner+"/"+repo.Name,
+				"number", number, "err", psErr,
+			)
+		}
+	}
+
 	// Run the diff sync, but don't let its failure abort the rest of SyncMR:
 	// timeline and CI status are independent and the user still wants them
 	// fresh. Capture the error and surface it via DiffSyncError at the end.
 	diffErr := s.syncMRDiff(ctx, repo, repoID, number, ghPR, normalized)
+
+	// Once syncMRDiff has populated the merge-base column on the MR
+	// row, refresh the patchset we recorded above with that
+	// merge-base so rebase-subtracted diffs have the anchor they
+	// need. Mirrors the bulk-sync pattern in syncOpenMRFromBulk.
+	if diffErr == nil && normalized.PlatformHeadSHA != "" {
+		if fresh, err := s.db.GetMergeRequestByRepoIDAndNumber(ctx, repoID, number); err == nil && fresh != nil && fresh.MergeBaseSHA != "" {
+			if _, _, psErr := s.db.RecordPatchset(ctx, mrID, db.RecordPatchsetOpts{
+				HeadSHA:      normalized.PlatformHeadSHA,
+				BaseSHA:      normalized.PlatformBaseSHA,
+				MergeBaseSHA: fresh.MergeBaseSHA,
+			}); psErr != nil {
+				slog.Warn("record patchset merge-base failed",
+					"repo", repo.Owner+"/"+repo.Name,
+					"number", number, "err", psErr,
+				)
+			}
+		}
+	}
 
 	if err := s.refreshTimeline(ctx, repo, repoID, mrID, ghPR); err != nil {
 		return fmt.Errorf("refresh timeline for MR #%d: %w", number, err)
