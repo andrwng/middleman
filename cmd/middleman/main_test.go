@@ -242,7 +242,7 @@ func TestMCPParsesFlags(t *testing.T) {
 	// cleanly at EOF. We exercise the flag-parse + Serve path via a helper
 	// that accepts an explicit reader.
 	var out strings.Builder
-	err := runMCPWith([]string{
+	err := runMCP([]string{
 		"--base-url", "http://127.0.0.1:8091",
 		"--owner", "local", "--name", "demo", "--number", "7",
 	}, strings.NewReader(""), &out)
