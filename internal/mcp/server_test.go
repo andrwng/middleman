@@ -63,6 +63,19 @@ func TestUnknownMethodReturnsError(t *testing.T) {
 	require.Contains(t, resp, `"error"`)
 }
 
+func TestParseErrorReturnsRPCError(t *testing.T) {
+	s := New(Config{ServerName: "middleman"})
+	resp := runLine(t, s, `{"jsonrpc":"2.0","id":1,"method":`)
+	require.Contains(t, resp, `"error"`)
+	require.Contains(t, resp, "-32700")
+}
+
+func TestUnknownNotificationProducesNoResponse(t *testing.T) {
+	s := New(Config{ServerName: "middleman"})
+	resp := runLine(t, s, `{"jsonrpc":"2.0","method":"not-a-real-notification"}`)
+	require.Equal(t, "", resp)
+}
+
 // Serve reads newline-delimited requests from r and writes responses to w.
 func TestServeProcessesMultipleLines(t *testing.T) {
 	s := New(Config{ServerName: "middleman"})

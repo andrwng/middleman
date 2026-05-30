@@ -128,7 +128,8 @@ func (s *Server) writeJSON(w io.Writer, v any) error {
 	if err != nil {
 		return fmt.Errorf("marshal rpc: %w", err)
 	}
-	if _, err := w.Write(append(b, '\n')); err != nil {
+	b = append(b, '\n')
+	if _, err := w.Write(b); err != nil {
 		return fmt.Errorf("write rpc: %w", err)
 	}
 	return nil
