@@ -106,10 +106,37 @@
   .review-thread {
     margin: 4px 12px 8px 68px;
     padding: 8px 10px;
-    border: 1px solid var(--accent-claude);
-    border-left: 3px solid var(--accent-claude);
+    border: 1px solid var(--accent-blue);
+    border-left: 3px solid var(--accent-blue);
     border-radius: var(--radius-sm);
-    background: color-mix(in srgb, var(--accent-claude) 6%, var(--bg-surface));
+    background: color-mix(in srgb, var(--accent-blue) 6%, var(--bg-surface));
+  }
+
+  .review-thread--hidden {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  .review-thread__hidden-label {
+    flex: 1;
+  }
+
+  .review-thread__unhide {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-muted);
+    background: var(--bg-inset);
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+
+  .review-thread__unhide:hover {
+    background: var(--bg-surface-hover);
+    color: var(--text-primary);
   }
 
   .review-thread__header {
@@ -126,7 +153,7 @@
     letter-spacing: 0.05em;
     padding: 1px 6px;
     border-radius: 999px;
-    background: var(--accent-claude);
+    background: var(--accent-blue);
     color: #fff;
   }
 
@@ -136,6 +163,15 @@
     color: var(--text-muted);
   }
 
+  .review-thread__status {
+    font-size: 11px;
+    color: var(--text-muted);
+    padding: 1px 6px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-muted);
+    background: var(--bg-inset);
+  }
+
   .review-thread__commit {
     font-family: var(--font-mono);
     font-size: 10px;
@@ -143,159 +179,68 @@
     opacity: 0.8;
   }
 
-  .review-thread__close {
-    margin-left: auto;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 18px;
-    height: 18px;
+  .review-thread__action {
+    font-size: 11px;
+    padding: 2px 8px;
     border-radius: var(--radius-sm);
-    border: none;
-    background: none;
+    border: 1px solid var(--border-muted);
+    background: var(--bg-inset);
     color: var(--text-muted);
     cursor: pointer;
   }
 
-  .review-thread__close:hover {
+  .review-thread__action:first-of-type {
+    margin-left: auto;
+  }
+
+  .review-thread__action:hover {
     background: var(--bg-surface-hover);
     color: var(--text-primary);
   }
 
-  .review-thread__qa {
+  .review-thread__comment {
     margin-top: 6px;
     padding-top: 6px;
     border-top: 1px solid var(--border-muted);
   }
 
-  .review-thread__qa:first-of-type {
+  .review-thread__comment:first-of-type {
     border-top: none;
     padding-top: 0;
     margin-top: 0;
   }
 
-  .review-thread__question {
-    display: flex;
-    align-items: flex-start;
-    gap: 6px;
-    font-size: 13px;
-    color: var(--text-primary);
-  }
-
-  .review-thread__q-prefix {
+  .review-thread__author {
+    display: block;
+    font-size: 10px;
     font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 2px;
+    color: var(--text-muted);
+  }
+
+  .review-thread__author--agent {
     color: var(--accent-blue);
-    font-family: var(--font-mono);
-    font-size: 11px;
-    padding-top: 1px;
   }
 
-  .review-thread__q-body {
-    flex: 1;
-    min-width: 0;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-
-  .review-thread__cancel {
-    font-size: 11px;
-    padding: 2px 8px;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--border-muted);
-    background: var(--bg-inset);
-    color: var(--text-muted);
-    cursor: pointer;
-    flex-shrink: 0;
-  }
-
-  .review-thread__cancel:hover {
-    background: var(--bg-surface-hover);
-    color: var(--text-primary);
-  }
-
-  .review-thread__status {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    margin-top: 4px;
-    font-size: 11px;
+  .review-thread__author--user {
     color: var(--text-muted);
   }
 
-  .review-thread__status-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--text-muted);
-  }
-
-  .review-thread__status--running .review-thread__status-dot,
-  .review-thread__status--queued .review-thread__status-dot {
-    background: var(--accent-amber);
-    animation: review-thread-pulse 1.2s ease-in-out infinite;
-  }
-
-  .review-thread__status--done .review-thread__status-dot {
-    background: var(--accent-green);
-  }
-
-  .review-thread__status--failed .review-thread__status-dot {
-    background: var(--accent-red);
-  }
-
-  @keyframes review-thread-pulse {
-    0%, 100% { opacity: 0.4; }
-    50% { opacity: 1; }
-  }
-
-  .review-thread__answer {
-    margin-top: 6px;
-    padding: 8px 10px;
-    border-radius: var(--radius-sm);
-    background: var(--bg-inset);
+  .review-thread__body {
     font-size: 13px;
-    color: var(--text-primary);
     line-height: 1.5;
-  }
-
-  .review-thread__answer-actions {
-    display: flex;
-    justify-content: flex-end;
-    margin-top: 4px;
-  }
-
-  .review-thread__promote {
-    font-size: 11px;
-    padding: 2px 8px;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--border-muted);
-    background: var(--bg-inset);
-    color: var(--text-secondary);
-    cursor: pointer;
-  }
-
-  .review-thread__promote:hover {
-    background: var(--bg-surface-hover);
     color: var(--text-primary);
   }
 
-  .review-thread__error {
-    margin-top: 6px;
-    padding: 6px 8px;
-    border-radius: var(--radius-sm);
-    background: color-mix(in srgb, var(--accent-red) 8%, var(--bg-inset));
-    color: var(--accent-red);
-    font-size: 12px;
-    white-space: pre-wrap;
-  }
-
-  .review-thread__followup {
+  .review-thread__reply {
     display: flex;
     gap: 6px;
     margin-top: 8px;
   }
 
-  .review-thread__followup-input {
+  .review-thread__reply-input {
     flex: 1;
     font-family: var(--font-sans);
     font-size: 13px;
@@ -307,17 +252,17 @@
     resize: vertical;
   }
 
-  .review-thread__followup-input:focus {
+  .review-thread__reply-input:focus {
     outline: none;
-    border-color: var(--accent-claude);
+    border-color: var(--accent-blue);
   }
 
   .review-thread__send {
     font-size: 12px;
     padding: 4px 12px;
     border-radius: var(--radius-sm);
-    border: 1px solid var(--accent-claude);
-    background: var(--accent-claude);
+    border: 1px solid var(--accent-blue);
+    background: var(--accent-blue);
     color: #fff;
     cursor: pointer;
     align-self: flex-end;
@@ -330,20 +275,5 @@
   .review-thread__send:disabled {
     opacity: 0.5;
     cursor: not-allowed;
-  }
-
-  .review-thread--hidden {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 12px;
-    color: var(--text-muted);
-  }
-
-  .review-thread__author {
-    font-size: 10px;
-    font-weight: 700;
-    text-transform: uppercase;
-    color: var(--text-muted);
   }
 </style>
