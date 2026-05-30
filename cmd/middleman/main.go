@@ -112,18 +112,15 @@ func runConfigRead(args []string, stdout io.Writer) error {
 	}
 }
 
-// runMCP parses flags and serves the stdio MCP server on stdin/stdout.
+// runMCP parses flags and serves the stdio MCP server. The reader is
+// injected: os.Stdin from the CLI dispatch, an explicit reader in tests.
 func runMCP(args []string, in io.Reader, out io.Writer) error {
-	return runMCPWith(args, in, out)
-}
-
-func runMCPWith(args []string, in io.Reader, out io.Writer) error {
 	fs := flag.NewFlagSet("middleman mcp", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	baseURL := fs.String("base-url", "http://127.0.0.1:8091", "middleman REST base URL")
 	owner := fs.String("owner", "", "review owner (local)")
 	name := fs.String("name", "", "review repo name")
-	number := fs.Int("number", 0, "review number (worktree id)")
+	number := fs.Int("number", 0, "review number (worktree id; 0 = unset, a real id is >= 1)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
