@@ -55,6 +55,10 @@ func TestAPIReviewThreadsLifecycle(t *testing.T) {
 	require.Len(*created[0].Comments, 1)
 	assert.Equal("user", (*created[0].Comments)[0].Author)
 	assert.Equal("rename this", (*created[0].Comments)[0].Body)
+	// Second thread round-trips its multi-line anchor (start_line).
+	assert.Equal("b.go", created[1].Path)
+	require.NotNil(created[1].StartLine)
+	assert.Equal(int64(8), *created[1].StartLine)
 	threadID := created[0].Id
 
 	// List returns both threads.
