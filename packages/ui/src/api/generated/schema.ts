@@ -700,6 +700,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/repos/{owner}/{name}/pulls/{number}/review-threads/apply-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post repos by owner by name pulls by number review threads apply all */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-review-threads-apply-all"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post repos by owner by name pulls by number review threads by thread ID apply */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-review-threads-by-thread-id-apply"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/comments": {
         parameters: {
             query?: never;
@@ -1489,6 +1523,8 @@ export interface components {
              * @example /api/v1/schemas/CreateReviewThreadsInputBody.json
              */
             readonly $schema?: string;
+            /** @description discuss-first | act-immediately | persist-only (default) */
+            mode?: string;
             threads: components["schemas"]["ReviewThreadDraft"][] | null;
         };
         CreateReviewThreadsOutputBody: {
@@ -4272,6 +4308,73 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CreateReviewThreadsOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-review-threads-apply-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListReviewThreadsOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-review-threads-by-thread-id-apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+                thread_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListReviewThreadsOutputBody"];
                 };
             };
             /** @description Error */

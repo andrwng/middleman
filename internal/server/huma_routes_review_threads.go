@@ -4,10 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"os"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/wesm/middleman/internal/aireview"
 	"github.com/wesm/middleman/internal/db"
+	"github.com/wesm/middleman/internal/worktrees"
 )
 
 // Local-worktree review threads. Live at the PR-shaped path so middleman
@@ -66,6 +70,7 @@ type createReviewThreadsInput struct {
 	Name   string `path:"name"`
 	Number int    `path:"number"`
 	Body   struct {
+		Mode    string              `json:"mode,omitempty" doc:"discuss-first | act-immediately | persist-only (default)"`
 		Threads []reviewThreadDraft `json:"threads"`
 	}
 }
@@ -105,6 +110,8 @@ func (s *Server) registerReviewThreadRoutes(api huma.API) {
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/hide", s.hideLocalReviewThread)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/unhide", s.unhideLocalReviewThread)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/resolve", s.resolveReviewThread)
+	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/apply", s.applyReviewThread)
+	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review-threads/apply-all", s.applyAllReviewThreads)
 }
 
 // loadReviewThreadsResponse lists an MR's threads with their comments
@@ -177,6 +184,12 @@ func (s *Server) createReviewThreads(ctx context.Context, input *createReviewThr
 	if len(input.Body.Threads) == 0 {
 		return nil, huma.Error400BadRequest("at least one thread is required")
 	}
+	// Validate mode before persisting so a bad request never writes rows.
+	switch input.Body.Mode {
+	case "", "persist-only", "discuss-first", "act-immediately":
+	default:
+		return nil, huma.Error400BadRequest("invalid mode: " + input.Body.Mode)
+	}
 	mrID, err := s.resolveOrEnsureMRID(ctx, input.Owner, input.Name, input.Number)
 	if err != nil {
 		return nil, huma.Error404NotFound("worktree not found")
@@ -204,8 +217,19 @@ func (s *Server) createReviewThreads(ctx context.Context, input *createReviewThr
 			StartLine: t.StartLine, CommitSHA: t.CommitSHA, Body: t.Body,
 		})
 	}
-	if _, err := s.db.CreateReviewThreads(ctx, mrID, in); err != nil {
+	created, err := s.db.CreateReviewThreads(ctx, mrID, in)
+	if err != nil {
 		return nil, huma.Error500InternalServerError("create review threads: " + err.Error())
+	}
+	switch input.Body.Mode {
+	case "discuss-first":
+		if err := s.kickoffReviewTurn(ctx, input.Owner, input.Name, input.Number, "discuss", created); err != nil {
+			return nil, err
+		}
+	case "act-immediately":
+		if err := s.kickoffReviewTurn(ctx, input.Owner, input.Name, input.Number, "apply", created); err != nil {
+			return nil, err
+		}
 	}
 	threads, err := s.loadReviewThreadsResponse(ctx, mrID)
 	if err != nil {
@@ -318,5 +342,142 @@ func (s *Server) oneReviewThreadOutput(ctx context.Context, threadID int64) (*re
 		})
 	}
 	out := &reviewThreadOutput{Body: toReviewThreadResponse(th, comments)}
+	return out, nil
+}
+
+// kickoffReviewTurn drives the review agent for a set of threads. It
+// mirrors submitWorktreeSessionTurn (ensure session, resolve base,
+// SubmitTurn) but adds the discuss/apply Action, per-thread context,
+// the middleman MCP wiring, a busy gate, and an optimistic status set.
+//
+// Status is set optimistically at kickoff (discussed for discuss,
+// applied for apply): simple and acceptable for a local single-user
+// tool — a failed turn surfaces in the session activity log.
+func (s *Server) kickoffReviewTurn(
+	ctx context.Context, owner, name string, number int,
+	action string, threads []db.ReviewThread,
+) error {
+	if s.sessionRunner == nil {
+		return huma.Error503ServiceUnavailable("sessions not available")
+	}
+	w, err := s.resolveLocalWorktree(ctx, name, number)
+	if err != nil {
+		return huma.Error404NotFound("worktree not found")
+	}
+	sess, isFirst, err := s.ensureWorktreeSession(ctx, w.ID)
+	if err != nil {
+		return huma.Error500InternalServerError("ensure session: " + err.Error())
+	}
+	if s.sessionHasRunningTurn(ctx, sess.ID) {
+		return huma.Error409Conflict("the review agent is busy; wait for the current turn to finish")
+	}
+	tcs := make([]aireview.ThreadContext, 0, len(threads))
+	for _, t := range threads {
+		tcs = append(tcs, aireview.ThreadContext{
+			ID: t.ID, Path: t.Path, Line: t.Line, Side: t.Side,
+			RootComment: s.firstThreadCommentBody(ctx, t.ID),
+		})
+	}
+	baseRef := s.lookupBaseRefForWorktree(ctx, *w)
+	base, _ := worktrees.ResolveBase(ctx, w.Path, baseRef)
+	exe, _ := os.Executable()
+	// discuss runs as a read-only review_feedback turn; apply runs as a
+	// user_message turn whose tools may edit the worktree.
+	verb := "review_feedback"
+	if action == "apply" {
+		verb = "user_message"
+	}
+	if _, err := s.sessionRunner.SubmitTurn(ctx, aireview.SubmitTurnInput{
+		SessionID: sess.ID, WorktreePath: w.Path, Branch: w.Branch,
+		BaseRef: base.Ref, BaseSHA: base.SHA, HeadSHA: w.HeadSHA,
+		UserTurnType: verb, UserTurnContent: actionMessage(action, tcs), IsFirstTurn: isFirst,
+		Action: action, Threads: tcs,
+		MCP: &aireview.MCPConfig{Binary: exe, BaseURL: s.selfBaseURL(), Owner: owner, Name: name, Number: number},
+	}); err != nil {
+		return huma.Error500InternalServerError("submit turn: " + err.Error())
+	}
+	target := "discussed"
+	if action == "apply" {
+		target = "applied"
+	}
+	for _, t := range threads {
+		_ = s.db.SetReviewThreadStatus(ctx, t.ID, target)
+	}
+	return nil
+}
+
+func actionMessage(action string, tcs []aireview.ThreadContext) string {
+	if action == "apply" {
+		return fmt.Sprintf("Apply %d review thread(s).", len(tcs))
+	}
+	return fmt.Sprintf("Discuss %d review thread(s).", len(tcs))
+}
+
+// firstThreadCommentBody returns the root comment body for a thread, or
+// "" if it has none (comments are ordered id ASC, so [0] is the root).
+func (s *Server) firstThreadCommentBody(ctx context.Context, threadID int64) string {
+	comments, err := s.db.ListReviewThreadComments(ctx, threadID)
+	if err != nil || len(comments) == 0 {
+		return ""
+	}
+	return comments[0].Body
+}
+
+// applyReviewThread kicks off an apply turn for a single thread.
+func (s *Server) applyReviewThread(ctx context.Context, input *reviewThreadActionInput) (*listReviewThreadsOutput, error) {
+	if !isLocalSource(input.Owner) {
+		return nil, huma.Error400BadRequest("review threads are local-worktree only")
+	}
+	mrID, err := s.resolveThreadForMR(ctx, input.Owner, input.Name, input.Number, input.ThreadID)
+	if err != nil {
+		return nil, err
+	}
+	th, err := s.db.GetReviewThread(ctx, input.ThreadID)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("get thread: " + err.Error())
+	}
+	if err := s.kickoffReviewTurn(ctx, input.Owner, input.Name, input.Number, "apply", []db.ReviewThread{th}); err != nil {
+		return nil, err
+	}
+	threads, err := s.loadReviewThreadsResponse(ctx, mrID)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("reload review threads: " + err.Error())
+	}
+	out := &listReviewThreadsOutput{}
+	out.Body.Threads = threads
+	return out, nil
+}
+
+// applyAllReviewThreads kicks off a single apply turn covering every
+// eligible (visible, open|discussed) thread on the MR.
+func (s *Server) applyAllReviewThreads(ctx context.Context, input *listReviewThreadsInput) (*listReviewThreadsOutput, error) {
+	if !isLocalSource(input.Owner) {
+		return nil, huma.Error400BadRequest("review threads are local-worktree only")
+	}
+	mrID, err := s.resolveOrEnsureMRID(ctx, input.Owner, input.Name, input.Number)
+	if err != nil {
+		return nil, huma.Error404NotFound("worktree not found")
+	}
+	all, err := s.db.ListReviewThreadsForMR(ctx, mrID)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("list review threads: " + err.Error())
+	}
+	eligible := make([]db.ReviewThread, 0, len(all))
+	for _, t := range all {
+		if t.HiddenAt == nil && (t.Status == "open" || t.Status == "discussed") {
+			eligible = append(eligible, t)
+		}
+	}
+	if len(eligible) > 0 {
+		if err := s.kickoffReviewTurn(ctx, input.Owner, input.Name, input.Number, "apply", eligible); err != nil {
+			return nil, err
+		}
+	}
+	threads, err := s.loadReviewThreadsResponse(ctx, mrID)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("reload review threads: " + err.Error())
+	}
+	out := &listReviewThreadsOutput{}
+	out.Body.Threads = threads
 	return out, nil
 }
