@@ -93,6 +93,15 @@ func TestAPIReviewThreadsLifecycle(t *testing.T) {
 	require.NotNil(hideResp.JSON200)
 	assert.True(hideResp.JSON200.Hidden)
 
+	// Unhide.
+	unhideResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsByThreadIdUnhideWithResponse(
+		ctx, "local", "demo", num, threadID,
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, unhideResp.StatusCode())
+	require.NotNil(unhideResp.JSON200)
+	assert.False(unhideResp.JSON200.Hidden)
+
 	// Resolve.
 	resolveResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsByThreadIdResolveWithResponse(
 		ctx, "local", "demo", num, threadID,
@@ -104,11 +113,42 @@ func TestAPIReviewThreadsLifecycle(t *testing.T) {
 }
 
 func TestAPIReviewThreadsRejectNonLocal(t *testing.T) {
+	require := require.New(t)
 	srv, _ := setupTestServer(t)
 	client := setupTestClient(t, srv)
-	resp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(
-		context.Background(), "acme", "widget", 1,
+	ctx := context.Background()
+
+	// GET on a non-local owner is rejected.
+	getResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(
+		ctx, "acme", "widget", 1,
 	)
-	require.NoError(t, err)
-	Assert.Equal(t, http.StatusBadRequest, resp.StatusCode())
+	require.NoError(err)
+	require.Equal(http.StatusBadRequest, getResp.StatusCode())
+
+	// POST (create) on a non-local owner is rejected by the same guard.
+	postResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(
+		ctx, "acme", "widget", 1,
+		generated.CreateReviewThreadsInputBody{
+			Threads: &[]generated.ReviewThreadDraft{
+				{Path: "a.go", Side: "RIGHT", Line: 1, CommitSha: "abc", Body: "x"},
+			},
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusBadRequest, postResp.StatusCode())
+}
+
+// TestAPIReviewThreadActionUnknownThread covers the ownership guard: an
+// action on a thread id that does not belong to this worktree is a 404.
+func TestAPIReviewThreadActionUnknownThread(t *testing.T) {
+	require := require.New(t)
+	srv, database := setupTestServer(t)
+	client := setupTestClient(t, srv)
+	num := seedReviewWorktree(t, database)
+
+	resp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsByThreadIdHideWithResponse(
+		context.Background(), "local", "demo", num, 99999,
+	)
+	require.NoError(err)
+	require.Equal(http.StatusNotFound, resp.StatusCode())
 }
