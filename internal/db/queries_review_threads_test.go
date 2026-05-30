@@ -111,6 +111,12 @@ func TestReviewThreadCommentsAndState(t *testing.T) {
 	assert.Equal("user", comments[0].Author)
 	assert.Equal("agent", comments[1].Author)
 
+	// Per-thread comment listing returns just this thread's comments.
+	threadComments, err := d.ListReviewThreadComments(ctx, threadID)
+	require.NoError(err)
+	require.Len(threadComments, 2)
+	assert.Equal(threadID, threadComments[0].ThreadID)
+
 	// A comment carrying a turn id round-trips the nullable turn_id.
 	tid := int64(42)
 	withTurn, err := d.AddReviewThreadComment(ctx, threadID, "agent", "applied in this turn", &tid)

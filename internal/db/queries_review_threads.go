@@ -217,6 +217,29 @@ func (d *DB) ListReviewThreadCommentsForMR(ctx context.Context, mrID int64) ([]R
 	return out, rows.Err()
 }
 
+// ListReviewThreadComments returns the comments for a single thread,
+// oldest-first by id.
+func (d *DB) ListReviewThreadComments(ctx context.Context, threadID int64) ([]ReviewThreadComment, error) {
+	rows, err := d.ro.QueryContext(ctx, `
+		SELECT id, thread_id, author, body, turn_id, created_at
+		  FROM middleman_review_thread_comments
+		 WHERE thread_id = ?
+		 ORDER BY id ASC`, threadID)
+	if err != nil {
+		return nil, fmt.Errorf("list thread comments: %w", err)
+	}
+	defer rows.Close()
+	var out []ReviewThreadComment
+	for rows.Next() {
+		c, err := scanReviewThreadComment(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // SetReviewThreadStatus sets status (open|discussed|applied|resolved)
 // and bumps updated_at.
 func (d *DB) SetReviewThreadStatus(ctx context.Context, id int64, status string) error {

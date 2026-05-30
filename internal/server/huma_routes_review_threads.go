@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -64,7 +66,7 @@ type createReviewThreadsInput struct {
 
 type createReviewThreadsOutput struct {
 	Body struct {
-		Threads []reviewThreadResponse `json:"threads"`
+		Threads []reviewThreadResponse `json:"threads" doc:"the MR's full review-thread list after creation"`
 	}
 }
 
@@ -179,6 +181,15 @@ func (s *Server) createReviewThreads(ctx context.Context, input *createReviewThr
 		if t.Side != "LEFT" && t.Side != "RIGHT" {
 			return nil, huma.Error400BadRequest("side must be LEFT or RIGHT")
 		}
+		if t.Path == "" {
+			return nil, huma.Error400BadRequest("path is required")
+		}
+		if t.Line < 1 {
+			return nil, huma.Error400BadRequest("line must be >= 1")
+		}
+		if t.CommitSHA == "" {
+			return nil, huma.Error400BadRequest("commit_sha is required")
+		}
 		if t.Body == "" {
 			return nil, huma.Error400BadRequest("each thread needs a comment body")
 		}
@@ -201,14 +212,19 @@ func (s *Server) createReviewThreads(ctx context.Context, input *createReviewThr
 
 // resolveThreadForMR confirms the thread exists and belongs to the MR
 // behind this PR-shaped route, guarding against cross-worktree ids.
+// Callers gate isLocalSource themselves; resolveOrEnsureMRID does not
+// reject non-local owners.
 func (s *Server) resolveThreadForMR(ctx context.Context, owner, name string, number int, threadID int64) (int64, error) {
 	mrID, err := s.resolveOrEnsureMRID(ctx, owner, name, number)
 	if err != nil {
 		return 0, huma.Error404NotFound("worktree not found")
 	}
 	th, err := s.db.GetReviewThread(ctx, threadID)
-	if err != nil || th.MergeRequestID != mrID {
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && th.MergeRequestID != mrID) {
 		return 0, huma.Error404NotFound("review thread not found")
+	}
+	if err != nil {
+		return 0, huma.Error500InternalServerError("get review thread: " + err.Error())
 	}
 	return mrID, nil
 }
@@ -282,15 +298,12 @@ func (s *Server) oneReviewThreadOutput(ctx context.Context, threadID int64) (*re
 	if err != nil {
 		return nil, huma.Error500InternalServerError("reload thread: " + err.Error())
 	}
-	all, err := s.db.ListReviewThreadCommentsForMR(ctx, th.MergeRequestID)
+	dbComments, err := s.db.ListReviewThreadComments(ctx, threadID)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("reload comments: " + err.Error())
 	}
-	var comments []reviewThreadCommentResponse
-	for _, c := range all {
-		if c.ThreadID != threadID {
-			continue
-		}
+	comments := make([]reviewThreadCommentResponse, 0, len(dbComments))
+	for _, c := range dbComments {
 		comments = append(comments, reviewThreadCommentResponse{
 			ID:        c.ID,
 			Author:    c.Author,
