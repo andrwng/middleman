@@ -26,7 +26,7 @@ func TestReplyToThreadPostsAgentComment(t *testing.T) {
 	s := New(Config{ServerName: "middleman", BaseURL: srv.URL, ReviewOwner: "local", ReviewName: "demo", ReviewNumber: 7})
 	out, err := s.tools["reply_to_thread"].call(s, map[string]any{"thread_id": float64(5), "body": "ok"})
 	require.NoError(t, err)
-	require.Equal(t, "/repos/local/demo/pulls/7/review-threads/5/comments", gotPath)
+	require.Equal(t, "/api/v1/repos/local/demo/pulls/7/review-threads/5/comments", gotPath)
 	require.Contains(t, gotBody, `"author":"agent"`)
 	require.Contains(t, gotBody, `"body":"ok"`)
 	require.Contains(t, out, "agent") // text content echoes the updated thread
@@ -34,7 +34,7 @@ func TestReplyToThreadPostsAgentComment(t *testing.T) {
 
 func TestListThreadsProxiesGet(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/repos/local/demo/pulls/7/review-threads", r.URL.Path)
+		require.Equal(t, "/api/v1/repos/local/demo/pulls/7/review-threads", r.URL.Path)
 		_, _ = w.Write([]byte(`{"threads":[{"id":1,"path":"a.go","line":12,"status":"open"}]}`))
 	}))
 	defer srv.Close()
@@ -67,7 +67,7 @@ func TestToolsCallDispatch(t *testing.T) {
 
 func TestGetThreadFiltersFromList(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/repos/local/demo/pulls/7/review-threads", r.URL.Path)
+		require.Equal(t, "/api/v1/repos/local/demo/pulls/7/review-threads", r.URL.Path)
 		_, _ = w.Write([]byte(`{"threads":[{"id":1,"path":"a.go","line":12},{"id":2,"path":"b.go","line":34}]}`))
 	}))
 	defer srv.Close()

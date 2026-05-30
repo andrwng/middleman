@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -289,12 +290,18 @@ func (s *Server) sessionHasRunningTurn(ctx context.Context, sessID int64) bool {
 // selfBaseURL is the loopback base URL the spawned MCP server uses to
 // call back into this server's REST API.
 func (s *Server) selfBaseURL() string {
+	host := "127.0.0.1:8091"
 	if s.cfg != nil {
 		if addr := s.cfg.ListenAddr(); addr != "" {
-			return "http://" + addr
+			host = addr
 		}
 	}
-	return "http://127.0.0.1:8091"
+	base := "http://" + host
+	// Honor a non-default outer basePath; the MCP proxy appends /api/v1.
+	if s.basePath != "" && s.basePath != "/" {
+		base += strings.TrimSuffix(s.basePath, "/")
+	}
+	return base
 }
 
 func toSessionResponse(s db.WorktreeSession) sessionResponse {

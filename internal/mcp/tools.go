@@ -77,7 +77,8 @@ func builtinTools() map[string]toolDef {
 }
 
 func (s *Server) reviewPath(suffix string) string {
-	return fmt.Sprintf("/repos/%s/%s/pulls/%d%s", s.cfg.ReviewOwner, s.cfg.ReviewName, s.cfg.ReviewNumber, suffix)
+	// middleman mounts its REST API under /api/v1; --base-url is the server root.
+	return fmt.Sprintf("/api/v1/repos/%s/%s/pulls/%d%s", s.cfg.ReviewOwner, s.cfg.ReviewName, s.cfg.ReviewNumber, suffix)
 }
 
 func (s *Server) restJSON(method, path string, body []byte) (string, error) {
