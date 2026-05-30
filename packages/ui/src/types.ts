@@ -115,6 +115,7 @@ import type { FileResolverStore } from "./stores/fileResolver.svelte.js";
 import type { CommitAnalysisStore } from "./stores/commitAnalysis.svelte.js";
 import type { WorktreesStore } from "./stores/worktrees.svelte.js";
 import type { WorktreeSessionStore } from "./stores/worktreeSession.svelte.js";
+import type { ReviewThreadsStore } from "./stores/reviewThreads.svelte.js";
 
 export interface StoreInstances {
   pulls: PullsStore;
@@ -136,6 +137,7 @@ export interface StoreInstances {
   commitAnalysis: CommitAnalysisStore;
   worktrees: WorktreesStore;
   worktreeSession: WorktreeSessionStore;
+  reviewThreads: ReviewThreadsStore;
   roborevDaemon?: DaemonStore;
   roborevJobs?: JobsStore;
   roborevReview?: ReviewStore;

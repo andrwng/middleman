@@ -88,6 +88,7 @@
   import { createAISessionsStore } from "./stores/aiSessions.svelte.js";
   import { createWorktreesStore } from "./stores/worktrees.svelte.js";
   import { createWorktreeSessionStore } from "./stores/worktreeSession.svelte.js";
+  import { createReviewThreadsStore } from "./stores/reviewThreads.svelte.js";
 
   interface Props {
     client: MiddlemanClient;
@@ -278,6 +279,7 @@
       commitAnalysis: commitAnalysisStore,
       worktrees: worktreesStore,
       worktreeSession: createWorktreeSessionStore({ client: cl }),
+      reviewThreads: createReviewThreadsStore({ client: cl }),
     };
 
     if (roborevBase) {
