@@ -64,7 +64,7 @@ We want three things:
 | Process model | **Resume per turn** (existing worktree-session machinery). Warm process deferred. |
 | "Go"/Apply | Per-thread lifecycle + per-thread Apply + Apply all. Apply = "edit the code now." |
 | Surfaces | Threads = curated replies; activity window = working log + steering. |
-| Agent transport | REST API + thin **MCP proxy** (`middleman mcp`), both in v1, shared by in-app and external agents. |
+| Agent transport | REST API + thin **MCP proxy** (`middleman mcp`), shared by in-app and external agents. MCP **core** (`reply_to_thread` etc.) ships in Phase 2a for the in-app agent; **discovery + external-shell** use is Phase 3. |
 | Review identity | A review = the living thread-set on a worktree (one per worktree); addressed by cwd (default) / `local/{repo}/{number}` handle / UI URL. |
 
 ## Building blocks we reuse
@@ -319,30 +319,29 @@ a thin HTTP client of the running middleman REST server (base URL from a
 flag/env, default `http://127.0.0.1:8091`). REST stays the single source
 of truth; MCP is ergonomic tool-calling on top.
 
-Tools (each maps to one REST call):
+**Phase 2a core** (the tools the in-app agent needs; each maps to one REST
+call):
 
-- `list_reviews()` — active local reviews (handle, repo, branch, path,
-  status counts): the "find the review" step.
-- `get_review(selector?)` — review metadata + its threads; `selector`
-  defaults to cwd, also accepts a handle / path / branch / UI URL.
-- `list_threads(review?)` / `get_thread(thread_id)`
+- `list_threads` / `get_thread`
 - `reply_to_thread(thread_id, body)` → POST `…/comments` (`author=agent`)
-- `resolve_thread(thread_id)`, `hide_thread(thread_id)`
-- read-only context helpers that proxy existing endpoints:
-  `get_pull`, `get_diff` (so an agent can see the code)
-- `apply_thread(thread_id)` — exposed for the external agent; the in-app
-  agent doesn't need it (the human drives Apply).
 
-Every review/thread tool takes an optional review selector; omitted ⇒ the
-proxy infers it from cwd (see *Addressing & discovery*).
+In Phase 2a the server operates on a **review handle the runner passes**
+(`local/{repo}/{number}`) — there is no cwd inference yet. When
+`SessionRunner` spawns a discuss/apply turn it adds `--mcp-config
+<generated>` pointing at `middleman mcp` (configured with that handle) and
+lists the relevant `mcp__middleman__*` names in `--allowedTools` (the reply
+tool on discuss turns; reply + the editing tools on apply turns).
 
-**In-app use**: when `SessionRunner` spawns a discuss/apply turn it adds
-`--mcp-config <generated>` pointing at `middleman mcp` and includes the
-relevant `mcp__middleman__*` names in `--allowedTools`.
+**Phase 3 additions** (external-shell use):
 
-**External use**: the user registers it once
-(`claude mcp add middleman -- middleman mcp`, or a project `.mcp.json`) and
-their own `claude` gets the same tools.
+- discovery tools `list_reviews()` and `get_review(selector?)`;
+- cwd-default resolution — a review/thread tool with no explicit selector
+  infers the worktree from `git rev-parse --show-toplevel` (see
+  *Addressing & discovery*);
+- read-only context helpers `get_pull` / `get_diff`, and
+  `resolve_thread` / `hide_thread` / `apply_thread` for an external driver;
+- external registration (`claude mcp add middleman -- middleman mcp`, or a
+  project `.mcp.json`).
 
 Implementation note (flag for plan): implement the stdio JSON-RPC 2.0 loop
 (`initialize`, `tools/list`, `tools/call`) hand-rolled to honor the
@@ -383,19 +382,27 @@ env var as later hardening (flag for review; default none).
 - **Frontend**: `ReviewThreadCard` rendering + Apply gating, mode picker,
   hide; store behavior under polling.
 
-## Build phases (one spec, staged build order)
+## Build phases (staged; each its own plan + independently testable)
 
-Each phase is independently testable; they are not separate specs.
-
-1. **Persist + render.** Migration, thread tables, REST CRUD + hide/resolve,
-   the submit seam in *persist-only* mode, `ReviewThreadCard` + store. End
-   to end: drafts become hideable threads on the diff. No agent yet.
-2. **Discuss / Apply.** Extend `SessionRunner`/`buildSessionPrompt` with the
-   `action` metadata + per-phase tool-gating; discuss & apply endpoints;
-   the in-app agent replies via the reply tool; per-thread Apply + Apply
-   all; *discuss-first* and *act-immediately* modes.
-3. **MCP proxy.** `middleman mcp` over REST; wire the in-app agent's spawn
-   to use it; document the external-shell setup.
+- **Phase 1a — backend (DONE).** Migration + thread tables, REST CRUD +
+  hide/unhide/resolve, generated client, e2e. Persist-only create endpoint.
+- **Phase 1b — frontend (DONE).** `reviewThreads` store, `ReviewThreadCard`
+  inline on the diff, diff-view load lifecycle, local Submit → create
+  threads (persist-only; remote verdict/summary controls hidden for local).
+- **Phase 2a — agent backend.** `middleman mcp` stdio server (core tools
+  `list_threads`/`get_thread`/`reply_to_thread` over REST, on a
+  runner-passed handle); `SessionRunner` discuss/apply turns with `action`
+  metadata + per-phase `--allowedTools`/`--mcp-config` gating; server-driven
+  status; the create endpoint gains a `mode`, plus `apply`/`apply-all`
+  trigger endpoints. One turn in-flight per session. e2e with a fake
+  `claude` (cf. `aireview` tests).
+- **Phase 2b — frontend.** Submit mode picker (discuss-first /
+  act-immediately / persist-only); per-thread **Apply** + **Apply all**;
+  store polling so the agent's async replies/edits surface in the threads +
+  the activity log.
+- **Phase 3 — external MCP.** Discovery (`list_reviews`/`get_review`) +
+  cwd-default resolution + external-shell registration + optional hardening
+  (token auth).
 
 ## Deferred / future
 
