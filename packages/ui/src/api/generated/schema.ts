@@ -682,6 +682,92 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/repos/{owner}/{name}/pulls/{number}/review-threads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get repos by owner by name pulls by number review threads */
+        get: operations["get-repos-by-owner-by-name-pulls-by-number-review-threads"];
+        put?: never;
+        /** Post repos by owner by name pulls by number review threads */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-review-threads"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post repos by owner by name pulls by number review threads by thread ID comments */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-review-threads-by-thread-id-comments"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/hide": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post repos by owner by name pulls by number review threads by thread ID hide */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-review-threads-by-thread-id-hide"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post repos by owner by name pulls by number review threads by thread ID resolve */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-review-threads-by-thread-id-resolve"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/unhide": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post repos by owner by name pulls by number review threads by thread ID unhide */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-review-threads-by-thread-id-unhide"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/repos/{owner}/{name}/pulls/{number}/session": {
         parameters: {
             query?: never;
@@ -1051,6 +1137,17 @@ export interface components {
             readonly $schema?: string;
             question: string;
         };
+        AddReviewThreadCommentInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/AddReviewThreadCommentInputBody.json
+             */
+            readonly $schema?: string;
+            /** @description user (default) | agent */
+            author?: string;
+            body: string;
+        };
         AiBriefResponse: {
             /**
              * Format: uri
@@ -1385,6 +1482,25 @@ export interface components {
             /** @description quick (default) or deep */
             depth?: string;
         };
+        CreateReviewThreadsInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/CreateReviewThreadsInputBody.json
+             */
+            readonly $schema?: string;
+            threads: components["schemas"]["Item"][] | null;
+        };
+        CreateReviewThreadsOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/CreateReviewThreadsOutputBody.json
+             */
+            readonly $schema?: string;
+            /** @description the MR's full review-thread list after creation */
+            threads: components["schemas"]["ReviewThreadResponse"][] | null;
+        };
         CreateWorkspaceInputBody: {
             /**
              * Format: uri
@@ -1640,6 +1756,18 @@ export interface components {
             repo_name: string;
             repo_owner: string;
         };
+        Item: {
+            /** @description the reviewer's root comment */
+            body: string;
+            commit_sha: string;
+            /** Format: int64 */
+            line: number;
+            path: string;
+            /** @description LEFT | RIGHT */
+            side: string;
+            /** Format: int64 */
+            start_line?: number;
+        };
         Label: {
             color: string;
             description?: string;
@@ -1654,6 +1782,15 @@ export interface components {
             /** Format: int64 */
             old_num?: number;
             type: string;
+        };
+        ListReviewThreadsOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/ListReviewThreadsOutputBody.json
+             */
+            readonly $schema?: string;
+            threads: components["schemas"]["ReviewThreadResponse"][] | null;
         };
         ListWorkspacesOutputBody: {
             /**
@@ -2013,6 +2150,41 @@ export interface components {
             /** Format: int64 */
             number: number;
             repo_tracked: boolean;
+        };
+        ReviewThreadCommentResponse: {
+            /** @description user | agent */
+            author: string;
+            body: string;
+            /** @description UTC RFC3339 timestamp */
+            created_at: string;
+            /** Format: int64 */
+            id: number;
+        };
+        ReviewThreadResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/ReviewThreadResponse.json
+             */
+            readonly $schema?: string;
+            comments: components["schemas"]["ReviewThreadCommentResponse"][] | null;
+            commit_sha: string;
+            /** @description UTC RFC3339 timestamp */
+            created_at: string;
+            hidden: boolean;
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            line: number;
+            path: string;
+            /** @description LEFT | RIGHT */
+            side: string;
+            /** Format: int64 */
+            start_line?: number;
+            /** @description open | discussed | applied | resolved */
+            status: string;
+            /** @description UTC RFC3339 timestamp */
+            updated_at: string;
         };
         RunningTurnsResponse: {
             /**
@@ -4030,6 +4202,216 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SubmitReviewResponseBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-repos-by-owner-by-name-pulls-by-number-review-threads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListReviewThreadsOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-review-threads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateReviewThreadsInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreateReviewThreadsOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-review-threads-by-thread-id-comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+                thread_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddReviewThreadCommentInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewThreadResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-review-threads-by-thread-id-hide": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+                thread_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewThreadResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-review-threads-by-thread-id-resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+                thread_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewThreadResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-review-threads-by-thread-id-unhide": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+                thread_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewThreadResponse"];
                 };
             };
             /** @description Error */
