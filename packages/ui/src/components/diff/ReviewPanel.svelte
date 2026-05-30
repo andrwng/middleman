@@ -12,7 +12,7 @@
 
   const { owner, name, number, onclose }: Props = $props();
 
-  const { diff: diffStore, pulls: pullsStore, worktreeSession } = getStores();
+  const { diff: diffStore, pulls: pullsStore, reviewThreads: reviewThreadsStore } = getStores();
   const client = getClient();
 
   // For local worktrees the submit verb sends review feedback to
@@ -63,55 +63,40 @@
   // everything getting anchored to HEAD at publish time. The
   // review-level commit_id is still sent as a fallback used when a
   // comment has no commit_sha of its own.
-  // Compose review feedback as a markdown turn the Claude session
-  // can read. Each draft comment becomes a quoted block tagged with
-  // file:line so Claude has the same anchors the reviewer was
-  // looking at.
-  function compileReviewFeedback(
-    body: string,
-    comments: typeof draft.comments,
-  ): string {
-    const parts: string[] = [];
-    if (body.trim()) parts.push(body.trim());
-    if (comments.length > 0) {
-      parts.push("Inline review comments:");
-      for (const c of comments) {
-        const range = c.startLine != null && c.startLine !== c.line
-          ? `${c.startLine}–${c.line}`
-          : `${c.line}`;
-        parts.push(
-          `- **${c.path}**:${range} (${c.side === "LEFT" ? "before" : "after"})\n` +
-          `  ${c.body.split("\n").join("\n  ")}`,
-        );
-      }
-    }
-    return parts.join("\n\n");
-  }
-
   async function onSubmit(): Promise<void> {
     if (submitting) return;
     submitting = true;
     errorMsg = null;
 
-    // Local worktrees route through the session runner instead of
-    // GitHub's review-submit endpoint. The Claude session is the
-    // "downstream" of the review submission — it's what acts on the
-    // feedback.
     if (isLocal) {
+      // Local worktrees persist drafts as review threads (Phase 1b).
+      // Only inline comments become threads; the review summary/event
+      // are not used here (the discuss/apply agent + mode picker land
+      // in Phase 2). Reply-drafts (inReplyTo) are not part of the local
+      // flow — replies are added directly on a thread card.
+      const drafts = draft.comments
+        .filter((c) => c.inReplyTo == null)
+        .map((c) => ({
+          path: c.path,
+          side: c.side,
+          line: c.line,
+          ...(c.startLine != null ? { startLine: c.startLine } : {}),
+          commitSha: c.commitSha,
+          body: c.body,
+        }));
+      if (drafts.length === 0) {
+        errorMsg = "Add at least one inline comment to create review threads";
+        submitting = false; // outer onSubmit already set submitting = true
+        return;
+      }
       try {
-        const content = compileReviewFeedback(draft.body, draft.comments);
-        if (!content.trim()) {
-          errorMsg = "Add at least one inline comment or a summary";
+        const ok = await reviewThreadsStore.createThreads(drafts);
+        if (!ok) {
+          errorMsg = reviewThreadsStore.getError() ?? "Failed to create review threads";
           return;
         }
-        await worktreeSession.submitTurn(owner, name, number, {
-          type: "review_feedback",
-          content,
-        });
         diffStore.clearDraft();
         onclose();
-      } catch (err) {
-        errorMsg = err instanceof Error ? err.message : String(err);
       } finally {
         submitting = false;
       }
