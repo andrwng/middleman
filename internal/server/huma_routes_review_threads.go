@@ -48,19 +48,25 @@ type listReviewThreadsOutput struct {
 	}
 }
 
+// reviewThreadDraft is one inline draft comment in a create request: an
+// anchor (path/side/line[/start_line]/commit) plus the reviewer's root
+// comment body. Named (not anonymous) so the generated client exposes a
+// meaningful type rather than the auto-named "Item".
+type reviewThreadDraft struct {
+	Path      string `json:"path"`
+	Side      string `json:"side" doc:"LEFT | RIGHT"`
+	Line      int    `json:"line"`
+	StartLine *int   `json:"start_line,omitempty"`
+	CommitSHA string `json:"commit_sha"`
+	Body      string `json:"body" doc:"the reviewer's root comment"`
+}
+
 type createReviewThreadsInput struct {
 	Owner  string `path:"owner"`
 	Name   string `path:"name"`
 	Number int    `path:"number"`
 	Body   struct {
-		Threads []struct {
-			Path      string `json:"path"`
-			Side      string `json:"side" doc:"LEFT | RIGHT"`
-			Line      int    `json:"line"`
-			StartLine *int   `json:"start_line,omitempty"`
-			CommitSHA string `json:"commit_sha"`
-			Body      string `json:"body" doc:"the reviewer's root comment"`
-		} `json:"threads"`
+		Threads []reviewThreadDraft `json:"threads"`
 	}
 }
 

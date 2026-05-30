@@ -357,8 +357,8 @@ type CreateBriefInputBody struct {
 // CreateReviewThreadsInputBody defines model for CreateReviewThreadsInputBody.
 type CreateReviewThreadsInputBody struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema  *string `json:"$schema,omitempty"`
-	Threads *[]Item `json:"threads"`
+	Schema  *string              `json:"$schema,omitempty"`
+	Threads *[]ReviewThreadDraft `json:"threads"`
 }
 
 // CreateReviewThreadsOutputBody defines model for CreateReviewThreadsOutputBody.
@@ -567,19 +567,6 @@ type IssueResponse struct {
 	Labels          *[]Label   `json:"labels,omitempty"`
 	RepoName        string     `json:"repo_name"`
 	RepoOwner       string     `json:"repo_owner"`
-}
-
-// Item defines model for Item.
-type Item struct {
-	// Body the reviewer's root comment
-	Body      string `json:"body"`
-	CommitSha string `json:"commit_sha"`
-	Line      int64  `json:"line"`
-	Path      string `json:"path"`
-
-	// Side LEFT | RIGHT
-	Side      string `json:"side"`
-	StartLine *int64 `json:"start_line,omitempty"`
 }
 
 // Label defines model for Label.
@@ -899,6 +886,19 @@ type ReviewThreadCommentResponse struct {
 	// CreatedAt UTC RFC3339 timestamp
 	CreatedAt string `json:"created_at"`
 	Id        int64  `json:"id"`
+}
+
+// ReviewThreadDraft defines model for ReviewThreadDraft.
+type ReviewThreadDraft struct {
+	// Body the reviewer's root comment
+	Body      string `json:"body"`
+	CommitSha string `json:"commit_sha"`
+	Line      int64  `json:"line"`
+	Path      string `json:"path"`
+
+	// Side LEFT | RIGHT
+	Side      string `json:"side"`
+	StartLine *int64 `json:"start_line,omitempty"`
 }
 
 // ReviewThreadResponse defines model for ReviewThreadResponse.
