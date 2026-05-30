@@ -119,7 +119,7 @@ type SubmitTurnInput struct {
 	// session — the runner primes the prompt with worktree context
 	// instead of relying on --resume.
 	IsFirstTurn bool
-	// Action is "discuss" | "apply" | "steer" | "" (legacy review_feedback/user_message).
+	// Action is "discuss" | "apply" | "" (legacy review_feedback/user_message free-text follow-ups).
 	Action  string
 	Threads []ThreadContext
 	MCP     *MCPConfig
@@ -246,7 +246,7 @@ func (r *SessionRunner) runTurn(
 		"--allowedTools", allowed,
 	}
 
-	// Wire the middleman MCP server for this turn (discuss/apply/steer).
+	// Wire the middleman MCP server for this turn (discuss/apply).
 	if in.MCP != nil {
 		mcpConfigPath, cleanup, err := writeMCPConfig(*in.MCP)
 		if err != nil {
@@ -626,7 +626,7 @@ func buildSessionPrompt(in SubmitTurnInput) string {
 		return b.String()
 	}
 
-	// legacy / steer (review_feedback + free-text follow-ups)
+	// legacy path (review_feedback + free-text follow-ups)
 	if !in.IsFirstTurn {
 		return in.UserTurnContent
 	}

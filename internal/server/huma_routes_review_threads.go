@@ -380,7 +380,10 @@ func (s *Server) kickoffReviewTurn(
 	}
 	baseRef := s.lookupBaseRefForWorktree(ctx, *w)
 	base, _ := worktrees.ResolveBase(ctx, w.Path, baseRef)
-	exe, _ := os.Executable()
+	exe, err := os.Executable()
+	if err != nil || exe == "" {
+		return huma.Error500InternalServerError("cannot resolve middleman executable for the MCP server")
+	}
 	// discuss runs as a read-only review_feedback turn; apply runs as a
 	// user_message turn whose tools may edit the worktree.
 	verb := "review_feedback"
