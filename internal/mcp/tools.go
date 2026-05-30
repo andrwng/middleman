@@ -104,7 +104,7 @@ func (s *Server) restJSON(method, path string, body []byte) (string, error) {
 	return string(b), nil
 }
 
-func filterThread(listJSON string, id int) (string, error) {
+func filterThread(listJSON string, id int64) (string, error) {
 	var parsed struct {
 		Threads []json.RawMessage `json:"threads"`
 	}
@@ -113,7 +113,7 @@ func filterThread(listJSON string, id int) (string, error) {
 	}
 	for _, raw := range parsed.Threads {
 		var probe struct {
-			ID int `json:"id"`
+			ID int64 `json:"id"`
 		}
 		if json.Unmarshal(raw, &probe) == nil && probe.ID == id {
 			return string(raw), nil
@@ -122,15 +122,17 @@ func filterThread(listJSON string, id int) (string, error) {
 	return "", fmt.Errorf("thread %d not found", id)
 }
 
-func intArg(args map[string]any, key string) (int, error) {
+func intArg(args map[string]any, key string) (int64, error) {
 	v, ok := args[key]
 	if !ok {
 		return 0, fmt.Errorf("%s is required", key)
 	}
 	switch n := v.(type) {
 	case float64: // JSON numbers decode to float64
-		return int(n), nil
+		return int64(n), nil
 	case int:
+		return int64(n), nil
+	case int64:
 		return n, nil
 	default:
 		return 0, fmt.Errorf("%s must be a number", key)
