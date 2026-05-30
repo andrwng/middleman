@@ -153,3 +153,115 @@ func scanReviewThread(row scanner) (ReviewThread, error) {
 	}
 	return t, nil
 }
+
+// AddReviewThreadComment appends a comment and bumps the thread's
+// updated_at, in one transaction. turnID is nil for user comments.
+func (d *DB) AddReviewThreadComment(ctx context.Context, threadID int64, author, body string, turnID *int64) (ReviewThreadComment, error) {
+	tx, err := d.rw.BeginTx(ctx, nil)
+	if err != nil {
+		return ReviewThreadComment{}, fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.ExecContext(ctx, `
+		INSERT INTO middleman_review_thread_comments (thread_id, author, body, turn_id)
+		VALUES (?, ?, ?, ?)`,
+		threadID, author, body, int64PtrToNullable(turnID),
+	)
+	if err != nil {
+		return ReviewThreadComment{}, fmt.Errorf("insert comment: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return ReviewThreadComment{}, fmt.Errorf("last insert id: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE middleman_review_threads SET updated_at = datetime('now') WHERE id = ?`,
+		threadID,
+	); err != nil {
+		return ReviewThreadComment{}, fmt.Errorf("bump thread: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return ReviewThreadComment{}, fmt.Errorf("commit: %w", err)
+	}
+	return d.getReviewThreadComment(ctx, id)
+}
+
+func (d *DB) getReviewThreadComment(ctx context.Context, id int64) (ReviewThreadComment, error) {
+	return scanReviewThreadComment(d.ro.QueryRowContext(ctx, `
+		SELECT id, thread_id, author, body, turn_id, created_at
+		  FROM middleman_review_thread_comments WHERE id = ?`, id))
+}
+
+// ListReviewThreadCommentsForMR returns every comment across the MR's
+// threads, oldest-first by id. The handler groups them by thread_id.
+func (d *DB) ListReviewThreadCommentsForMR(ctx context.Context, mrID int64) ([]ReviewThreadComment, error) {
+	rows, err := d.ro.QueryContext(ctx, `
+		SELECT c.id, c.thread_id, c.author, c.body, c.turn_id, c.created_at
+		  FROM middleman_review_thread_comments c
+		  JOIN middleman_review_threads t ON t.id = c.thread_id
+		 WHERE t.mr_id = ?
+		 ORDER BY c.id ASC`, mrID)
+	if err != nil {
+		return nil, fmt.Errorf("list comments for mr: %w", err)
+	}
+	defer rows.Close()
+	var out []ReviewThreadComment
+	for rows.Next() {
+		c, err := scanReviewThreadComment(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// SetReviewThreadStatus sets status (open|discussed|applied|resolved)
+// and bumps updated_at.
+func (d *DB) SetReviewThreadStatus(ctx context.Context, id int64, status string) error {
+	_, err := d.rw.ExecContext(ctx, `
+		UPDATE middleman_review_threads
+		   SET status = ?, updated_at = datetime('now')
+		 WHERE id = ?`, status, id)
+	return err
+}
+
+func (d *DB) HideReviewThread(ctx context.Context, id int64) error {
+	_, err := d.rw.ExecContext(ctx, `
+		UPDATE middleman_review_threads
+		   SET hidden_at = datetime('now'), updated_at = datetime('now')
+		 WHERE id = ?`, id)
+	return err
+}
+
+func (d *DB) UnhideReviewThread(ctx context.Context, id int64) error {
+	_, err := d.rw.ExecContext(ctx, `
+		UPDATE middleman_review_threads
+		   SET hidden_at = NULL, updated_at = datetime('now')
+		 WHERE id = ?`, id)
+	return err
+}
+
+func scanReviewThreadComment(row scanner) (ReviewThreadComment, error) {
+	var c ReviewThreadComment
+	var turnID sql.NullInt64
+	err := row.Scan(&c.ID, &c.ThreadID, &c.Author, &c.Body, &turnID, &c.CreatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ReviewThreadComment{}, err
+		}
+		return ReviewThreadComment{}, fmt.Errorf("scan comment: %w", err)
+	}
+	if turnID.Valid {
+		c.TurnID = &turnID.Int64
+	}
+	return c, nil
+}
+
+func int64PtrToNullable(p *int64) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}

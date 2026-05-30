@@ -85,3 +85,42 @@ func TestCreateAndListReviewThreads(t *testing.T) {
 	assert.Equal("a.go", listed[0].Path)
 	assert.Equal("b.go", listed[1].Path)
 }
+
+func TestReviewThreadCommentsAndState(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+	d := openTestDB(t)
+	ctx := context.Background()
+	mrID := insertTestMRLocal(t, d)
+
+	threads, err := d.CreateReviewThreads(ctx, mrID, []NewReviewThread{
+		{Path: "a.go", Side: "RIGHT", Line: 1, CommitSHA: "abc", Body: "root"},
+	})
+	require.NoError(err)
+	threadID := threads[0].ID
+
+	// Add an agent reply.
+	c, err := d.AddReviewThreadComment(ctx, threadID, "agent", "i'd refactor X", nil)
+	require.NoError(err)
+	assert.Equal("agent", c.Author)
+	assert.Equal(threadID, c.ThreadID)
+
+	comments, err := d.ListReviewThreadCommentsForMR(ctx, mrID)
+	require.NoError(err)
+	require.Len(comments, 2) // root + reply
+	assert.Equal("user", comments[0].Author)
+	assert.Equal("agent", comments[1].Author)
+
+	// Status transition + hide.
+	require.NoError(d.SetReviewThreadStatus(ctx, threadID, "discussed"))
+	require.NoError(d.HideReviewThread(ctx, threadID))
+	got, err := d.GetReviewThread(ctx, threadID)
+	require.NoError(err)
+	assert.Equal("discussed", got.Status)
+	require.NotNil(got.HiddenAt)
+
+	require.NoError(d.UnhideReviewThread(ctx, threadID))
+	got, err = d.GetReviewThread(ctx, threadID)
+	require.NoError(err)
+	assert.Nil(got.HiddenAt)
+}
