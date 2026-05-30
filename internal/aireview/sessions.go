@@ -226,6 +226,9 @@ func (r *SessionRunner) runTurn(
 	// summary. --verbose is required by the CLI for stream-json with
 	// -p.
 	allowed := "Read,Glob,Grep"
+	// These tool names must stay in sync with internal/mcp/tools.go. The
+	// "mcp__<server>__<tool>" prefix uses the --mcp-config server key
+	// "middleman" written by writeMCPConfig (not mcp.Config.ServerName).
 	mcpToolNames := "mcp__middleman__list_threads,mcp__middleman__get_thread,mcp__middleman__reply_to_thread"
 	if in.MCP != nil {
 		allowed += "," + mcpToolNames
@@ -573,6 +576,7 @@ func writeMCPConfig(c MCPConfig) (string, func(), error) {
 	}
 	if _, err := f.Write(b); err != nil {
 		_ = f.Close()
+		_ = os.Remove(f.Name())
 		return "", func() {}, err
 	}
 	_ = f.Close()

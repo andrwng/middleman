@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -65,6 +66,22 @@ func waitTurnDone(t *testing.T, database *db.DB, turnID int64) db.WorktreeSessio
 	return db.WorktreeSessionTurn{}
 }
 
+// allowedToolsArg returns the value passed to --allowedTools in the
+// recorded argv (the fake writes one argv element per line).
+func allowedToolsArg(t *testing.T, argsFile string) string {
+	t.Helper()
+	b, err := os.ReadFile(argsFile)
+	require.NoError(t, err)
+	lines := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+	for i, l := range lines {
+		if l == "--allowedTools" && i+1 < len(lines) {
+			return lines[i+1]
+		}
+	}
+	require.FailNow(t, "--allowedTools not found in recorded argv")
+	return ""
+}
+
 func TestDiscussTurnIsReadOnlyAndConfiguresMCP(t *testing.T) {
 	require := require.New(t)
 	database, runner, tmp, sess, argsFile := setupRecordingSessionTest(t)
@@ -97,10 +114,11 @@ func TestDiscussTurnIsReadOnlyAndConfiguresMCP(t *testing.T) {
 	require.NoError(err)
 	args := string(argv)
 	require.Contains(args, "--mcp-config")
-	require.Contains(args, "mcp__middleman__reply_to_thread")
-	require.NotContains(args, "Edit") // discuss is read-only
-	require.NotContains(args, "Write")
-	require.NotContains(args, "Bash")
+	// discuss is read-only: exact gating, no Edit/Write/Bash.
+	require.Equal(
+		"Read,Glob,Grep,mcp__middleman__list_threads,mcp__middleman__get_thread,mcp__middleman__reply_to_thread",
+		allowedToolsArg(t, argsFile),
+	)
 }
 
 func TestApplyTurnGetsEditTools(t *testing.T) {
@@ -134,6 +152,10 @@ func TestApplyTurnGetsEditTools(t *testing.T) {
 	argv, err := os.ReadFile(argsFile)
 	require.NoError(err)
 	args := string(argv)
-	require.Contains(args, "Edit")
 	require.Contains(args, "--mcp-config")
+	// apply gets the edit tools appended after the read-only + mcp set.
+	require.Equal(
+		"Read,Glob,Grep,mcp__middleman__list_threads,mcp__middleman__get_thread,mcp__middleman__reply_to_thread,Edit,Write,MultiEdit,Bash",
+		allowedToolsArg(t, argsFile),
+	)
 }
