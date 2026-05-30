@@ -287,7 +287,7 @@ func (s *Server) getCommitsLocal(
 	// than failing the whole panel.
 	if heads, err := worktrees.BranchHeads(ctx, w.Path, w.Branch); err != nil {
 		slog.WarnContext(ctx, "resolve branch heads for worktree",
-			"path", w.Path, "error", err)
+			"path", w.Path, "err", err)
 	} else {
 		for i := range resp.Commits {
 			if names := heads[resp.Commits[i].SHA]; len(names) > 0 {
