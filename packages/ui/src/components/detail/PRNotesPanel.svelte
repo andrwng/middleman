@@ -2,6 +2,9 @@
   import { getStores } from "../../context.js";
   import { timeAgo } from "../../utils/time.js";
 
+  const NOTES_PLACEHOLDER =
+    "Private notes for this PR. Auto-saved, synced across devices.\n\nIdeas welcome: open questions, follow-up TODOs, things to bring up in review.";
+
   const { diff } = getStores();
 
   let open = $state(false);
@@ -114,7 +117,7 @@
         value={content}
         oninput={onInput}
         onblur={onBlur}
-        placeholder={"Private notes for this PR. Auto-saved, synced across devices.\n\nIdeas welcome: open questions, follow-up TODOs, things to bring up in review."}
+        placeholder={NOTES_PLACEHOLDER}
         spellcheck="true"
       ></textarea>
     </div>

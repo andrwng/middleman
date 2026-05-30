@@ -18,7 +18,6 @@ export function createAIStore(opts?: AIStoreOptions) {
 
   let threads = $state<AIThread[]>([]);
   let questions = $state<AIQuestion[]>([]);
-  let loading = $state(false);
   let errorMsg = $state<string | null>(null);
   let pollHandle: ReturnType<typeof setInterval> | null = null;
   // Ids the user just deleted. If a refresh poll races ahead of
@@ -78,7 +77,6 @@ export function createAIStore(opts?: AIStoreOptions) {
 
   async function refresh(): Promise<void> {
     if (!owner) return;
-    loading = true;
     try {
       const res = await fetch(`${prefix()}/ai-threads`);
       if (!res.ok) return;
@@ -96,8 +94,6 @@ export function createAIStore(opts?: AIStoreOptions) {
       );
     } catch {
       /* swallow; next poll will retry */
-    } finally {
-      loading = false;
     }
   }
 

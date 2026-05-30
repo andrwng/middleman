@@ -2,6 +2,7 @@
   import { onMount, untrack } from "svelte";
   import { getStores } from "../../context.js";
   import { renderMarkdown } from "../../utils/markdown.js";
+  import { localTimeLabel } from "../../utils/time.js";
   import SessionToolTimeline from "./SessionToolTimeline.svelte";
 
   // Conversation pane for a local worktree session. Renders the
@@ -213,7 +214,7 @@
             {:else if t.status === "cancelled"}
               <span class="turn__status">Cancelled</span>
             {/if}
-            <time class="turn__time">{new Date(t.created_at).toLocaleTimeString()}</time>
+            <time class="turn__time">{localTimeLabel(t.created_at)}</time>
           </header>
           {#if t.error}
             <pre class="turn__error">{t.error}</pre>
