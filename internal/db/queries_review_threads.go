@@ -258,10 +258,3 @@ func scanReviewThreadComment(row scanner) (ReviewThreadComment, error) {
 	}
 	return c, nil
 }
-
-func int64PtrToNullable(p *int64) any {
-	if p == nil {
-		return nil
-	}
-	return *p
-}
