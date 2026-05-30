@@ -90,6 +90,7 @@ export function createReviewThreadsStore(opts: ReviewThreadsStoreOptions) {
   }
 
   async function createThreads(drafts: ReviewThreadDraftInput[]): Promise<boolean> {
+    error = null;
     try {
       const { data, error: err } = await client.POST(
         "/repos/{owner}/{name}/pulls/{number}/review-threads",
@@ -119,6 +120,7 @@ export function createReviewThreadsStore(opts: ReviewThreadsStoreOptions) {
   async function addComment(
     threadID: number, body: string, author?: "user" | "agent",
   ): Promise<boolean> {
+    error = null;
     try {
       const { data, error: err } = await client.POST(
         "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/comments",
@@ -137,6 +139,7 @@ export function createReviewThreadsStore(opts: ReviewThreadsStoreOptions) {
   }
 
   async function resolve(threadID: number): Promise<boolean> {
+    error = null;
     try {
       const { data, error: err } = await client.POST(
         "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/resolve",
@@ -152,6 +155,7 @@ export function createReviewThreadsStore(opts: ReviewThreadsStoreOptions) {
   }
 
   async function hide(threadID: number): Promise<boolean> {
+    error = null;
     try {
       const { data, error: err } = await client.POST(
         "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/hide",
@@ -167,6 +171,7 @@ export function createReviewThreadsStore(opts: ReviewThreadsStoreOptions) {
   }
 
   async function unhide(threadID: number): Promise<boolean> {
+    error = null;
     try {
       const { data, error: err } = await client.POST(
         "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/unhide",
