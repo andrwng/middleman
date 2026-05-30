@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -598,6 +599,86 @@ EOF
 	assert.Equal(docPath, threads[0].Path)
 	assert.EqualValues(2, threads[0].AnchorLine)
 	assert.Equal("RIGHT", threads[0].AnchorSide)
+}
+
+func TestAPILocalCommitsIncludeBranchHeads(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on PATH")
+	}
+	require := require.New(t)
+	assert := Assert.New(t)
+	srv, database := setupTestServer(t)
+	client := setupTestClient(t, srv)
+	ctx := context.Background()
+
+	dir := t.TempDir()
+	canonDir, err := filepath.EvalSymlinks(dir)
+	require.NoError(err)
+
+	// Base commit on main, published to a bare origin so ResolveBase
+	// finds origin/main and the feature commits fall in range.
+	runGitWT(t, "", "init", "--initial-branch=main", dir)
+	runGitWT(t, dir, "config", "user.email", "test@example.com")
+	runGitWT(t, dir, "config", "user.name", "Test")
+	require.NoError(os.WriteFile(filepath.Join(dir, "base.txt"), []byte("base\n"), 0o644))
+	runGitWT(t, dir, "add", "base.txt")
+	runGitWT(t, dir, "commit", "-m", "base")
+	originDir := dir + "-origin.git"
+	runGitWT(t, "", "init", "--bare", originDir)
+	runGitWT(t, dir, "remote", "add", "origin", originDir)
+	runGitWT(t, dir, "push", "origin", "main")
+	runGitWT(t, dir, "fetch", "origin")
+
+	// Worktree branch 'feature', two commits ahead of origin/main.
+	runGitWT(t, dir, "checkout", "-b", "feature")
+	require.NoError(os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a\n"), 0o644))
+	runGitWT(t, dir, "add", "a.txt")
+	runGitWT(t, dir, "commit", "-m", "add a")
+	midOut, err := exec.Command("git", "-C", dir, "rev-parse", "HEAD").Output()
+	require.NoError(err)
+	midSHA := strings.TrimSpace(string(midOut))
+	require.NoError(os.WriteFile(filepath.Join(dir, "b.txt"), []byte("b\n"), 0o644))
+	runGitWT(t, dir, "add", "b.txt")
+	runGitWT(t, dir, "commit", "-m", "add b")
+	headOut, err := exec.Command("git", "-C", dir, "rev-parse", "HEAD").Output()
+	require.NoError(err)
+	headSHA := strings.TrimSpace(string(headOut))
+
+	// Two more local branches point at the middle commit. The current
+	// branch ('feature', at HEAD) must not be attributed to its own tip.
+	runGitWT(t, dir, "branch", "stack/part-1", midSHA)
+	runGitWT(t, dir, "branch", "spike", midSHA)
+
+	repoID, err := database.UpsertLocalRepo(ctx, "demo")
+	require.NoError(err)
+	w, err := database.UpsertWorktree(ctx, repoID, db.ScannedWorktree{
+		Path:    canonDir,
+		Branch:  "feature",
+		HeadSHA: headSHA,
+	})
+	require.NoError(err)
+
+	resp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberCommitsWithResponse(
+		ctx, "local", "demo", w.ID,
+	)
+	require.NoError(err)
+	require.Equal(200, resp.StatusCode())
+	require.NotNil(resp.JSON200)
+	commits := *resp.JSON200.Commits
+	require.Len(commits, 2) // feature is two commits ahead of origin/main
+
+	var midHeads, headHeads *[]string
+	for i := range commits {
+		switch commits[i].Sha {
+		case midSHA:
+			midHeads = commits[i].BranchHeads
+		case headSHA:
+			headHeads = commits[i].BranchHeads
+		}
+	}
+	require.NotNil(midHeads)
+	assert.Equal([]string{"spike", "stack/part-1"}, *midHeads)
+	assert.Nil(headHeads) // 'feature' (current branch) is excluded
 }
 
 func runGitWT(t *testing.T, dir string, args ...string) {
