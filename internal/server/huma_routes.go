@@ -497,6 +497,7 @@ func (s *Server) registerAPI(api huma.API) {
 	}, s.deleteWorkspace)
 
 	s.registerSessionRoutes(api)
+	s.registerReviewThreadRoutes(api)
 }
 
 func NewOpenAPI() *huma.OpenAPI {
