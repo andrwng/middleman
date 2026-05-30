@@ -20,6 +20,7 @@ import (
 	"github.com/wesm/middleman/internal/db"
 	"github.com/wesm/middleman/internal/gitclone"
 	ghclient "github.com/wesm/middleman/internal/github"
+	"github.com/wesm/middleman/internal/mcp"
 	"github.com/wesm/middleman/internal/server"
 	"github.com/wesm/middleman/internal/stacks"
 	"github.com/wesm/middleman/internal/web"
@@ -50,6 +51,8 @@ func runCLI(args []string, stdout io.Writer) error {
 			return err
 		case "config":
 			return runConfigCLI(args[1:], stdout)
+		case "mcp":
+			return runMCP(args[1:], os.Stdin, stdout)
 		}
 	}
 
@@ -107,6 +110,34 @@ func runConfigRead(args []string, stdout io.Writer) error {
 	default:
 		return fmt.Errorf("unsupported config key %q", fs.Arg(0))
 	}
+}
+
+// runMCP parses flags and serves the stdio MCP server on stdin/stdout.
+func runMCP(args []string, in io.Reader, out io.Writer) error {
+	return runMCPWith(args, in, out)
+}
+
+func runMCPWith(args []string, in io.Reader, out io.Writer) error {
+	fs := flag.NewFlagSet("middleman mcp", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	baseURL := fs.String("base-url", "http://127.0.0.1:8091", "middleman REST base URL")
+	owner := fs.String("owner", "", "review owner (local)")
+	name := fs.String("name", "", "review repo name")
+	number := fs.Int("number", 0, "review number (worktree id)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *owner == "" || *name == "" || *number == 0 {
+		return fmt.Errorf("mcp: --owner, --name and --number are required")
+	}
+	srv := mcp.New(mcp.Config{
+		ServerName:   "middleman",
+		BaseURL:      *baseURL,
+		ReviewOwner:  *owner,
+		ReviewName:   *name,
+		ReviewNumber: *number,
+	})
+	return srv.Serve(context.Background(), in, out)
 }
 
 func run(configPath string) error {
