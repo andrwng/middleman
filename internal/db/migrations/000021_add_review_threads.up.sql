@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS middleman_review_thread_comments (
     thread_id  INTEGER  NOT NULL REFERENCES middleman_review_threads(id) ON DELETE CASCADE,
     author     TEXT     NOT NULL,                  -- 'user' | 'agent'
     body       TEXT     NOT NULL,
-    turn_id    INTEGER,                            -- nullable; worktree_session_turns.id for agent replies (Phase 2)
+    turn_id    INTEGER,                            -- nullable; soft reference (no FK) to middleman_worktree_session_turns.id, set for agent replies in Phase 2
     created_at DATETIME NOT NULL DEFAULT (datetime('now'))
 );
 
