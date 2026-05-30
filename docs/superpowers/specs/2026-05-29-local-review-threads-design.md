@@ -65,6 +65,7 @@ We want three things:
 | "Go"/Apply | Per-thread lifecycle + per-thread Apply + Apply all. Apply = "edit the code now." |
 | Surfaces | Threads = curated replies; activity window = working log + steering. |
 | Agent transport | REST API + thin **MCP proxy** (`middleman mcp`), both in v1, shared by in-app and external agents. |
+| Review identity | A review = the living thread-set on a worktree (one per worktree); addressed by cwd (default) / `local/{repo}/{number}` handle / UI URL. |
 
 ## Building blocks we reuse
 
@@ -255,11 +256,47 @@ power users — flagged for review, default off.)
   the worktree) updates — the reviewer sees the fix land, then resolves /
   hides or replies for another round.
 
+## Addressing & discovery
+
+A *review* is identified by its **worktree**: one living review per
+worktree — the set of `review_threads` on that worktree's synthetic MR.
+Threads accumulate across sessions, the way comments accumulate on a PR;
+there is no separate per-round review object. (Decision: worktree-scoped,
+not discrete review rounds — revisit only if discrete rounds are ever
+needed.)
+
+An agent points at a review three ways:
+
+1. **cwd — default, zero-config.** The shell-native happy path: start
+   `claude` in the worktree and the proxy resolves its own cwd via
+   `git rev-parse --show-toplevel`, matched against
+   `middleman_worktrees.path`. "The review on this worktree." The in-app
+   agent gets this for free — `runTurn` already sets `cmd.Dir` to the
+   worktree.
+2. **Handle — `local/{repo}/{number}`.** The same triple the UI and REST
+   already use (number = worktree id); stable while the worktree exists.
+   Paste it like a PR reference.
+3. **URL.** middleman serves the web UI, so each review has a real
+   `http://127.0.0.1:8091/...` route encoding `local/{repo}/{number}` — the
+   PR-URL analog. The proxy accepts it and extracts the handle.
+
+Discovery endpoints (not PR-shaped): `GET /local/reviews` lists local
+reviews (worktrees with threads — handle, repo, branch, path, status
+counts) and `GET /local/reviews/resolve?path=<abs>` maps a filesystem path
+to a handle (built on the existing worktree listing/lookup). These back the
+`list_reviews` / `get_review` MCP tools.
+
+So the remote flow — hand the agent a PR link + context, it queries the
+comments — maps directly: hand it the handle/URL (or just `cd` in) +
+context; it calls `get_review` → `list_threads` → `reply_to_thread`. The UI
+surfaces the handle/URL (copy affordance) so it can be handed to an agent.
+
 ## REST API
 
 PR-shaped paths, gated by `isLocalSource`; `mr_id` resolved via
 `resolveOrEnsureMRID`. New types in `api_types.go`; regenerate with
-`make api-generate`.
+`make api-generate`. Plus the cross-worktree discovery endpoints in
+*Addressing & discovery*.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -284,13 +321,20 @@ of truth; MCP is ergonomic tool-calling on top.
 
 Tools (each maps to one REST call):
 
-- `list_threads` / `get_thread`
+- `list_reviews()` — active local reviews (handle, repo, branch, path,
+  status counts): the "find the review" step.
+- `get_review(selector?)` — review metadata + its threads; `selector`
+  defaults to cwd, also accepts a handle / path / branch / UI URL.
+- `list_threads(review?)` / `get_thread(thread_id)`
 - `reply_to_thread(thread_id, body)` → POST `…/comments` (`author=agent`)
 - `resolve_thread(thread_id)`, `hide_thread(thread_id)`
 - read-only context helpers that proxy existing endpoints:
   `get_pull`, `get_diff` (so an agent can see the code)
 - `apply_thread(thread_id)` — exposed for the external agent; the in-app
   agent doesn't need it (the human drives Apply).
+
+Every review/thread tool takes an optional review selector; omitted ⇒ the
+proxy infers it from cwd (see *Addressing & discovery*).
 
 **In-app use**: when `SessionRunner` spawns a discuss/apply turn it adds
 `--mcp-config <generated>` pointing at `middleman mcp` and includes the
