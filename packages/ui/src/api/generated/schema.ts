@@ -1489,7 +1489,7 @@ export interface components {
              * @example /api/v1/schemas/CreateReviewThreadsInputBody.json
              */
             readonly $schema?: string;
-            threads: components["schemas"]["Item"][] | null;
+            threads: components["schemas"]["ReviewThreadDraft"][] | null;
         };
         CreateReviewThreadsOutputBody: {
             /**
@@ -1755,18 +1755,6 @@ export interface components {
             labels?: components["schemas"]["Label"][] | null;
             repo_name: string;
             repo_owner: string;
-        };
-        Item: {
-            /** @description the reviewer's root comment */
-            body: string;
-            commit_sha: string;
-            /** Format: int64 */
-            line: number;
-            path: string;
-            /** @description LEFT | RIGHT */
-            side: string;
-            /** Format: int64 */
-            start_line?: number;
         };
         Label: {
             color: string;
@@ -2159,6 +2147,18 @@ export interface components {
             created_at: string;
             /** Format: int64 */
             id: number;
+        };
+        ReviewThreadDraft: {
+            /** @description the reviewer's root comment */
+            body: string;
+            commit_sha: string;
+            /** Format: int64 */
+            line: number;
+            path: string;
+            /** @description LEFT | RIGHT */
+            side: string;
+            /** Format: int64 */
+            start_line?: number;
         };
         ReviewThreadResponse: {
             /**
