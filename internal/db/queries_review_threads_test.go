@@ -111,6 +111,13 @@ func TestReviewThreadCommentsAndState(t *testing.T) {
 	assert.Equal("user", comments[0].Author)
 	assert.Equal("agent", comments[1].Author)
 
+	// A comment carrying a turn id round-trips the nullable turn_id.
+	tid := int64(42)
+	withTurn, err := d.AddReviewThreadComment(ctx, threadID, "agent", "applied in this turn", &tid)
+	require.NoError(err)
+	require.NotNil(withTurn.TurnID)
+	assert.Equal(int64(42), *withTurn.TurnID)
+
 	// Status transition + hide.
 	require.NoError(d.SetReviewThreadStatus(ctx, threadID, "discussed"))
 	require.NoError(d.HideReviewThread(ctx, threadID))
