@@ -23,9 +23,12 @@ export interface ReviewThreadsStoreOptions {
 
 // Threads for a local worktree review, keyed to the single active
 // (owner,name,number). Review threads exist only for local sources, so
-// non-local loads clear state and skip the API. Mutations re-read the
-// affected thread from the response and upsert it — no polling, because
-// Phase 1b has no agent producing async replies.
+// non-local loads clear state and skip the API. Mutations re-read from
+// the response: hide/unhide/resolve/comment upsert the single returned
+// thread, while apply/applyAll/delete replace the whole list. refresh()
+// re-reads silently and is polled by the Provider while an agent turn
+// runs, so the agent's async replies and discussed/applied status land
+// live.
 export function createReviewThreadsStore(opts: ReviewThreadsStoreOptions) {
   const client = opts.client;
   let owner = $state("");
