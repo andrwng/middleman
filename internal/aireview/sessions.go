@@ -126,7 +126,7 @@ type SubmitTurnInput struct {
 	// session — the runner primes the prompt with worktree context
 	// instead of relying on --resume.
 	IsFirstTurn bool
-	// Action is "discuss" | "apply" | "" (legacy review_feedback/user_message free-text follow-ups).
+	// Action is "discuss" | "apply" | "steer" | "" (legacy review_feedback/user_message free-text follow-ups).
 	Action  string
 	Threads []ThreadContext
 	MCP     *MCPConfig

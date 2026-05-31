@@ -192,5 +192,5 @@ func TestSteerTurnIsReadOnlyAndCarriesTheMessage(t *testing.T) {
 	)
 	// The steer prompt carries the reviewer's message AND instructs the reply tool.
 	require.Contains(a, "Can you clarify why this needs a mutex?")
-	require.Contains(a, "reply_to_thread")
+	require.Contains(a, "continue the discussion")
 }
