@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
 
@@ -136,4 +137,30 @@ func TestReviewThreadCommentsAndState(t *testing.T) {
 	got, err = d.GetReviewThread(ctx, threadID)
 	require.NoError(err)
 	assert.Nil(got.HiddenAt)
+}
+
+func TestDeleteReviewThreadRemovesThreadAndComments(t *testing.T) {
+	require := require.New(t)
+	d := openTestDB(t)
+	ctx := context.Background()
+
+	mrID := insertTestMRLocal(t, d)
+
+	created, err := d.CreateReviewThreads(ctx, mrID, []NewReviewThread{
+		{Path: "a.go", Side: "RIGHT", Line: 12, CommitSHA: "abc", Body: "rename this"},
+	})
+	require.NoError(err)
+	require.Len(created, 1)
+	id := created[0].ID
+
+	_, err = d.AddReviewThreadComment(ctx, id, "agent", "done", nil)
+	require.NoError(err)
+
+	require.NoError(d.DeleteReviewThread(ctx, id))
+
+	_, err = d.GetReviewThread(ctx, id)
+	require.ErrorIs(err, sql.ErrNoRows)
+	comments, err := d.ListReviewThreadComments(ctx, id)
+	require.NoError(err)
+	require.Empty(comments)
 }

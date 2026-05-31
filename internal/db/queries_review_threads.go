@@ -250,6 +250,26 @@ func (d *DB) SetReviewThreadStatus(ctx context.Context, id int64, status string)
 	return err
 }
 
+// DeleteReviewThread permanently removes a thread and its comments in one
+// transaction. Comments are deleted explicitly so the call is correct
+// regardless of whether the schema declares an ON DELETE CASCADE.
+func (d *DB) DeleteReviewThread(ctx context.Context, id int64) error {
+	tx, err := d.rw.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM middleman_review_thread_comments WHERE thread_id = ?`, id); err != nil {
+		return fmt.Errorf("delete comments: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM middleman_review_threads WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("delete thread: %w", err)
+	}
+	return tx.Commit()
+}
+
 func (d *DB) HideReviewThread(ctx context.Context, id int64) error {
 	_, err := d.rw.ExecContext(ctx, `
 		UPDATE middleman_review_threads

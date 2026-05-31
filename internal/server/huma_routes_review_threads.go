@@ -107,6 +107,7 @@ func (s *Server) registerReviewThreadRoutes(api huma.API) {
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/review-threads", s.listReviewThreads)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review-threads", s.createReviewThreads)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/comments", s.addReviewThreadComment)
+	huma.Delete(api, "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}", s.deleteReviewThread)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/hide", s.hideLocalReviewThread)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/unhide", s.unhideLocalReviewThread)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/resolve", s.resolveReviewThread)
@@ -280,6 +281,26 @@ func (s *Server) addReviewThreadComment(ctx context.Context, input *addReviewThr
 		return nil, huma.Error500InternalServerError("add comment: " + err.Error())
 	}
 	return s.oneReviewThreadOutput(ctx, input.ThreadID)
+}
+
+func (s *Server) deleteReviewThread(ctx context.Context, input *reviewThreadActionInput) (*listReviewThreadsOutput, error) {
+	if !isLocalSource(input.Owner) {
+		return nil, huma.Error400BadRequest("review threads are local-worktree only")
+	}
+	mrID, err := s.resolveThreadForMR(ctx, input.Owner, input.Name, input.Number, input.ThreadID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.db.DeleteReviewThread(ctx, input.ThreadID); err != nil {
+		return nil, huma.Error500InternalServerError("delete thread: " + err.Error())
+	}
+	threads, err := s.loadReviewThreadsResponse(ctx, mrID)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("reload review threads: " + err.Error())
+	}
+	out := &listReviewThreadsOutput{}
+	out.Body.Threads = threads
+	return out, nil
 }
 
 func (s *Server) hideLocalReviewThread(ctx context.Context, input *reviewThreadActionInput) (*reviewThreadOutput, error) {

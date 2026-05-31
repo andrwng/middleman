@@ -152,3 +152,42 @@ func TestAPIReviewThreadActionUnknownThread(t *testing.T) {
 	require.NoError(err)
 	require.Equal(http.StatusNotFound, resp.StatusCode())
 }
+
+func TestAPIReviewThreadDelete(t *testing.T) {
+	require := require.New(t)
+	srv, database := setupTestServer(t)
+	client := setupTestClient(t, srv)
+	ctx := context.Background()
+	num := seedReviewWorktree(t, database)
+
+	createResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(
+		ctx, "local", "demo", num,
+		generated.CreateReviewThreadsInputBody{
+			Threads: &[]generated.ReviewThreadDraft{
+				{Path: "a.go", Side: "RIGHT", Line: 12, CommitSha: "abc", Body: "rename this"},
+				{Path: "b.go", Side: "RIGHT", Line: 20, CommitSha: "abc", Body: "extract"},
+			},
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, createResp.StatusCode())
+	created := *createResp.JSON200.Threads
+	require.Len(created, 2)
+	threadID := created[0].Id
+
+	delResp, err := client.HTTP.DeleteReposByOwnerByNamePullsByNumberReviewThreadsByThreadIdWithResponse(
+		ctx, "local", "demo", num, threadID,
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, delResp.StatusCode())
+	require.NotNil(delResp.JSON200)
+	require.NotNil(delResp.JSON200.Threads)
+	require.Len(*delResp.JSON200.Threads, 1)
+	require.Equal(created[1].Id, (*delResp.JSON200.Threads)[0].Id)
+
+	delAgain, err := client.HTTP.DeleteReposByOwnerByNamePullsByNumberReviewThreadsByThreadIdWithResponse(
+		ctx, "local", "demo", num, threadID,
+	)
+	require.NoError(err)
+	require.Equal(http.StatusNotFound, delAgain.StatusCode())
+}
