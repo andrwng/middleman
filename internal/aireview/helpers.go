@@ -29,3 +29,16 @@ func setPgid(cmd *exec.Cmd) {
 	}
 	cmd.SysProcAttr.Setpgid = true
 }
+
+// killProcessGroup SIGKILLs the entire process group led by cmd.Process
+// (paired with setPgid). exec.CommandContext's default Cancel only kills
+// the leader, which can leave a grandchild (e.g. a hung shell command)
+// holding the stdout pipe open so the stream loop / cmd.Wait never
+// return. Killing the group closes the pipe and lets the turn finish.
+func killProcessGroup(cmd *exec.Cmd) error {
+	if cmd.Process == nil {
+		return nil
+	}
+	// Negative pid => deliver the signal to the whole process group.
+	return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+}
