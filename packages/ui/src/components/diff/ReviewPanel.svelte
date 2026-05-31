@@ -2,6 +2,7 @@
   import { getClient } from "../../context.js";
   import { getStores } from "../../context.js";
   import type { ReviewEvent } from "../../stores/diff.svelte.js";
+  import type { ReviewThreadMode } from "../../stores/reviewThreads.svelte.js";
 
   interface Props {
     owner: string;
@@ -26,6 +27,14 @@
 
   let submitting = $state(false);
   let errorMsg = $state<string | null>(null);
+
+  // Local-only: what the agent does with the submitted threads.
+  let mode = $state<ReviewThreadMode>("persist-only");
+  const submitLabel = $derived(
+    mode === "discuss-first" ? "Create & discuss"
+      : mode === "act-immediately" ? "Create & apply"
+        : "Create review threads",
+  );
 
   // Split an error string into text segments and http(s) URL segments
   // so the template can render URLs as clickable anchors without
@@ -90,7 +99,10 @@
         return;
       }
       try {
-        const ok = await reviewThreadsStore.createThreads(drafts);
+        const ok = await reviewThreadsStore.createThreads(
+          drafts,
+          mode === "persist-only" ? undefined : mode,
+        );
         if (!ok) {
           errorMsg = reviewThreadsStore.getError() ?? "Failed to create review threads";
           return;
@@ -256,6 +268,30 @@
   </fieldset>
   {/if}
 
+  {#if isLocal}
+  <fieldset class="panel__events">
+    <legend class="visually-hidden">Agent mode</legend>
+    <label class="panel__event">
+      <input type="radio" name="thread-mode" value="persist-only"
+        checked={mode === "persist-only"} onchange={() => (mode = "persist-only")} />
+      <span>Persist only</span>
+      <small>Save threads, no agent</small>
+    </label>
+    <label class="panel__event">
+      <input type="radio" name="thread-mode" value="discuss-first"
+        checked={mode === "discuss-first"} onchange={() => (mode = "discuss-first")} />
+      <span>Discuss first</span>
+      <small>Agent replies (read-only)</small>
+    </label>
+    <label class="panel__event">
+      <input type="radio" name="thread-mode" value="act-immediately"
+        checked={mode === "act-immediately"} onchange={() => (mode = "act-immediately")} />
+      <span>Act immediately</span>
+      <small>Agent edits the worktree</small>
+    </label>
+  </fieldset>
+  {/if}
+
   {#if draft.comments.length > 0}
     <div class="panel__preview">
       <div class="panel__preview-title">{draft.comments.length} inline comment{draft.comments.length === 1 ? "" : "s"}</div>
@@ -301,7 +337,7 @@
       onclick={() => void onSubmit()}
     >
       {#if isLocal}
-        {submitting ? "Creating…" : "Create review threads"}
+        {submitting ? "Creating…" : submitLabel}
       {:else}
         {submitting ? "Publishing…" : "Publish review"}
       {/if}
