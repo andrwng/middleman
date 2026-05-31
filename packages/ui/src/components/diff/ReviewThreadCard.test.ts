@@ -4,9 +4,13 @@ import { cleanup, render, fireEvent } from "@testing-library/svelte";
 const resolve = vi.fn(async () => true);
 const hide = vi.fn(async () => true);
 const addComment = vi.fn(async () => true);
+const apply = vi.fn(async () => true);
+const deleteThread = vi.fn(async () => true);
 
 vi.mock("../../context.js", () => ({
-  getStores: () => ({ reviewThreads: { resolve, hide, unhide: vi.fn(), addComment } }),
+  getStores: () => ({
+    reviewThreads: { resolve, hide, unhide: vi.fn(), addComment, apply, deleteThread },
+  }),
 }));
 
 import ReviewThreadCard from "./ReviewThreadCard.svelte";
@@ -45,5 +49,25 @@ describe("ReviewThreadCard", () => {
     });
     expect(getByText(/hidden/i)).toBeTruthy();
     expect(queryByText("rename this")).toBeNull(); // body not shown while hidden
+  });
+
+  it("shows Apply for open/discussed threads and calls the store", async () => {
+    const { getByTitle } = render(ReviewThreadCard, { props: { thread: thread({ status: "discussed" }) } });
+    await fireEvent.click(getByTitle("Apply this thread's change"));
+    expect(apply).toHaveBeenCalledWith(5);
+  });
+
+  it("hides Apply once applied/resolved", () => {
+    const { queryByTitle } = render(ReviewThreadCard, { props: { thread: thread({ status: "applied" }) } });
+    expect(queryByTitle("Apply this thread's change")).toBeNull();
+  });
+
+  it("delete requires a confirm click before calling the store", async () => {
+    const { getByText, getByTitle } = render(ReviewThreadCard, { props: { thread: thread() } });
+    await fireEvent.click(getByTitle("Delete this thread permanently"));
+    expect(deleteThread).not.toHaveBeenCalled();
+    expect(getByText("Confirm?")).toBeTruthy();
+    await fireEvent.click(getByText("Confirm?"));
+    expect(deleteThread).toHaveBeenCalledWith(5);
   });
 });

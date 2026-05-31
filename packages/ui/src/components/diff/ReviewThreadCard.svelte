@@ -13,6 +13,17 @@
   const comments = $derived(thread.comments ?? []);
   let reply = $state("");
   let sending = $state(false);
+  let confirmingDelete = $state(false);
+  const canApply = $derived(thread.status === "open" || thread.status === "discussed");
+
+  async function onDelete(): Promise<void> {
+    if (!confirmingDelete) {
+      confirmingDelete = true;
+      return;
+    }
+    confirmingDelete = false;
+    await reviewThreads.deleteThread(thread.id);
+  }
 
   async function sendReply(): Promise<void> {
     const text = reply.trim();
@@ -57,6 +68,14 @@
       <span class="review-thread__commit" title="Anchored to this commit">
         {thread.commit_sha.slice(0, 7)}
       </span>
+      {#if canApply}
+        <button
+          type="button"
+          class="review-thread__action"
+          title="Apply this thread's change"
+          onclick={() => void reviewThreads.apply(thread.id)}
+        >Apply</button>
+      {/if}
       <button
         type="button"
         class="review-thread__action"
@@ -69,6 +88,12 @@
         title="Hide this thread"
         onclick={() => void reviewThreads.hide(thread.id)}
       >Hide</button>
+      <button
+        type="button"
+        class="review-thread__action review-thread__action--delete"
+        title="Delete this thread permanently"
+        onclick={() => void onDelete()}
+      >{confirmingDelete ? "Confirm?" : "Delete"}</button>
     </div>
 
     {#each comments as c (c.id)}
@@ -196,6 +221,11 @@
   .review-thread__action:hover {
     background: var(--bg-surface-hover);
     color: var(--text-primary);
+  }
+
+  .review-thread__action--delete:hover {
+    color: var(--accent-red);
+    border-color: var(--accent-red);
   }
 
   .review-thread__comment {
