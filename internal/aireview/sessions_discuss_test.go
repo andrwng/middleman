@@ -159,3 +159,38 @@ func TestApplyTurnGetsEditTools(t *testing.T) {
 		allowedToolsArg(t, argsFile),
 	)
 }
+
+func TestSteerTurnIsReadOnlyAndCarriesTheMessage(t *testing.T) {
+	require := require.New(t)
+	database, runner, tmp, sess, argsFile := setupRecordingSessionTest(t)
+	ctx := context.Background()
+
+	res, err := runner.SubmitTurn(ctx, SubmitTurnInput{
+		SessionID:       sess.ID,
+		WorktreePath:    tmp,
+		IsFirstTurn:     false,
+		Action:          "steer",
+		UserTurnType:    "user_message",
+		UserTurnContent: "Can you clarify why this needs a mutex?",
+		Threads: []ThreadContext{
+			{ID: 1, Path: "a.go", Line: 12, Side: "RIGHT", RootComment: "rename this"},
+		},
+		MCP: &MCPConfig{Binary: "/bin/true", BaseURL: "http://127.0.0.1:8091", Owner: "local", Name: "demo", Number: int(sess.ID)},
+	})
+	require.NoError(err)
+	turn := waitTurnDone(t, database, res.ResponseTurn.ID)
+	require.Equal("done", turn.Status, "raw=%s err=%s", turn.RawJSON, turn.Error)
+
+	args, err := os.ReadFile(argsFile)
+	require.NoError(err)
+	a := string(args)
+	require.Contains(a, "--mcp-config")
+	// steer is read-only: exact gating, no Edit/Write/Bash.
+	require.Equal(
+		"Read,Glob,Grep,mcp__middleman__list_threads,mcp__middleman__get_thread,mcp__middleman__reply_to_thread",
+		allowedToolsArg(t, argsFile),
+	)
+	// The steer prompt carries the reviewer's message AND instructs the reply tool.
+	require.Contains(a, "Can you clarify why this needs a mutex?")
+	require.Contains(a, "reply_to_thread")
+}
