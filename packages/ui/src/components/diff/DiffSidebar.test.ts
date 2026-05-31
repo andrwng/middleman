@@ -63,12 +63,31 @@ function aiStub() {
   };
 }
 
+function reviewThreadsStub() {
+  return {
+    getThreads: () => [],
+    applyAll: vi.fn(async () => true),
+  };
+}
+
+function worktreeSessionStub() {
+  return {
+    hasRunningTurn: () => false,
+  };
+}
+
 function renderSidebar() {
   return render(DiffSidebar, {
     context: new Map<symbol, unknown>([
       [
         STORES_KEY,
-        { diff: diffStub(), pulls: pullsStub(), ai: aiStub() },
+        {
+          diff: diffStub(),
+          pulls: pullsStub(),
+          ai: aiStub(),
+          reviewThreads: reviewThreadsStub(),
+          worktreeSession: worktreeSessionStub(),
+        },
       ],
     ]),
   });
