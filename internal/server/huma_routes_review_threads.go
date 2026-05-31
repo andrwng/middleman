@@ -224,11 +224,11 @@ func (s *Server) createReviewThreads(ctx context.Context, input *createReviewThr
 	}
 	switch input.Body.Mode {
 	case "discuss-first":
-		if err := s.kickoffReviewTurn(ctx, input.Owner, input.Name, input.Number, "discuss", created); err != nil {
+		if err := s.kickoffReviewTurn(ctx, input.Owner, input.Name, input.Number, "discuss", created, ""); err != nil {
 			return nil, err
 		}
 	case "act-immediately":
-		if err := s.kickoffReviewTurn(ctx, input.Owner, input.Name, input.Number, "apply", created); err != nil {
+		if err := s.kickoffReviewTurn(ctx, input.Owner, input.Name, input.Number, "apply", created, ""); err != nil {
 			return nil, err
 		}
 	}
@@ -376,7 +376,7 @@ func (s *Server) oneReviewThreadOutput(ctx context.Context, threadID int64) (*re
 // tool — a failed turn surfaces in the session activity log.
 func (s *Server) kickoffReviewTurn(
 	ctx context.Context, owner, name string, number int,
-	action string, threads []db.ReviewThread,
+	action string, threads []db.ReviewThread, message string,
 ) error {
 	if s.sessionRunner == nil {
 		return huma.Error503ServiceUnavailable("sessions not available")
@@ -405,27 +405,34 @@ func (s *Server) kickoffReviewTurn(
 	if err != nil || exe == "" {
 		return huma.Error500InternalServerError("cannot resolve middleman executable for the MCP server")
 	}
-	// discuss runs as a read-only review_feedback turn; apply runs as a
-	// user_message turn whose tools may edit the worktree.
+	// discuss = read-only review_feedback; apply = user_message (may edit);
+	// steer = read-only user_message continuation carrying the reviewer's message.
 	verb := "review_feedback"
-	if action == "apply" {
+	if action == "apply" || action == "steer" {
 		verb = "user_message"
+	}
+	content := actionMessage(action, tcs)
+	if action == "steer" {
+		content = message
 	}
 	if _, err := s.sessionRunner.SubmitTurn(ctx, aireview.SubmitTurnInput{
 		SessionID: sess.ID, WorktreePath: w.Path, Branch: w.Branch,
 		BaseRef: base.Ref, BaseSHA: base.SHA, HeadSHA: w.HeadSHA,
-		UserTurnType: verb, UserTurnContent: actionMessage(action, tcs), IsFirstTurn: isFirst,
+		UserTurnType: verb, UserTurnContent: content, IsFirstTurn: isFirst,
 		Action: action, Threads: tcs,
 		MCP: &aireview.MCPConfig{Binary: exe, BaseURL: s.selfBaseURL(), Owner: owner, Name: name, Number: number},
 	}); err != nil {
 		return huma.Error500InternalServerError("submit turn: " + err.Error())
 	}
-	target := "discussed"
-	if action == "apply" {
-		target = "applied"
-	}
-	for _, t := range threads {
-		_ = s.db.SetReviewThreadStatus(ctx, t.ID, target)
+	// steer continues an existing discussion — leave thread status unchanged.
+	if action != "steer" {
+		target := "discussed"
+		if action == "apply" {
+			target = "applied"
+		}
+		for _, t := range threads {
+			_ = s.db.SetReviewThreadStatus(ctx, t.ID, target)
+		}
 	}
 	return nil
 }
@@ -460,7 +467,7 @@ func (s *Server) applyReviewThread(ctx context.Context, input *reviewThreadActio
 	if err != nil {
 		return nil, huma.Error500InternalServerError("get thread: " + err.Error())
 	}
-	if err := s.kickoffReviewTurn(ctx, input.Owner, input.Name, input.Number, "apply", []db.ReviewThread{th}); err != nil {
+	if err := s.kickoffReviewTurn(ctx, input.Owner, input.Name, input.Number, "apply", []db.ReviewThread{th}, ""); err != nil {
 		return nil, err
 	}
 	threads, err := s.loadReviewThreadsResponse(ctx, mrID)
@@ -493,7 +500,7 @@ func (s *Server) applyAllReviewThreads(ctx context.Context, input *listReviewThr
 		}
 	}
 	if len(eligible) > 0 {
-		if err := s.kickoffReviewTurn(ctx, input.Owner, input.Name, input.Number, "apply", eligible); err != nil {
+		if err := s.kickoffReviewTurn(ctx, input.Owner, input.Name, input.Number, "apply", eligible, ""); err != nil {
 			return nil, err
 		}
 	}
