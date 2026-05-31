@@ -4,6 +4,9 @@ import type { components } from "../api/generated/schema.js";
 export type ReviewThread = components["schemas"]["ReviewThreadResponse"];
 export type ReviewThreadComment = components["schemas"]["ReviewThreadCommentResponse"];
 
+// The agent mode chosen at submit time; persist-only is the no-agent default.
+export type ReviewThreadMode = "discuss-first" | "act-immediately" | "persist-only";
+
 // One inline draft comment to turn into a thread on submit.
 export interface ReviewThreadDraftInput {
   path: string;
@@ -90,7 +93,7 @@ export function createReviewThreadsStore(opts: ReviewThreadsStoreOptions) {
   }
 
   async function createThreads(
-    drafts: ReviewThreadDraftInput[], mode?: string,
+    drafts: ReviewThreadDraftInput[], mode?: ReviewThreadMode,
   ): Promise<boolean> {
     error = null;
     try {
@@ -208,6 +211,9 @@ export function createReviewThreadsStore(opts: ReviewThreadsStoreOptions) {
   // refresh re-reads the current review's threads without toggling the
   // loading flag — used by the live poll while an agent turn runs and by
   // the SSE data_changed catch-all. No-op when not on a loaded local review.
+  // A refresh in flight when a mutation resolves can briefly overwrite the
+  // optimistic result; the next poll re-syncs, which is fine for a local
+  // single-user tool.
   async function refresh(): Promise<void> {
     if (owner !== "local" || number === 0) return;
     try {

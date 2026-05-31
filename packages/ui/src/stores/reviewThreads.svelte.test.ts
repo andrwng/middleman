@@ -147,6 +147,17 @@ describe("reviewThreads store", () => {
     expect(store.getThreads()).toHaveLength(0);
   });
 
+  it("refresh swallows errors and keeps prior state", async () => {
+    const get = vi.fn()
+      .mockResolvedValueOnce({ data: { threads: [thread()] }, error: undefined })
+      .mockResolvedValueOnce({ data: undefined, error: { detail: "boom" } });
+    const store = createReviewThreadsStore({ client: stubClient({ GET: get }) });
+    await store.load("local", "demo", 7);
+    await store.refresh();
+    expect(store.getThreads()).toHaveLength(1); // unchanged
+    expect(store.getError()).toBeNull(); // refresh is silent
+  });
+
   it("refresh re-reads threads without toggling loading", async () => {
     const get = vi.fn()
       .mockResolvedValueOnce({ data: { threads: [thread()] }, error: undefined })
