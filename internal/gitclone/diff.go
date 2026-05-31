@@ -1,6 +1,7 @@
 package gitclone
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 )
@@ -90,10 +91,21 @@ func (m *Manager) Diff(
 		}
 	}
 
-	// Step 4: Mark whitespace-only files (only in default mode).
-	if !hideWhitespace {
-		wsFiles := m.getWhitespaceOnlyFiles(
-			ctx, host, clonePath, mergeBase, headSHA)
+	// Step 4: Resolve whitespace-only files. `git diff --raw -w` in Step 2
+	// does NOT drop them on git 2.43, so handle them explicitly here: in
+	// hide mode remove them from the list; otherwise mark them so the
+	// frontend can badge them.
+	wsFiles := m.getWhitespaceOnlyFiles(
+		ctx, host, clonePath, mergeBase, headSHA)
+	if hideWhitespace {
+		kept := files[:0]
+		for _, f := range files {
+			if !wsFiles[f.Path] {
+				kept = append(kept, f)
+			}
+		}
+		files = kept
+	} else {
 		for i := range files {
 			if wsFiles[files[i].Path] {
 				files[i].IsWhitespaceOnly = true
@@ -116,15 +128,17 @@ func (m *Manager) computeWhitespaceOnlyCount(
 	if err != nil {
 		return 0, err
 	}
-	// Whitespace-ignoring pass.
+	// Whitespace-ignoring pass. Use --numstat, not --raw: on git 2.43
+	// `git diff --raw -w` still lists whitespace-only files, whereas
+	// --numstat -w omits them — which is the set this subtraction needs.
 	out2, err := m.git(ctx, host, clonePath,
-		"diff", "--raw", "-z", "--no-renames", "-w", mergeBase, headSHA)
+		"diff", "--numstat", "-z", "--no-renames", "-w", mergeBase, headSHA)
 	if err != nil {
 		return 0, err
 	}
 
 	allFiles := parseRawZPaths(out1)
-	wFiles := parseRawZPaths(out2)
+	wFiles := parseNumstatZPaths(out2)
 
 	count := 0
 	for f := range allFiles {
@@ -143,14 +157,16 @@ func (m *Manager) getWhitespaceOnlyFiles(
 	if err != nil {
 		return nil
 	}
+	// See computeWhitespaceOnlyCount: --numstat -w omits whitespace-only
+	// files (git 2.43's --raw -w does not), so it is the correct primitive.
 	out2, err := m.git(ctx, host, clonePath,
-		"diff", "--raw", "-z", "--no-renames", "-w", mergeBase, headSHA)
+		"diff", "--numstat", "-z", "--no-renames", "-w", mergeBase, headSHA)
 	if err != nil {
 		return nil
 	}
 
 	allFiles := parseRawZPaths(out1)
-	wFiles := parseRawZPaths(out2)
+	wFiles := parseNumstatZPaths(out2)
 
 	result := make(map[string]bool)
 	for f := range allFiles {
@@ -167,6 +183,24 @@ func parseRawZPaths(data []byte) map[string]bool {
 	paths := make(map[string]bool, len(files))
 	for _, f := range files {
 		paths[f.Path] = true
+	}
+	return paths
+}
+
+// parseNumstatZPaths extracts file paths from `git diff --numstat -z`
+// output. Each NUL-terminated record is "<added>\t<deleted>\t<path>".
+// Callers pass --no-renames so the three-field rename form never appears.
+func parseNumstatZPaths(data []byte) map[string]bool {
+	paths := make(map[string]bool)
+	for _, rec := range bytes.Split(data, []byte{0}) {
+		if len(rec) == 0 {
+			continue
+		}
+		parts := bytes.SplitN(rec, []byte("\t"), 3)
+		if len(parts) < 3 {
+			continue
+		}
+		paths[string(parts[2])] = true
 	}
 	return paths
 }
