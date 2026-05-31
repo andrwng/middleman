@@ -353,8 +353,10 @@
   // Phase 2b (5A): while an agent turn is running, re-read the review's
   // threads on the same cadence as the session poll so statuses flip
   // (discussed/applied) and agent replies appear live. The $derived
-  // boolean only changes when the running state flips, so the interval
-  // is created/torn down once per turn rather than every poll tick.
+  // expression re-evaluates on every turns mutation, but Svelte's
+  // value-equality memoization means the $effect re-runs only when the
+  // boolean actually flips — so the interval is created/torn down once
+  // per turn, not on each poll tick.
   const sessionRunning = $derived(
     stores?.worktreeSession?.hasRunningTurn() ?? false,
   );
