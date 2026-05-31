@@ -4950,7 +4950,7 @@ func TestAPICreateAIThreadThenListThenDelete(t *testing.T) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("question never completed; last status=%q err=%q", got.Status, got.Error)
+			require.FailNowf("", "question never completed; last status=%q err=%q", got.Status, got.Error)
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
@@ -5026,7 +5026,7 @@ func TestAPIGetAISessions(t *testing.T) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("question never completed; last status=%q err=%q", got.Status, got.Error)
+			require.FailNowf("", "question never completed; last status=%q err=%q", got.Status, got.Error)
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
@@ -5088,7 +5088,7 @@ func TestAPIAddFollowUpQuestion(t *testing.T) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("first question never completed")
+			require.FailNow("first question never completed")
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
@@ -5116,7 +5116,7 @@ func TestAPIAddFollowUpQuestion(t *testing.T) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("detail never returned two questions")
+			require.FailNow("detail never returned two questions")
 		}
 		time.Sleep(25 * time.Millisecond)
 	}

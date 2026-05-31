@@ -147,7 +147,7 @@ func TestResolveBaseFallsBackToHEAD(t *testing.T) {
 
 	base, err := ResolveBase(ctx, dir, "")
 	require.NoError(err)
-	assert.Equal("", base.Ref)
+	assert.Empty(base.Ref)
 	assert.True(base.Fallback)
 	assert.NotEmpty(base.SHA)
 }

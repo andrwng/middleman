@@ -28,19 +28,15 @@ func runGitAllowFail(_ *testing.T, dir string, args ...string) {
 }
 
 // interdiffScenario builds a small synthetic repo for an interdiff
-// test case. Each test gets its own bare clone path, "old"
-// (oldBase, oldHead) and "new" (newBase, newHead) SHAs, plus a
-// gitclone.Manager pointed at the partition root.
+// test case. Each test gets its own bare clone path plus a
+// gitclone.Manager pointed at the partition root; the old/new base
+// and head SHAs are computed as locals within each test.
 type interdiffScenario struct {
-	mgr     *Manager
-	host    string
-	owner   string
-	name    string
-	oldBase string
-	oldHead string
-	newBase string
-	newHead string
-	work    string // working directory used to build the commits
+	mgr   *Manager
+	host  string
+	owner string
+	name  string
+	work  string // working directory used to build the commits
 }
 
 // initScenario stands up a bare repo with one initial commit on

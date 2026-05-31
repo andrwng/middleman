@@ -65,7 +65,7 @@ func ParsePorcelain(raw []byte) ([]db.ScannedWorktree, error) {
 		inRecord = false
 	}
 
-	for _, rawLine := range bytes.Split(raw, []byte{'\n'}) {
+	for rawLine := range bytes.SplitSeq(raw, []byte{'\n'}) {
 		line := strings.TrimRight(string(rawLine), "\r")
 		if line == "" {
 			finalize()
@@ -101,9 +101,9 @@ func ParsePorcelain(raw []byte) ([]db.ScannedWorktree, error) {
 }
 
 func splitKV(line string) (key, value string) {
-	idx := strings.IndexByte(line, ' ')
-	if idx < 0 {
+	before, after, ok := strings.Cut(line, " ")
+	if !ok {
 		return line, ""
 	}
-	return line[:idx], line[idx+1:]
+	return before, after
 }

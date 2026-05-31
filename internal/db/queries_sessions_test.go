@@ -2,7 +2,6 @@ package db
 
 import (
 	"context"
-	"errors"
 	"database/sql"
 	"testing"
 
@@ -24,7 +23,7 @@ func TestWorktreeSessionLifecycle(t *testing.T) {
 
 	// No active session yet.
 	_, err = d.GetActiveWorktreeSession(ctx, w.ID)
-	assert.True(errors.Is(err, sql.ErrNoRows))
+	require.ErrorIs(err, sql.ErrNoRows)
 
 	sess, err := d.CreateWorktreeSession(ctx, w.ID)
 	require.NoError(err)
@@ -43,7 +42,7 @@ func TestWorktreeSessionLifecycle(t *testing.T) {
 	// Killing the session removes it from the active query.
 	require.NoError(d.MarkWorktreesSessionStatus(ctx, sess.ID, "killed"))
 	_, err = d.GetActiveWorktreeSession(ctx, w.ID)
-	assert.True(errors.Is(err, sql.ErrNoRows))
+	assert.ErrorIs(err, sql.ErrNoRows)
 }
 
 func TestWorktreeSessionTurns(t *testing.T) {

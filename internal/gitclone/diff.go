@@ -192,7 +192,7 @@ func parseRawZPaths(data []byte) map[string]bool {
 // Callers pass --no-renames so the three-field rename form never appears.
 func parseNumstatZPaths(data []byte) map[string]bool {
 	paths := make(map[string]bool)
-	for _, rec := range bytes.Split(data, []byte{0}) {
+	for rec := range bytes.SplitSeq(data, []byte{0}) {
 		if len(rec) == 0 {
 			continue
 		}
