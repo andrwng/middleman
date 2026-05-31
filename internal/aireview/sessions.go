@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/wesm/middleman/internal/db"
 )
@@ -40,6 +41,11 @@ type SessionRunner struct {
 
 	mu      sync.Mutex
 	running map[int64]context.CancelFunc // by turn id
+
+	// turnTimeout caps a single claude turn so a hung subprocess can't
+	// wedge the session forever (a hung turn stays "running" and the
+	// one-turn-at-a-time busy gate then 409s every later turn).
+	turnTimeout time.Duration
 }
 
 // SessionDB is the narrow DB surface the SessionRunner needs.
@@ -55,8 +61,9 @@ type SessionDB interface {
 // NewSessionRunner builds a runner backed by the given DB.
 func NewSessionRunner(database SessionDB) *SessionRunner {
 	return &SessionRunner{
-		db:      database,
-		running: make(map[int64]context.CancelFunc),
+		db:          database,
+		running:     make(map[int64]context.CancelFunc),
+		turnTimeout: 10 * time.Minute,
 	}
 }
 
@@ -189,7 +196,7 @@ func (r *SessionRunner) CancelTurn(ctx context.Context, turnID int64) error {
 }
 
 func (r *SessionRunner) spawnTurn(in SubmitTurnInput, respTurn db.WorktreeSessionTurn) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), r.turnTimeout)
 	r.mu.Lock()
 	r.running[respTurn.ID] = cancel
 	r.mu.Unlock()
@@ -264,6 +271,12 @@ func (r *SessionRunner) runTurn(
 	cmd := exec.CommandContext(ctx, claudeBinary, args...)
 	cmd.Dir = in.WorktreePath
 	setPgid(cmd)
+	// CommandContext's default Cancel kills only the leader; with setPgid
+	// a hung grandchild can keep the stdout pipe open so the stream loop
+	// and cmd.Wait block past the deadline. Kill the whole group instead,
+	// and bound the post-cancel wait so Wait can't hang on the pipe.
+	cmd.Cancel = func() error { return killProcessGroup(cmd) }
+	cmd.WaitDelay = 5 * time.Second
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -312,7 +325,17 @@ func (r *SessionRunner) runTurn(
 	waitErr := cmd.Wait()
 
 	if ctx.Err() != nil {
-		// CancelTurn flipped the row to cancelled; don't overwrite.
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			// Hung turn: CommandContext killed claude on the deadline.
+			// Mark it failed so the session frees (the busy gate no longer
+			// 409s). Use a fresh context — the turn ctx is already Done, so
+			// DB writes on it would fail.
+			bg := context.Background()
+			r.flushStreamState(bg, respTurn.ID, state)
+			r.markFailed(bg, respTurn.ID, fmt.Sprintf("claude turn timed out after %s", r.turnTimeout))
+		}
+		// context.Canceled => CancelTurn already set status "cancelled";
+		// don't overwrite it.
 		return
 	}
 	if waitErr != nil {
