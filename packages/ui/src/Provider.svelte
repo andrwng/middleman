@@ -220,6 +220,8 @@
 
     const worktreesStore = createWorktreesStore({ client: cl });
 
+    const reviewThreadsStore = createReviewThreadsStore({ client: cl });
+
     const eventsStore = createEventsStore({
       ...(cfg.basePath != null && {
         getBasePath: () => cfg.basePath as string,
@@ -229,6 +231,7 @@
         void issuesStore.loadIssues();
         void activityStore.loadActivity();
         void worktreesStore.loadWorktrees();
+        void reviewThreadsStore.refresh();
       },
       onSyncStatus: (status) => {
         syncStore.setSyncStatus(status);
@@ -279,7 +282,7 @@
       commitAnalysis: commitAnalysisStore,
       worktrees: worktreesStore,
       worktreeSession: createWorktreeSessionStore({ client: cl }),
-      reviewThreads: createReviewThreadsStore({ client: cl }),
+      reviewThreads: reviewThreadsStore,
     };
 
     if (roborevBase) {
@@ -346,6 +349,24 @@
     onNavigate, onEvent, prepareRoute,
     sidebar, getPage, roborevBaseUrl, onError,
   );
+
+  // Phase 2b (5A): while an agent turn is running, re-read the review's
+  // threads on the same cadence as the session poll so statuses flip
+  // (discussed/applied) and agent replies appear live. The $derived
+  // boolean only changes when the running state flips, so the interval
+  // is created/torn down once per turn rather than every poll tick.
+  const sessionRunning = $derived(
+    stores?.worktreeSession?.hasRunningTurn() ?? false,
+  );
+  $effect(() => {
+    if (!sessionRunning) return;
+    const rt = stores?.reviewThreads;
+    if (!rt) return;
+    const id = setInterval(() => {
+      void rt.refresh();
+    }, 1500);
+    return () => clearInterval(id);
+  });
 
   onDestroy(() => {
     stores?.roborevDaemon?.stopPolling();
