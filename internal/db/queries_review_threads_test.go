@@ -164,3 +164,31 @@ func TestDeleteReviewThreadRemovesThreadAndComments(t *testing.T) {
 	require.NoError(err)
 	require.Empty(comments)
 }
+
+func TestMarkReviewThreadCommentSentToAgent(t *testing.T) {
+	require := require.New(t)
+	d := openTestDB(t)
+	ctx := context.Background()
+	mrID := insertTestMRLocal(t, d) // the helper the sibling review-thread tests use
+	created, err := d.CreateReviewThreads(ctx, mrID, []NewReviewThread{
+		{Path: "a.go", Side: "RIGHT", Line: 12, CommitSHA: "abc", Body: "rename this"},
+	})
+	require.NoError(err)
+	tid := created[0].ID
+
+	plain, err := d.AddReviewThreadComment(ctx, tid, "user", "just a note", nil)
+	require.NoError(err)
+	require.False(plain.SentToAgent)
+
+	require.NoError(d.MarkReviewThreadCommentSentToAgent(ctx, plain.ID))
+	got, err := d.ListReviewThreadComments(ctx, tid)
+	require.NoError(err)
+	var marked *ReviewThreadComment
+	for i := range got {
+		if got[i].ID == plain.ID {
+			marked = &got[i]
+		}
+	}
+	require.NotNil(marked)
+	require.True(marked.SentToAgent)
+}

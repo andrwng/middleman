@@ -27,12 +27,13 @@ type ReviewThread struct {
 
 // ReviewThreadComment is one comment within a ReviewThread.
 type ReviewThreadComment struct {
-	ID        int64
-	ThreadID  int64
-	Author    string // "user" | "agent"
-	Body      string
-	TurnID    *int64 // nullable; worktree_session_turns.id for agent replies
-	CreatedAt time.Time
+	ID          int64
+	ThreadID    int64
+	Author      string // "user" | "agent"
+	Body        string
+	TurnID      *int64 // nullable; worktree_session_turns.id for agent replies
+	CreatedAt   time.Time
+	SentToAgent bool // true if this comment was an "Ask Claude" reply sent to the agent
 }
 
 // NewReviewThread describes a thread anchor plus the reviewer's root
@@ -189,7 +190,7 @@ func (d *DB) AddReviewThreadComment(ctx context.Context, threadID int64, author,
 
 func (d *DB) getReviewThreadComment(ctx context.Context, id int64) (ReviewThreadComment, error) {
 	return scanReviewThreadComment(d.ro.QueryRowContext(ctx, `
-		SELECT id, thread_id, author, body, turn_id, created_at
+		SELECT id, thread_id, author, body, turn_id, created_at, sent_to_agent
 		  FROM middleman_review_thread_comments WHERE id = ?`, id))
 }
 
@@ -197,7 +198,7 @@ func (d *DB) getReviewThreadComment(ctx context.Context, id int64) (ReviewThread
 // threads, oldest-first by id. The handler groups them by thread_id.
 func (d *DB) ListReviewThreadCommentsForMR(ctx context.Context, mrID int64) ([]ReviewThreadComment, error) {
 	rows, err := d.ro.QueryContext(ctx, `
-		SELECT c.id, c.thread_id, c.author, c.body, c.turn_id, c.created_at
+		SELECT c.id, c.thread_id, c.author, c.body, c.turn_id, c.created_at, c.sent_to_agent
 		  FROM middleman_review_thread_comments c
 		  JOIN middleman_review_threads t ON t.id = c.thread_id
 		 WHERE t.mr_id = ?
@@ -221,7 +222,7 @@ func (d *DB) ListReviewThreadCommentsForMR(ctx context.Context, mrID int64) ([]R
 // oldest-first by id.
 func (d *DB) ListReviewThreadComments(ctx context.Context, threadID int64) ([]ReviewThreadComment, error) {
 	rows, err := d.ro.QueryContext(ctx, `
-		SELECT id, thread_id, author, body, turn_id, created_at
+		SELECT id, thread_id, author, body, turn_id, created_at, sent_to_agent
 		  FROM middleman_review_thread_comments
 		 WHERE thread_id = ?
 		 ORDER BY id ASC`, threadID)
@@ -247,6 +248,14 @@ func (d *DB) SetReviewThreadStatus(ctx context.Context, id int64, status string)
 		UPDATE middleman_review_threads
 		   SET status = ?, updated_at = datetime('now')
 		 WHERE id = ?`, status, id)
+	return err
+}
+
+// MarkReviewThreadCommentSentToAgent flags a comment as one that engaged
+// the agent (an "Ask Claude" reply).
+func (d *DB) MarkReviewThreadCommentSentToAgent(ctx context.Context, id int64) error {
+	_, err := d.rw.ExecContext(ctx,
+		`UPDATE middleman_review_thread_comments SET sent_to_agent = 1 WHERE id = ?`, id)
 	return err
 }
 
@@ -289,7 +298,8 @@ func (d *DB) UnhideReviewThread(ctx context.Context, id int64) error {
 func scanReviewThreadComment(row scanner) (ReviewThreadComment, error) {
 	var c ReviewThreadComment
 	var turnID sql.NullInt64
-	err := row.Scan(&c.ID, &c.ThreadID, &c.Author, &c.Body, &turnID, &c.CreatedAt)
+	var sentToAgent int64
+	err := row.Scan(&c.ID, &c.ThreadID, &c.Author, &c.Body, &turnID, &c.CreatedAt, &sentToAgent)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ReviewThreadComment{}, err
@@ -299,5 +309,6 @@ func scanReviewThreadComment(row scanner) (ReviewThreadComment, error) {
 	if turnID.Valid {
 		c.TurnID = &turnID.Int64
 	}
+	c.SentToAgent = sentToAgent != 0
 	return c, nil
 }
