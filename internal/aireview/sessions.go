@@ -647,6 +647,17 @@ func buildSessionPrompt(in SubmitTurnInput) string {
 			"Don't push, don't open PRs, don't touch remotes.\n\n")
 		b.WriteString(formatThreads(in.Threads))
 		return b.String()
+	case "steer":
+		var b strings.Builder
+		writeWorktreeContext(&b, in)
+		b.WriteString("\n")
+		b.WriteString("The reviewer replied in a review thread. Read the relevant code, " +
+			"respond to continue the discussion, and call the reply_to_thread tool (thread_id + body) " +
+			"with your reply. Do not change any files — this is discussion only.\n\n")
+		b.WriteString(formatThreads(in.Threads))
+		b.WriteString("\nThe reviewer's message:\n")
+		b.WriteString(in.UserTurnContent)
+		return b.String()
 	}
 
 	// legacy path (review_feedback + free-text follow-ups)
