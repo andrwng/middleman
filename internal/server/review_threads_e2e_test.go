@@ -3,10 +3,13 @@ package server
 import (
 	"context"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 
 	Assert "github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/wesm/middleman/internal/aireview"
 	"github.com/wesm/middleman/internal/apiclient/generated"
 	"github.com/wesm/middleman/internal/db"
 )
@@ -190,4 +193,53 @@ func TestAPIReviewThreadDelete(t *testing.T) {
 	)
 	require.NoError(err)
 	require.Equal(http.StatusNotFound, delAgain.StatusCode())
+}
+
+// TestAPIReviewThreadAskEngagesAgentAndMarksComment verifies the /ask
+// endpoint persists the reviewer's comment, kicks off a steer turn, and
+// marks the persisted comment sent_to_agent.
+func TestAPIReviewThreadAskEngagesAgentAndMarksComment(t *testing.T) {
+	require := require.New(t)
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "claude.sh")
+	require.NoError(os.WriteFile(fake, []byte("#!/bin/sh\n"+
+		`echo '{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"s1"}'`+"\n"), 0o755))
+	aireview.SetBinaryForTest(fake)
+	t.Cleanup(func() { aireview.SetBinaryForTest("claude") })
+
+	srv, database := setupTestServer(t)
+	srv.sessionRunner = aireview.NewSessionRunner(database)
+	client := setupTestClient(t, srv)
+	ctx := context.Background()
+	num := seedReviewWorktree(t, database)
+
+	createResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(
+		ctx, "local", "demo", num,
+		generated.CreateReviewThreadsInputBody{
+			Threads: &[]generated.ReviewThreadDraft{{Path: "a.go", Side: "RIGHT", Line: 12, CommitSha: "abc", Body: "rename this"}},
+		})
+	require.NoError(err)
+	require.Equal(http.StatusOK, createResp.StatusCode())
+	threadID := (*createResp.JSON200.Threads)[0].Id
+
+	askResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsByThreadIdAskWithResponse(
+		ctx, "local", "demo", num, threadID,
+		generated.AskReviewThreadInputBody{Body: "why a mutex here?"})
+	require.NoError(err)
+	require.Equal(http.StatusOK, askResp.StatusCode())
+	require.NotNil(askResp.JSON200)
+	require.NotNil(askResp.JSON200.Comments)
+	var asked bool
+	for _, c := range *askResp.JSON200.Comments {
+		if c.Author == "user" && c.Body == "why a mutex here?" && c.SentToAgent {
+			asked = true
+		}
+	}
+	require.True(asked, "the ask comment should be marked sent_to_agent; comments=%+v", *askResp.JSON200.Comments)
+
+	sessResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberSessionWithResponse(ctx, "local", "demo", num)
+	require.NoError(err)
+	require.Equal(http.StatusOK, sessResp.StatusCode())
+	require.NotNil(sessResp.JSON200.Turns)
+	require.NotEmpty(*sessResp.JSON200.Turns)
 }

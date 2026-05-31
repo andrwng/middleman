@@ -20,10 +20,11 @@ import (
 // synthetic merge request.
 
 type reviewThreadCommentResponse struct {
-	ID        int64  `json:"id"`
-	Author    string `json:"author" doc:"user | agent"`
-	Body      string `json:"body"`
-	CreatedAt string `json:"created_at" doc:"UTC RFC3339 timestamp"`
+	ID          int64  `json:"id"`
+	Author      string `json:"author" doc:"user | agent"`
+	Body        string `json:"body"`
+	SentToAgent bool   `json:"sent_to_agent" doc:"true if this comment was sent to the agent (an Ask)"`
+	CreatedAt   string `json:"created_at" doc:"UTC RFC3339 timestamp"`
 }
 
 type reviewThreadResponse struct {
@@ -92,6 +93,16 @@ type addReviewThreadCommentInput struct {
 	}
 }
 
+type askReviewThreadInput struct {
+	Owner    string `path:"owner"`
+	Name     string `path:"name"`
+	Number   int    `path:"number"`
+	ThreadID int64  `path:"thread_id"`
+	Body     struct {
+		Body string `json:"body"`
+	}
+}
+
 type reviewThreadOutput struct {
 	Body reviewThreadResponse
 }
@@ -107,6 +118,7 @@ func (s *Server) registerReviewThreadRoutes(api huma.API) {
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/review-threads", s.listReviewThreads)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review-threads", s.createReviewThreads)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/comments", s.addReviewThreadComment)
+	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/ask", s.askReviewThread)
 	huma.Delete(api, "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}", s.deleteReviewThread)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/hide", s.hideLocalReviewThread)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/unhide", s.unhideLocalReviewThread)
@@ -129,10 +141,11 @@ func (s *Server) loadReviewThreadsResponse(ctx context.Context, mrID int64) ([]r
 	byThread := map[int64][]reviewThreadCommentResponse{}
 	for _, c := range comments {
 		byThread[c.ThreadID] = append(byThread[c.ThreadID], reviewThreadCommentResponse{
-			ID:        c.ID,
-			Author:    c.Author,
-			Body:      c.Body,
-			CreatedAt: c.CreatedAt.UTC().Format(time.RFC3339),
+			ID:          c.ID,
+			Author:      c.Author,
+			Body:        c.Body,
+			SentToAgent: c.SentToAgent,
+			CreatedAt:   c.CreatedAt.UTC().Format(time.RFC3339),
 		})
 	}
 	out := make([]reviewThreadResponse, 0, len(threads))
@@ -283,6 +296,39 @@ func (s *Server) addReviewThreadComment(ctx context.Context, input *addReviewThr
 	return s.oneReviewThreadOutput(ctx, input.ThreadID)
 }
 
+// askReviewThread persists the reviewer's comment, then kicks off a
+// read-only steer turn so the agent continues the thread's discussion.
+// On success the comment is marked sent_to_agent. If the agent is busy
+// the comment persists as a plain note and the busy state is surfaced
+// (the reviewer's message is never lost).
+func (s *Server) askReviewThread(ctx context.Context, input *askReviewThreadInput) (*reviewThreadOutput, error) {
+	if !isLocalSource(input.Owner) {
+		return nil, huma.Error400BadRequest("review threads are local-worktree only")
+	}
+	if input.Body.Body == "" {
+		return nil, huma.Error400BadRequest("message is required")
+	}
+	if _, err := s.resolveThreadForMR(ctx, input.Owner, input.Name, input.Number, input.ThreadID); err != nil {
+		return nil, err
+	}
+	th, err := s.db.GetReviewThread(ctx, input.ThreadID)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("get thread: " + err.Error())
+	}
+	comment, err := s.db.AddReviewThreadComment(ctx, input.ThreadID, "user", input.Body.Body, nil)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("add comment: " + err.Error())
+	}
+	if err := s.kickoffReviewTurn(ctx, input.Owner, input.Name, input.Number, "steer", []db.ReviewThread{th}, input.Body.Body); err != nil {
+		// Comment is persisted as a plain note; surface the error (e.g. 409 busy).
+		return nil, err
+	}
+	if err := s.db.MarkReviewThreadCommentSentToAgent(ctx, comment.ID); err != nil {
+		return nil, huma.Error500InternalServerError("mark comment: " + err.Error())
+	}
+	return s.oneReviewThreadOutput(ctx, input.ThreadID)
+}
+
 func (s *Server) deleteReviewThread(ctx context.Context, input *reviewThreadActionInput) (*listReviewThreadsOutput, error) {
 	if !isLocalSource(input.Owner) {
 		return nil, huma.Error400BadRequest("review threads are local-worktree only")
@@ -356,10 +402,11 @@ func (s *Server) oneReviewThreadOutput(ctx context.Context, threadID int64) (*re
 	comments := make([]reviewThreadCommentResponse, 0, len(dbComments))
 	for _, c := range dbComments {
 		comments = append(comments, reviewThreadCommentResponse{
-			ID:        c.ID,
-			Author:    c.Author,
-			Body:      c.Body,
-			CreatedAt: c.CreatedAt.UTC().Format(time.RFC3339),
+			ID:          c.ID,
+			Author:      c.Author,
+			Body:        c.Body,
+			SentToAgent: c.SentToAgent,
+			CreatedAt:   c.CreatedAt.UTC().Format(time.RFC3339),
 		})
 	}
 	out := &reviewThreadOutput{Body: toReviewThreadResponse(th, comments)}
