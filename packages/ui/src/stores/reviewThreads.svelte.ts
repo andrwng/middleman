@@ -89,7 +89,9 @@ export function createReviewThreadsStore(opts: ReviewThreadsStoreOptions) {
     }
   }
 
-  async function createThreads(drafts: ReviewThreadDraftInput[]): Promise<boolean> {
+  async function createThreads(
+    drafts: ReviewThreadDraftInput[], mode?: string,
+  ): Promise<boolean> {
     error = null;
     try {
       const { data, error: err } = await client.POST(
@@ -97,6 +99,7 @@ export function createReviewThreadsStore(opts: ReviewThreadsStoreOptions) {
         {
           params: { path: { owner, name, number } },
           body: {
+            ...(mode ? { mode } : {}),
             threads: drafts.map((d) => ({
               path: d.path,
               side: d.side,
@@ -154,6 +157,71 @@ export function createReviewThreadsStore(opts: ReviewThreadsStoreOptions) {
     }
   }
 
+  async function apply(threadID: number): Promise<boolean> {
+    error = null;
+    try {
+      const { data, error: err } = await client.POST(
+        "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/apply",
+        { params: { path: { owner, name, number, thread_id: threadID } } },
+      );
+      if (err) throw new Error(detail(err, "failed to apply thread"));
+      threads = data?.threads ?? threads;
+      return true;
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+      return false;
+    }
+  }
+
+  async function applyAll(): Promise<boolean> {
+    error = null;
+    try {
+      const { data, error: err } = await client.POST(
+        "/repos/{owner}/{name}/pulls/{number}/review-threads/apply-all",
+        { params: { path: { owner, name, number } } },
+      );
+      if (err) throw new Error(detail(err, "failed to apply all threads"));
+      threads = data?.threads ?? threads;
+      return true;
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+      return false;
+    }
+  }
+
+  async function deleteThread(threadID: number): Promise<boolean> {
+    error = null;
+    try {
+      const { data, error: err } = await client.DELETE(
+        "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}",
+        { params: { path: { owner, name, number, thread_id: threadID } } },
+      );
+      if (err) throw new Error(detail(err, "failed to delete thread"));
+      threads = data?.threads ?? threads.filter((t) => t.id !== threadID);
+      return true;
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+      return false;
+    }
+  }
+
+  // refresh re-reads the current review's threads without toggling the
+  // loading flag — used by the live poll while an agent turn runs and by
+  // the SSE data_changed catch-all. No-op when not on a loaded local review.
+  async function refresh(): Promise<void> {
+    if (owner !== "local" || number === 0) return;
+    try {
+      const { data, error: err } = await client.GET(
+        "/repos/{owner}/{name}/pulls/{number}/review-threads",
+        { params: { path: { owner, name, number } } },
+      );
+      if (err) return; // best-effort; keep current state on transient errors
+      threads = data?.threads ?? threads;
+    } catch {
+      // swallow — refresh is best-effort
+    }
+  }
+
   async function hide(threadID: number): Promise<boolean> {
     error = null;
     try {
@@ -197,7 +265,8 @@ export function createReviewThreadsStore(opts: ReviewThreadsStoreOptions) {
 
   return {
     getThreads, getThreadsAtAnchor, isLoading, getError,
-    load, createThreads, addComment, hide, unhide, resolve, clear,
+    load, createThreads, addComment, hide, unhide, resolve,
+    apply, applyAll, deleteThread, refresh, clear,
   };
 }
 

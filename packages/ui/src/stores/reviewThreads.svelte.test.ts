@@ -11,10 +11,13 @@ function thread(over: Record<string, unknown> = {}) {
   };
 }
 
-function stubClient(over: Partial<Record<"GET" | "POST", unknown>> = {}): MiddlemanClient {
+function stubClient(
+  over: Partial<Record<"GET" | "POST" | "DELETE", unknown>> = {},
+): MiddlemanClient {
   return {
     GET: vi.fn(async () => ({ data: { threads: [thread()] }, error: undefined })),
     POST: vi.fn(async () => ({ data: thread(), error: undefined })),
+    DELETE: vi.fn(async () => ({ data: { threads: [] }, error: undefined })),
     ...over,
   } as unknown as MiddlemanClient;
 }
@@ -83,5 +86,76 @@ describe("reviewThreads store", () => {
     const store = createReviewThreadsStore({ client });
     await store.load("local", "demo", 7);
     expect(store.getError()).toBe("boom");
+  });
+
+  it("createThreads forwards a mode", async () => {
+    const post = vi.fn(async () => ({ data: { threads: [thread()] }, error: undefined }));
+    const store = createReviewThreadsStore({ client: stubClient({ POST: post }) });
+    await store.load("local", "demo", 7);
+    await store.createThreads(
+      [{ path: "a.go", side: "RIGHT", line: 12, commitSha: "abc", body: "x" }],
+      "discuss-first",
+    );
+    expect(post).toHaveBeenCalledWith(
+      "/repos/{owner}/{name}/pulls/{number}/review-threads",
+      {
+        params: { path: { owner: "local", name: "demo", number: 7 } },
+        body: {
+          mode: "discuss-first",
+          threads: [{ path: "a.go", side: "RIGHT", line: 12, commit_sha: "abc", body: "x" }],
+        },
+      },
+    );
+  });
+
+  it("apply posts to the apply endpoint and replaces state", async () => {
+    const post = vi.fn(async () => ({ data: { threads: [thread({ status: "applied" })] }, error: undefined }));
+    const store = createReviewThreadsStore({ client: stubClient({ POST: post }) });
+    await store.load("local", "demo", 7);
+    const ok = await store.apply(1);
+    expect(ok).toBe(true);
+    expect(post).toHaveBeenCalledWith(
+      "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/apply",
+      { params: { path: { owner: "local", name: "demo", number: 7, thread_id: 1 } } },
+    );
+    expect(store.getThreads()[0]!.status).toBe("applied");
+  });
+
+  it("applyAll posts to apply-all and replaces state", async () => {
+    const post = vi.fn(async () => ({ data: { threads: [thread({ status: "applied" })] }, error: undefined }));
+    const store = createReviewThreadsStore({ client: stubClient({ POST: post }) });
+    await store.load("local", "demo", 7);
+    const ok = await store.applyAll();
+    expect(ok).toBe(true);
+    expect(post).toHaveBeenCalledWith(
+      "/repos/{owner}/{name}/pulls/{number}/review-threads/apply-all",
+      { params: { path: { owner: "local", name: "demo", number: 7 } } },
+    );
+    expect(store.getThreads()[0]!.status).toBe("applied");
+  });
+
+  it("deleteThread DELETEs and replaces state with the remaining list", async () => {
+    const del = vi.fn(async () => ({ data: { threads: [] }, error: undefined }));
+    const store = createReviewThreadsStore({ client: stubClient({ DELETE: del }) });
+    await store.load("local", "demo", 7);
+    const ok = await store.deleteThread(1);
+    expect(ok).toBe(true);
+    expect(del).toHaveBeenCalledWith(
+      "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}",
+      { params: { path: { owner: "local", name: "demo", number: 7, thread_id: 1 } } },
+    );
+    expect(store.getThreads()).toHaveLength(0);
+  });
+
+  it("refresh re-reads threads without toggling loading", async () => {
+    const get = vi.fn()
+      .mockResolvedValueOnce({ data: { threads: [thread()] }, error: undefined })
+      .mockResolvedValueOnce({ data: { threads: [thread(), thread({ id: 2 })] }, error: undefined });
+    const store = createReviewThreadsStore({ client: stubClient({ GET: get }) });
+    await store.load("local", "demo", 7);
+    expect(store.getThreads()).toHaveLength(1);
+    await store.refresh();
+    expect(store.getThreads()).toHaveLength(2);
+    expect(store.isLoading()).toBe(false);
   });
 });
