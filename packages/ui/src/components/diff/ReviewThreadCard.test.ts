@@ -6,10 +6,13 @@ const hide = vi.fn(async () => true);
 const addComment = vi.fn(async () => true);
 const apply = vi.fn(async () => true);
 const deleteThread = vi.fn(async () => true);
+const ask = vi.fn(async () => true);
+let running = false;
 
 vi.mock("../../context.js", () => ({
   getStores: () => ({
-    reviewThreads: { resolve, hide, unhide: vi.fn(), addComment, apply, deleteThread },
+    reviewThreads: { resolve, hide, unhide: vi.fn(), addComment, apply, deleteThread, ask },
+    worktreeSession: { hasRunningTurn: () => running },
   }),
 }));
 
@@ -69,5 +72,27 @@ describe("ReviewThreadCard", () => {
     expect(getByText("Confirm?")).toBeTruthy();
     await fireEvent.click(getByText("Confirm?"));
     expect(deleteThread).toHaveBeenCalledWith(5);
+  });
+
+  it("Reply & ask Claude calls ask; plain Send calls addComment", async () => {
+    const { getByText, getByPlaceholderText } = render(ReviewThreadCard, { props: { thread: thread() } });
+    const box = getByPlaceholderText(/Reply/i) as HTMLTextAreaElement;
+    await fireEvent.input(box, { target: { value: "why a mutex?" } });
+    await fireEvent.click(getByText("Ask Claude"));
+    expect(ask).toHaveBeenCalledWith(5, "why a mutex?");
+  });
+
+  it("Ask is disabled while a turn runs", () => {
+    running = true;
+    const { getByText } = render(ReviewThreadCard, { props: { thread: thread() } });
+    expect((getByText("Ask Claude") as HTMLButtonElement).disabled).toBe(true);
+    running = false;
+  });
+
+  it("marks user comments that were sent to the agent", () => {
+    const { container } = render(ReviewThreadCard, {
+      props: { thread: thread({ comments: [{ id: 1, author: "user", body: "ask", sent_to_agent: true, created_at: "" }] }) },
+    });
+    expect(container.querySelector(".review-thread__sent-badge")).toBeTruthy();
   });
 });

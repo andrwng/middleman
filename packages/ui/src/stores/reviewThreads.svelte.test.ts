@@ -169,4 +169,20 @@ describe("reviewThreads store", () => {
     expect(store.getThreads()).toHaveLength(2);
     expect(store.isLoading()).toBe(false);
   });
+
+  it("ask posts to the ask endpoint and upserts the returned thread", async () => {
+    const post = vi.fn(async () => ({
+      data: thread({ comments: [{ id: 1, author: "user", body: "why?", sent_to_agent: true, created_at: "" }] }),
+      error: undefined,
+    }));
+    const store = createReviewThreadsStore({ client: stubClient({ POST: post }) });
+    await store.load("local", "demo", 7);
+    const ok = await store.ask(1, "why?");
+    expect(ok).toBe(true);
+    expect(post).toHaveBeenCalledWith(
+      "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/ask",
+      { params: { path: { owner: "local", name: "demo", number: 7, thread_id: 1 } }, body: { body: "why?" } },
+    );
+    expect(store.getThreads()[0]!.comments?.[0]?.sent_to_agent).toBe(true);
+  });
 });

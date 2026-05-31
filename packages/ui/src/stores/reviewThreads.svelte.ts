@@ -195,6 +195,22 @@ export function createReviewThreadsStore(opts: ReviewThreadsStoreOptions) {
     }
   }
 
+  async function ask(threadID: number, body: string): Promise<boolean> {
+    error = null;
+    try {
+      const { data, error: err } = await client.POST(
+        "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/ask",
+        { params: { path: { owner, name, number, thread_id: threadID } }, body: { body } },
+      );
+      if (err) throw new Error(detail(err, "failed to ask the agent"));
+      if (data) upsert(data);
+      return true;
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+      return false;
+    }
+  }
+
   async function deleteThread(threadID: number): Promise<boolean> {
     error = null;
     try {
@@ -275,7 +291,7 @@ export function createReviewThreadsStore(opts: ReviewThreadsStoreOptions) {
   return {
     getThreads, getThreadsAtAnchor, isLoading, getError,
     load, createThreads, addComment, hide, unhide, resolve,
-    apply, applyAll, deleteThread, refresh, clear,
+    apply, applyAll, ask, deleteThread, refresh, clear,
   };
 }
 

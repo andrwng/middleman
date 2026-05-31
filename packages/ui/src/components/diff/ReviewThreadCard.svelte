@@ -8,7 +8,8 @@
   }
   const { thread }: Props = $props();
 
-  const { reviewThreads } = getStores();
+  const { reviewThreads, worktreeSession } = getStores();
+  const busy = $derived(worktreeSession.hasRunningTurn());
 
   const comments = $derived(thread.comments ?? []);
   let reply = $state("");
@@ -31,6 +32,18 @@
     sending = true;
     try {
       const ok = await reviewThreads.addComment(thread.id, text);
+      if (ok) reply = "";
+    } finally {
+      sending = false;
+    }
+  }
+
+  async function askClaude(): Promise<void> {
+    const text = reply.trim();
+    if (!text || sending || busy) return;
+    sending = true;
+    try {
+      const ok = await reviewThreads.ask(thread.id, text);
       if (ok) reply = "";
     } finally {
       sending = false;
@@ -73,6 +86,7 @@
           type="button"
           class="review-thread__action"
           title="Apply this thread's change"
+          disabled={busy}
           onclick={() => void reviewThreads.apply(thread.id)}
         >Apply</button>
       {/if}
@@ -100,6 +114,9 @@
       <div class="review-thread__comment">
         <span class="review-thread__author review-thread__author--{c.author}">
           {c.author === "agent" ? "Claude" : "You"}
+          {#if c.author === "user" && c.sent_to_agent}
+            <span class="review-thread__sent-badge" title="Sent to Claude">asked</span>
+          {/if}
         </span>
         <div class="review-thread__body markdown-body">
           {@html renderMarkdown(c.body, undefined)}
@@ -122,6 +139,13 @@
           disabled={sending || !reply.trim()}
           onclick={() => void sendReply()}
         >Send</button>
+        <button
+          type="button"
+          class="review-thread__send review-thread__ask"
+          disabled={sending || busy || !reply.trim()}
+          title={busy ? "The review agent is busy" : "Reply and ask Claude to respond"}
+          onclick={() => void askClaude()}
+        >Ask Claude</button>
       </div>
     {/if}
   </div>
@@ -305,5 +329,23 @@
   .review-thread__send:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  .review-thread__ask {
+    border-color: var(--accent-amber);
+    background: var(--accent-amber);
+  }
+
+  .review-thread__sent-badge {
+    display: inline-block;
+    margin-left: 6px;
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 0 5px;
+    border-radius: 999px;
+    color: var(--accent-amber);
+    border: 1px solid var(--accent-amber);
   }
 </style>
