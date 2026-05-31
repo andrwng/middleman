@@ -39,4 +39,13 @@ describe("ReviewPanel mode picker (local)", () => {
     await fireEvent.click(getByText("Create & discuss"));
     expect(createThreads).toHaveBeenCalledWith(expect.any(Array), "discuss-first");
   });
+
+  it("submits act-immediately and labels the button accordingly", async () => {
+    const { getByText, getByRole } = render(ReviewPanel, {
+      props: { owner: "local", name: "demo", number: 7, onclose: vi.fn() },
+    });
+    await fireEvent.click(getByRole("radio", { name: /act immediately/i }));
+    await fireEvent.click(getByText("Create & apply"));
+    expect(createThreads).toHaveBeenCalledWith(expect.any(Array), "act-immediately");
+  });
 });

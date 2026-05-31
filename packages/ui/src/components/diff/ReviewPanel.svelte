@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { getClient } from "../../context.js";
-  import { getStores } from "../../context.js";
+  import { getClient, getStores } from "../../context.js";
   import type { ReviewEvent } from "../../stores/diff.svelte.js";
   import type { ReviewThreadMode } from "../../stores/reviewThreads.svelte.js";
 
