@@ -109,6 +109,13 @@ describe("ReviewThreadCard", () => {
     expect(ask).not.toHaveBeenCalled();
   });
 
+  it("pops an asking badge when Discuss is pressed", async () => {
+    const { getByText, container } = render(ReviewThreadCard, { props: { thread: thread() } });
+    expect(container.querySelector(".review-thread__asking")).toBeNull();
+    await fireEvent.click(getByText("Discuss"));
+    expect(container.querySelector(".review-thread__asking")).toBeTruthy();
+  });
+
   it("a resolved thread offers Unresolve instead of Resolve", async () => {
     const { getByTitle, queryByTitle } = render(ReviewThreadCard, { props: { thread: thread({ status: "resolved" }) } });
     expect(queryByTitle("Resolve this thread")).toBeNull();

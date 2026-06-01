@@ -12,10 +12,29 @@
   const busy = $derived(worktreeSession.hasRunningTurn());
 
   const comments = $derived(thread.comments ?? []);
+  const agentReplies = $derived(comments.filter((c) => c.author === "agent").length);
   let reply = $state("");
   let sending = $state(false);
   let confirmingDelete = $state(false);
   const canApply = $derived(thread.status === "open" || thread.status === "discussed");
+
+  // "asking…" feedback: a Discuss turn carries no message comment to
+  // badge (unlike Ask Claude), so surface an in-thread indicator from the
+  // moment Discuss is pressed until the agent's reply lands (or the turn
+  // ends without one).
+  let asking = $state(false);
+  let askingBaseline = 0;
+  let sawBusy = false;
+  $effect(() => {
+    if (!asking) {
+      sawBusy = false;
+      return;
+    }
+    if (busy) sawBusy = true;
+    if (agentReplies > askingBaseline || (sawBusy && !busy)) {
+      asking = false;
+    }
+  });
 
   async function onDelete(): Promise<void> {
     if (!confirmingDelete) {
@@ -54,9 +73,12 @@
   // thread without a typed message (the agent responds to the thread).
   async function discussThread(): Promise<void> {
     if (sending || busy) return;
+    askingBaseline = agentReplies;
+    asking = true;
     sending = true;
     try {
-      await reviewThreads.discuss(thread.id);
+      const ok = await reviewThreads.discuss(thread.id);
+      if (!ok) asking = false;
     } finally {
       sending = false;
     }
@@ -90,6 +112,9 @@
           : thread.line}
       </span>
       <span class="review-thread__status">{thread.status}</span>
+      {#if asking}
+        <span class="review-thread__asking" title="Claude is responding…">asking…</span>
+      {/if}
       <span class="review-thread__commit" title="Anchored to this commit">
         {thread.commit_sha.slice(0, 7)}
       </span>
@@ -372,5 +397,22 @@
     border-radius: 999px;
     color: var(--accent-amber);
     border: 1px solid var(--accent-amber);
+  }
+
+  .review-thread__asking {
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 0 5px;
+    border-radius: 999px;
+    color: var(--accent-amber);
+    border: 1px solid var(--accent-amber);
+    animation: review-thread-asking-pulse 1.2s ease-in-out infinite;
+  }
+
+  @keyframes review-thread-asking-pulse {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 1; }
   }
 </style>
