@@ -192,3 +192,40 @@ func TestMarkReviewThreadCommentSentToAgent(t *testing.T) {
 	require.NotNil(marked)
 	require.True(marked.SentToAgent)
 }
+
+// TestBranchColumnsMigrationApplied proves migration 000023 added the
+// branch column to both review threads and worktree sessions, defaulting
+// to ''.
+func TestBranchColumnsMigrationApplied(t *testing.T) {
+	require := require.New(t)
+	d := openTestDB(t)
+	ctx := context.Background()
+
+	mrID := insertTestMRLocal(t, d)
+	threads, err := d.CreateReviewThreads(ctx, mrID, []NewReviewThread{
+		{Path: "a.go", Side: "RIGHT", Line: 1, CommitSHA: "abc", Body: "hi"},
+	})
+	require.NoError(err)
+	require.Len(threads, 1)
+
+	var threadBranch string
+	require.NoError(d.ReadDB().QueryRowContext(ctx,
+		`SELECT branch FROM middleman_review_threads WHERE id = ?`,
+		threads[0].ID).Scan(&threadBranch))
+	require.Equal("", threadBranch)
+
+	repoID, err := d.UpsertLocalRepo(ctx, "demo")
+	require.NoError(err)
+	w, err := d.UpsertWorktree(ctx, repoID, ScannedWorktree{
+		Path: "/code/demo", Branch: "feat", HeadSHA: "aaaa",
+	})
+	require.NoError(err)
+	sess, err := d.CreateWorktreeSession(ctx, w.ID)
+	require.NoError(err)
+
+	var sessBranch string
+	require.NoError(d.ReadDB().QueryRowContext(ctx,
+		`SELECT branch FROM middleman_worktree_sessions WHERE id = ?`,
+		sess.ID).Scan(&sessBranch))
+	require.Equal("", sessBranch)
+}
