@@ -22,30 +22,30 @@ import ReviewPanel from "./ReviewPanel.svelte";
 
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
-describe("ReviewPanel mode picker (local)", () => {
-  it("defaults to persist-only and submits without a mode", async () => {
-    const { getByText } = render(ReviewPanel, {
+describe("ReviewPanel agent checkbox (local)", () => {
+  it("defaults the agent checkbox ticked and submits act-immediately", async () => {
+    const { getByText, getByRole } = render(ReviewPanel, {
       props: { owner: "local", name: "demo", number: 7, onclose: vi.fn() },
     });
+    expect((getByRole("checkbox") as HTMLInputElement).checked).toBe(true);
+    await fireEvent.click(getByText("Create & apply"));
+    expect(createThreads).toHaveBeenCalledWith(expect.any(Array), "act-immediately");
+  });
+
+  it("submits persist-only when the agent checkbox is unticked", async () => {
+    const { getByText, getByRole } = render(ReviewPanel, {
+      props: { owner: "local", name: "demo", number: 7, onclose: vi.fn() },
+    });
+    await fireEvent.click(getByRole("checkbox"));
     await fireEvent.click(getByText("Create review threads"));
     expect(createThreads).toHaveBeenCalledWith(expect.any(Array), undefined);
   });
 
-  it("submits the selected mode and reflects it in the button", async () => {
-    const { getByText, getByRole } = render(ReviewPanel, {
+  it("does not offer a discuss-first option in the UI", () => {
+    const { queryByText, queryByRole } = render(ReviewPanel, {
       props: { owner: "local", name: "demo", number: 7, onclose: vi.fn() },
     });
-    await fireEvent.click(getByRole("radio", { name: /discuss first/i }));
-    await fireEvent.click(getByText("Create & discuss"));
-    expect(createThreads).toHaveBeenCalledWith(expect.any(Array), "discuss-first");
-  });
-
-  it("submits act-immediately and labels the button accordingly", async () => {
-    const { getByText, getByRole } = render(ReviewPanel, {
-      props: { owner: "local", name: "demo", number: 7, onclose: vi.fn() },
-    });
-    await fireEvent.click(getByRole("radio", { name: /act immediately/i }));
-    await fireEvent.click(getByText("Create & apply"));
-    expect(createThreads).toHaveBeenCalledWith(expect.any(Array), "act-immediately");
+    expect(queryByRole("radio", { name: /discuss/i })).toBeNull();
+    expect(queryByText(/discuss/i)).toBeNull();
   });
 });
