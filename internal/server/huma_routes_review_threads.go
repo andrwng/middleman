@@ -127,10 +127,10 @@ func (s *Server) registerReviewThreadRoutes(api huma.API) {
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review-threads/apply-all", s.applyAllReviewThreads)
 }
 
-// loadReviewThreadsResponse lists an MR's threads with their comments
-// grouped in. Shared by the list and create handlers.
-func (s *Server) loadReviewThreadsResponse(ctx context.Context, mrID int64) ([]reviewThreadResponse, error) {
-	threads, err := s.db.ListReviewThreadsForMR(ctx, mrID)
+// loadReviewThreadsResponse lists an MR's threads (scoped to branch) with
+// their comments grouped in. Shared by the list and create handlers.
+func (s *Server) loadReviewThreadsResponse(ctx context.Context, mrID int64, branch string) ([]reviewThreadResponse, error) {
+	threads, err := s.db.ListReviewThreadsForMRBranch(ctx, mrID, branch)
 	if err != nil {
 		return nil, err
 	}
@@ -178,11 +178,15 @@ func (s *Server) listReviewThreads(ctx context.Context, input *listReviewThreads
 	if !isLocalSource(input.Owner) {
 		return nil, huma.Error400BadRequest("review threads are local-worktree only")
 	}
-	mrID, err := s.resolveOrEnsureMRID(ctx, input.Owner, input.Name, input.Number)
+	w, err := s.resolveLocalWorktree(ctx, input.Name, input.Number)
 	if err != nil {
 		return nil, huma.Error404NotFound("worktree not found")
 	}
-	threads, err := s.loadReviewThreadsResponse(ctx, mrID)
+	mrID, err := s.ensureSyntheticMRForWorktree(ctx, w)
+	if err != nil {
+		return nil, huma.Error404NotFound("worktree not found")
+	}
+	threads, err := s.loadReviewThreadsResponse(ctx, mrID, s.currentWorktreeBranch(ctx, w))
 	if err != nil {
 		return nil, huma.Error500InternalServerError("list review threads: " + err.Error())
 	}
@@ -204,10 +208,15 @@ func (s *Server) createReviewThreads(ctx context.Context, input *createReviewThr
 	default:
 		return nil, huma.Error400BadRequest("invalid mode: " + input.Body.Mode)
 	}
-	mrID, err := s.resolveOrEnsureMRID(ctx, input.Owner, input.Name, input.Number)
+	w, err := s.resolveLocalWorktree(ctx, input.Name, input.Number)
 	if err != nil {
 		return nil, huma.Error404NotFound("worktree not found")
 	}
+	mrID, err := s.ensureSyntheticMRForWorktree(ctx, w)
+	if err != nil {
+		return nil, huma.Error404NotFound("worktree not found")
+	}
+	branch := s.currentWorktreeBranch(ctx, w)
 
 	in := make([]db.NewReviewThread, 0, len(input.Body.Threads))
 	for _, t := range input.Body.Threads {
@@ -231,7 +240,7 @@ func (s *Server) createReviewThreads(ctx context.Context, input *createReviewThr
 			StartLine: t.StartLine, CommitSHA: t.CommitSHA, Body: t.Body,
 		})
 	}
-	created, err := s.db.CreateReviewThreads(ctx, mrID, in)
+	created, err := s.db.CreateReviewThreadsOnBranch(ctx, mrID, branch, in)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("create review threads: " + err.Error())
 	}
@@ -245,7 +254,7 @@ func (s *Server) createReviewThreads(ctx context.Context, input *createReviewThr
 			return nil, err
 		}
 	}
-	threads, err := s.loadReviewThreadsResponse(ctx, mrID)
+	threads, err := s.loadReviewThreadsResponse(ctx, mrID, branch)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("reload review threads: " + err.Error())
 	}
@@ -333,6 +342,10 @@ func (s *Server) deleteReviewThread(ctx context.Context, input *reviewThreadActi
 	if !isLocalSource(input.Owner) {
 		return nil, huma.Error400BadRequest("review threads are local-worktree only")
 	}
+	w, err := s.resolveLocalWorktree(ctx, input.Name, input.Number)
+	if err != nil {
+		return nil, huma.Error404NotFound("worktree not found")
+	}
 	mrID, err := s.resolveThreadForMR(ctx, input.Owner, input.Name, input.Number, input.ThreadID)
 	if err != nil {
 		return nil, err
@@ -340,7 +353,7 @@ func (s *Server) deleteReviewThread(ctx context.Context, input *reviewThreadActi
 	if err := s.db.DeleteReviewThread(ctx, input.ThreadID); err != nil {
 		return nil, huma.Error500InternalServerError("delete thread: " + err.Error())
 	}
-	threads, err := s.loadReviewThreadsResponse(ctx, mrID)
+	threads, err := s.loadReviewThreadsResponse(ctx, mrID, s.currentWorktreeBranch(ctx, w))
 	if err != nil {
 		return nil, huma.Error500InternalServerError("reload review threads: " + err.Error())
 	}
@@ -432,7 +445,7 @@ func (s *Server) kickoffReviewTurn(
 	if err != nil {
 		return huma.Error404NotFound("worktree not found")
 	}
-	sess, isFirst, err := s.ensureWorktreeSession(ctx, w.ID)
+	sess, isFirst, err := s.ensureWorktreeSession(ctx, w.ID, s.currentWorktreeBranch(ctx, w))
 	if err != nil {
 		return huma.Error500InternalServerError("ensure session: " + err.Error())
 	}
@@ -506,6 +519,10 @@ func (s *Server) applyReviewThread(ctx context.Context, input *reviewThreadActio
 	if !isLocalSource(input.Owner) {
 		return nil, huma.Error400BadRequest("review threads are local-worktree only")
 	}
+	w, err := s.resolveLocalWorktree(ctx, input.Name, input.Number)
+	if err != nil {
+		return nil, huma.Error404NotFound("worktree not found")
+	}
 	mrID, err := s.resolveThreadForMR(ctx, input.Owner, input.Name, input.Number, input.ThreadID)
 	if err != nil {
 		return nil, err
@@ -517,7 +534,7 @@ func (s *Server) applyReviewThread(ctx context.Context, input *reviewThreadActio
 	if err := s.kickoffReviewTurn(ctx, input.Owner, input.Name, input.Number, "apply", []db.ReviewThread{th}, ""); err != nil {
 		return nil, err
 	}
-	threads, err := s.loadReviewThreadsResponse(ctx, mrID)
+	threads, err := s.loadReviewThreadsResponse(ctx, mrID, s.currentWorktreeBranch(ctx, w))
 	if err != nil {
 		return nil, huma.Error500InternalServerError("reload review threads: " + err.Error())
 	}
@@ -532,11 +549,20 @@ func (s *Server) applyAllReviewThreads(ctx context.Context, input *listReviewThr
 	if !isLocalSource(input.Owner) {
 		return nil, huma.Error400BadRequest("review threads are local-worktree only")
 	}
+	w, err := s.resolveLocalWorktree(ctx, input.Name, input.Number)
+	if err != nil {
+		return nil, huma.Error404NotFound("worktree not found")
+	}
 	mrID, err := s.resolveOrEnsureMRID(ctx, input.Owner, input.Name, input.Number)
 	if err != nil {
 		return nil, huma.Error404NotFound("worktree not found")
 	}
-	all, err := s.db.ListReviewThreadsForMR(ctx, mrID)
+	branch := s.currentWorktreeBranch(ctx, w)
+	// Scope the eligible set to the current branch: apply-all must apply
+	// only this branch's open/discussed threads, never another branch's —
+	// those threads' commit_sha/line anchors don't exist on the current
+	// checkout, so applying them would be wrong.
+	all, err := s.db.ListReviewThreadsForMRBranch(ctx, mrID, branch)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("list review threads: " + err.Error())
 	}
@@ -551,7 +577,7 @@ func (s *Server) applyAllReviewThreads(ctx context.Context, input *listReviewThr
 			return nil, err
 		}
 	}
-	threads, err := s.loadReviewThreadsResponse(ctx, mrID)
+	threads, err := s.loadReviewThreadsResponse(ctx, mrID, branch)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("reload review threads: " + err.Error())
 	}

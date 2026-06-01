@@ -107,7 +107,7 @@ func (s *Server) getWorktreeSession(
 		return nil, huma.Error404NotFound("worktree not found")
 	}
 
-	sess, err := s.db.GetActiveWorktreeSession(ctx, w.ID)
+	sess, err := s.db.GetActiveWorktreeSession(ctx, w.ID, s.currentWorktreeBranch(ctx, w))
 	if errors.Is(err, sql.ErrNoRows) {
 		return &getSessionOutput{Body: getSessionResponse{Turns: []sessionTurnResponse{}}}, nil
 	}
@@ -156,7 +156,7 @@ func (s *Server) submitWorktreeSessionTurn(
 	}
 
 	// Ensure an active session exists.
-	sess, isFirstTurn, err := s.ensureWorktreeSession(ctx, w.ID)
+	sess, isFirstTurn, err := s.ensureWorktreeSession(ctx, w.ID, s.currentWorktreeBranch(ctx, w))
 	if err != nil {
 		return nil, huma.Error500InternalServerError("ensure session: " + err.Error())
 	}
@@ -205,7 +205,7 @@ func (s *Server) killWorktreeSession(
 	if err != nil {
 		return nil, huma.Error404NotFound("worktree not found")
 	}
-	sess, err := s.db.GetActiveWorktreeSession(ctx, w.ID)
+	sess, err := s.db.GetActiveWorktreeSession(ctx, w.ID, s.currentWorktreeBranch(ctx, w))
 	if errors.Is(err, sql.ErrNoRows) {
 		// No active session; treat as no-op (idempotent kill).
 		return &emptyOutput{}, nil
@@ -250,14 +250,15 @@ func (s *Server) cancelWorktreeSessionTurn(
 	return &emptyOutput{}, nil
 }
 
-// ensureWorktreeSession returns the active session for a worktree,
-// creating one if none exists. The bool is isFirstTurn: true when the
-// session was just created, or when it exists but Claude hasn't ack'd a
-// claude_session_id yet (so the prompt re-primes worktree context).
-func (s *Server) ensureWorktreeSession(ctx context.Context, worktreeID int64) (db.WorktreeSession, bool, error) {
-	sess, err := s.db.GetActiveWorktreeSession(ctx, worktreeID)
+// ensureWorktreeSession returns the active session for a (worktree,
+// branch), creating one if none exists. The bool is isFirstTurn: true
+// when the session was just created, or when it exists but Claude hasn't
+// ack'd a claude_session_id yet (so the prompt re-primes worktree
+// context).
+func (s *Server) ensureWorktreeSession(ctx context.Context, worktreeID int64, branch string) (db.WorktreeSession, bool, error) {
+	sess, err := s.db.GetActiveWorktreeSession(ctx, worktreeID, branch)
 	if errors.Is(err, sql.ErrNoRows) {
-		sess, err = s.db.CreateWorktreeSession(ctx, worktreeID)
+		sess, err = s.db.CreateWorktreeSession(ctx, worktreeID, branch)
 		if err != nil {
 			return db.WorktreeSession{}, false, err
 		}
