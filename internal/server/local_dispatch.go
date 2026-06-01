@@ -129,6 +129,18 @@ func (s *Server) ensureSyntheticMRForWorktree(
 	return s.db.UpsertMergeRequest(ctx, mr)
 }
 
+// currentWorktreeBranch reads the worktree's live current branch so a
+// branch switch takes effect immediately (no wait for the periodic
+// scan). On any git error it falls back to the scanned worktrees.branch
+// so the path stays robust. This is the single source of truth the
+// in-app UI and the external proxy both agree on.
+func (s *Server) currentWorktreeBranch(ctx context.Context, w *db.Worktree) string {
+	if branch, err := worktrees.CurrentBranch(ctx, w.Path); err == nil {
+		return branch
+	}
+	return w.Branch
+}
+
 // getPullLocal synthesizes a PR-shaped detail response for a local
 // worktree. The synthesized MergeRequest fills the fields the
 // review pane actually reads (RepoID, Number, Title, Author,
@@ -151,20 +163,20 @@ func (s *Server) getPullLocal(
 	}
 	now := time.Now().UTC()
 	mr := &db.MergeRequest{
-		ID:             -w.ID, // negative to avoid colliding with real PRs
-		RepoID:         w.RepoID,
-		Number:         int(w.ID),
-		URL:            "", // no remote
-		Title:          fmt.Sprintf("Worktree: %s", branch),
-		HeadBranch:     branch,
-		BaseBranch:     base.Ref,
-		State:          "open",
+		ID:              -w.ID, // negative to avoid colliding with real PRs
+		RepoID:          w.RepoID,
+		Number:          int(w.ID),
+		URL:             "", // no remote
+		Title:           fmt.Sprintf("Worktree: %s", branch),
+		HeadBranch:      branch,
+		BaseBranch:      base.Ref,
+		State:           "open",
 		PlatformHeadSHA: w.HeadSHA,
-		DiffHeadSHA:    w.HeadSHA,
-		MergeBaseSHA:   base.SHA,
-		CreatedAt:      w.DiscoveredAt,
-		UpdatedAt:      w.LastSeenAt,
-		LastActivityAt: w.LastSeenAt,
+		DiffHeadSHA:     w.HeadSHA,
+		MergeBaseSHA:    base.SHA,
+		CreatedAt:       w.DiscoveredAt,
+		UpdatedAt:       w.LastSeenAt,
+		LastActivityAt:  w.LastSeenAt,
 		DetailFetchedAt: &now,
 	}
 	resp := mergeRequestDetailResponse{
