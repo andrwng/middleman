@@ -50,6 +50,18 @@
     }
   }
 
+  // Empty-composer "Discuss": kick a read-only discuss turn on this
+  // thread without a typed message (the agent responds to the thread).
+  async function discussThread(): Promise<void> {
+    if (sending || busy) return;
+    sending = true;
+    try {
+      await reviewThreads.discuss(thread.id);
+    } finally {
+      sending = false;
+    }
+  }
+
   function onReplyKeydown(e: KeyboardEvent): void {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
@@ -90,12 +102,21 @@
           onclick={() => void reviewThreads.apply(thread.id)}
         >Apply</button>
       {/if}
-      <button
-        type="button"
-        class="review-thread__action"
-        title="Resolve this thread"
-        onclick={() => void reviewThreads.resolve(thread.id)}
-      >Resolve</button>
+      {#if thread.status === "resolved"}
+        <button
+          type="button"
+          class="review-thread__action"
+          title="Reopen this thread"
+          onclick={() => void reviewThreads.unresolve(thread.id)}
+        >Unresolve</button>
+      {:else}
+        <button
+          type="button"
+          class="review-thread__action"
+          title="Resolve this thread"
+          onclick={() => void reviewThreads.resolve(thread.id)}
+        >Resolve</button>
+      {/if}
       <button
         type="button"
         class="review-thread__action"
@@ -142,10 +163,14 @@
         <button
           type="button"
           class="review-thread__send review-thread__ask"
-          disabled={sending || busy || !reply.trim()}
-          title={busy ? "The review agent is busy" : "Reply and ask Claude to respond"}
-          onclick={() => void askClaude()}
-        >Ask Claude</button>
+          disabled={sending || busy}
+          title={busy
+            ? "The review agent is busy"
+            : reply.trim()
+              ? "Reply and ask Claude to respond"
+              : "Ask Claude to discuss this thread"}
+          onclick={() => void (reply.trim() ? askClaude() : discussThread())}
+        >{reply.trim() ? "Ask Claude" : "Discuss"}</button>
       </div>
     {/if}
   </div>

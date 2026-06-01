@@ -140,6 +140,32 @@ describe("reviewThreads store", () => {
     );
   });
 
+  it("unresolve POSTs to the unresolve endpoint and upserts the thread", async () => {
+    const post = vi.fn(async () => ({ data: thread({ status: "open" }), error: undefined }));
+    const store = createReviewThreadsStore({ client: stubClient({ POST: post }) });
+    await store.load("local", "demo", 7);
+    const ok = await store.unresolve(1);
+    expect(ok).toBe(true);
+    expect(post).toHaveBeenCalledWith(
+      "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/unresolve",
+      { params: { path: { owner: "local", name: "demo", number: 7, thread_id: 1 } } },
+    );
+    expect(store.getThreads()[0]!.status).toBe("open");
+  });
+
+  it("discuss POSTs to the discuss endpoint and replaces state", async () => {
+    const post = vi.fn(async () => ({ data: { threads: [thread({ status: "discussed" })] }, error: undefined }));
+    const store = createReviewThreadsStore({ client: stubClient({ POST: post }) });
+    await store.load("local", "demo", 7);
+    const ok = await store.discuss(1);
+    expect(ok).toBe(true);
+    expect(post).toHaveBeenCalledWith(
+      "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/discuss",
+      { params: { path: { owner: "local", name: "demo", number: 7, thread_id: 1 } } },
+    );
+    expect(store.getThreads()[0]!.status).toBe("discussed");
+  });
+
   it("apply posts to the apply endpoint and replaces state", async () => {
     const post = vi.fn(async () => ({ data: { threads: [thread({ status: "applied" })] }, error: undefined }));
     const store = createReviewThreadsStore({ client: stubClient({ POST: post }) });

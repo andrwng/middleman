@@ -133,6 +133,55 @@ func TestAPIReviewThreadsApplyMarksApplied(t *testing.T) {
 	assert.Equal("applied", found.Status)
 }
 
+// TestAPIReviewThreadDiscussMarksDiscussed creates a persist-only thread
+// (status open), then kicks a read-only discuss turn via the /discuss
+// endpoint and asserts the thread flips to "discussed".
+func TestAPIReviewThreadDiscussMarksDiscussed(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+	srv, database := setupTestServer(t)
+	srv.sessionRunner = aireview.NewSessionRunner(database)
+	aireview.SetBinaryForTest(fastFakeClaude(t))
+	t.Cleanup(func() { aireview.SetBinaryForTest("claude") })
+
+	client := setupTestClient(t, srv)
+	ctx := context.Background()
+	num := seedReviewWorktree(t, database)
+
+	createResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(
+		ctx, "local", "demo", num,
+		generated.CreateReviewThreadsInputBody{
+			Threads: &[]generated.ReviewThreadDraft{
+				{Path: "a.go", Side: "RIGHT", Line: 12, CommitSha: "abc", Body: "rename this"},
+			},
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, createResp.StatusCode())
+	created := *createResp.JSON200.Threads
+	require.Len(created, 1)
+	assert.Equal("open", created[0].Status)
+	threadID := created[0].Id
+
+	discussResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsByThreadIdDiscussWithResponse(
+		ctx, "local", "demo", num, threadID,
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, discussResp.StatusCode())
+	require.NotNil(discussResp.JSON200)
+	require.NotNil(discussResp.JSON200.Threads)
+	var found *generated.ReviewThreadResponse
+	for i := range *discussResp.JSON200.Threads {
+		th := &(*discussResp.JSON200.Threads)[i]
+		if th.Id == threadID {
+			found = th
+			break
+		}
+	}
+	require.NotNil(found)
+	assert.Equal("discussed", found.Status)
+}
+
 // TestAPIReviewThreadsBusyConflict starts a discuss turn with a blocking
 // fake claude (so the response turn stays queued/running), then asserts
 // apply-all is rejected 409 while the agent is busy.

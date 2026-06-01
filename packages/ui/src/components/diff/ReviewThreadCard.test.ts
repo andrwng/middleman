@@ -7,11 +7,13 @@ const addComment = vi.fn(async () => true);
 const apply = vi.fn(async () => true);
 const deleteThread = vi.fn(async () => true);
 const ask = vi.fn(async () => true);
+const discuss = vi.fn(async () => true);
+const unresolve = vi.fn(async () => true);
 let running = false;
 
 vi.mock("../../context.js", () => ({
   getStores: () => ({
-    reviewThreads: { resolve, hide, unhide: vi.fn(), addComment, apply, deleteThread, ask },
+    reviewThreads: { resolve, unresolve, hide, unhide: vi.fn(), addComment, apply, deleteThread, ask, discuss },
     worktreeSession: { hasRunningTurn: () => running },
   }),
 }));
@@ -92,11 +94,26 @@ describe("ReviewThreadCard", () => {
     expect(ask).not.toHaveBeenCalled();
   });
 
-  it("Ask and Apply are disabled while a turn runs", () => {
+  it("the agent button and Apply are disabled while a turn runs", () => {
     running = true;
     const { getByText, getByTitle } = render(ReviewThreadCard, { props: { thread: thread({ status: "discussed" }) } });
-    expect((getByText("Ask Claude") as HTMLButtonElement).disabled).toBe(true);
+    // Empty composer => the button reads "Discuss"; still disabled while busy.
+    expect((getByText("Discuss") as HTMLButtonElement).disabled).toBe(true);
     expect((getByTitle("Apply this thread's change") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("the agent button is Discuss when the composer is empty and calls discuss", async () => {
+    const { getByText } = render(ReviewThreadCard, { props: { thread: thread() } });
+    await fireEvent.click(getByText("Discuss"));
+    expect(discuss).toHaveBeenCalledWith(5);
+    expect(ask).not.toHaveBeenCalled();
+  });
+
+  it("a resolved thread offers Unresolve instead of Resolve", async () => {
+    const { getByTitle, queryByTitle } = render(ReviewThreadCard, { props: { thread: thread({ status: "resolved" }) } });
+    expect(queryByTitle("Resolve this thread")).toBeNull();
+    await fireEvent.click(getByTitle("Reopen this thread"));
+    expect(unresolve).toHaveBeenCalledWith(5);
   });
 
   it("marks user comments that were sent to the agent", () => {

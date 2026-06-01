@@ -115,6 +115,39 @@ func TestAPIReviewThreadsLifecycle(t *testing.T) {
 	assert.Equal("resolved", resolveResp.JSON200.Status)
 }
 
+func TestAPIReviewThreadUnresolve(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+	srv, database := setupTestServer(t)
+	client := setupTestClient(t, srv)
+	ctx := context.Background()
+	num := seedReviewWorktree(t, database)
+
+	createResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(
+		ctx, "local", "demo", num,
+		generated.CreateReviewThreadsInputBody{
+			Threads: &[]generated.ReviewThreadDraft{{Path: "a.go", Side: "RIGHT", Line: 12, CommitSha: "abc", Body: "x"}},
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, createResp.StatusCode())
+	threadID := (*createResp.JSON200.Threads)[0].Id
+
+	resolveResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsByThreadIdResolveWithResponse(
+		ctx, "local", "demo", num, threadID,
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, resolveResp.StatusCode())
+	assert.Equal("resolved", resolveResp.JSON200.Status)
+
+	unresolveResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsByThreadIdUnresolveWithResponse(
+		ctx, "local", "demo", num, threadID,
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, unresolveResp.StatusCode())
+	assert.Equal("open", unresolveResp.JSON200.Status)
+}
+
 func TestAPIReviewThreadsCreateWithAppendedComments(t *testing.T) {
 	require := require.New(t)
 	assert := Assert.New(t)

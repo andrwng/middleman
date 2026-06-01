@@ -132,7 +132,9 @@ func (s *Server) registerReviewThreadRoutes(api huma.API) {
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/hide", s.hideLocalReviewThread)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/unhide", s.unhideLocalReviewThread)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/resolve", s.resolveReviewThread)
+	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/unresolve", s.unresolveReviewThread)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/apply", s.applyReviewThread)
+	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/discuss", s.discussReviewThread)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review-threads/apply-all", s.applyAllReviewThreads)
 }
 
@@ -424,6 +426,22 @@ func (s *Server) resolveReviewThread(ctx context.Context, input *reviewThreadAct
 	return s.oneReviewThreadOutput(ctx, input.ThreadID)
 }
 
+// unresolveReviewThread reopens a resolved thread back to 'open' so it can
+// be discussed/applied again. We don't track the pre-resolve status, so
+// reopening is always to 'open'.
+func (s *Server) unresolveReviewThread(ctx context.Context, input *reviewThreadActionInput) (*reviewThreadOutput, error) {
+	if !isLocalSource(input.Owner) {
+		return nil, huma.Error400BadRequest("review threads are local-worktree only")
+	}
+	if _, err := s.resolveThreadForMR(ctx, input.Owner, input.Name, input.Number, input.ThreadID); err != nil {
+		return nil, err
+	}
+	if err := s.db.SetReviewThreadStatus(ctx, input.ThreadID, "open"); err != nil {
+		return nil, huma.Error500InternalServerError("unresolve thread: " + err.Error())
+	}
+	return s.oneReviewThreadOutput(ctx, input.ThreadID)
+}
+
 // oneReviewThreadOutput re-reads a single thread (with comments) for the
 // action responses.
 func (s *Server) oneReviewThreadOutput(ctx context.Context, threadID int64) (*reviewThreadOutput, error) {
@@ -555,6 +573,38 @@ func (s *Server) applyReviewThread(ctx context.Context, input *reviewThreadActio
 		return nil, huma.Error500InternalServerError("get thread: " + err.Error())
 	}
 	if err := s.kickoffReviewTurn(ctx, input.Owner, input.Name, input.Number, "apply", []db.ReviewThread{th}, ""); err != nil {
+		return nil, err
+	}
+	threads, err := s.loadReviewThreadsResponse(ctx, mrID, s.currentWorktreeBranch(ctx, w))
+	if err != nil {
+		return nil, huma.Error500InternalServerError("reload review threads: " + err.Error())
+	}
+	out := &listReviewThreadsOutput{}
+	out.Body.Threads = threads
+	return out, nil
+}
+
+// discussReviewThread kicks off a read-only discuss turn for a single
+// thread: the agent responds in-thread without editing. Used by the
+// thread card's "Discuss" action (the empty-composer state) so a thread
+// can be sent to the agent for discussion without typing a message.
+func (s *Server) discussReviewThread(ctx context.Context, input *reviewThreadActionInput) (*listReviewThreadsOutput, error) {
+	if !isLocalSource(input.Owner) {
+		return nil, huma.Error400BadRequest("review threads are local-worktree only")
+	}
+	w, err := s.resolveLocalWorktree(ctx, input.Name, input.Number)
+	if err != nil {
+		return nil, huma.Error404NotFound("worktree not found")
+	}
+	mrID, err := s.resolveThreadForMR(ctx, input.Owner, input.Name, input.Number, input.ThreadID)
+	if err != nil {
+		return nil, err
+	}
+	th, err := s.db.GetReviewThread(ctx, input.ThreadID)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("get thread: " + err.Error())
+	}
+	if err := s.kickoffReviewTurn(ctx, input.Owner, input.Name, input.Number, "discuss", []db.ReviewThread{th}, ""); err != nil {
 		return nil, err
 	}
 	threads, err := s.loadReviewThreadsResponse(ctx, mrID, s.currentWorktreeBranch(ctx, w))

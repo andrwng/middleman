@@ -167,6 +167,22 @@ export function createReviewThreadsStore(opts: ReviewThreadsStoreOptions) {
     }
   }
 
+  async function unresolve(threadID: number): Promise<boolean> {
+    error = null;
+    try {
+      const { data, error: err } = await client.POST(
+        "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/unresolve",
+        { params: { path: { owner, name, number, thread_id: threadID } } },
+      );
+      if (err) throw new Error(detail(err, "failed to unresolve thread"));
+      if (data) upsert(data);
+      return true;
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+      return false;
+    }
+  }
+
   async function apply(threadID: number): Promise<boolean> {
     error = null;
     try {
@@ -175,6 +191,25 @@ export function createReviewThreadsStore(opts: ReviewThreadsStoreOptions) {
         { params: { path: { owner, name, number, thread_id: threadID } } },
       );
       if (err) throw new Error(detail(err, "failed to apply thread"));
+      threads = data?.threads ?? threads;
+      return true;
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+      return false;
+    }
+  }
+
+  // discuss kicks a read-only discuss turn on a single thread (no message
+  // — the agent responds to the thread's existing content). Replaces the
+  // list like apply, since the response carries the MR's full thread set.
+  async function discuss(threadID: number): Promise<boolean> {
+    error = null;
+    try {
+      const { data, error: err } = await client.POST(
+        "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/discuss",
+        { params: { path: { owner, name, number, thread_id: threadID } } },
+      );
+      if (err) throw new Error(detail(err, "failed to start discussion"));
       threads = data?.threads ?? threads;
       return true;
     } catch (e) {
@@ -294,8 +329,8 @@ export function createReviewThreadsStore(opts: ReviewThreadsStoreOptions) {
 
   return {
     getThreads, getThreadsAtAnchor, isLoading, getError,
-    load, createThreads, addComment, hide, unhide, resolve,
-    apply, applyAll, ask, deleteThread, refresh, clear,
+    load, createThreads, addComment, hide, unhide, resolve, unresolve,
+    apply, discuss, applyAll, ask, deleteThread, refresh, clear,
   };
 }
 
