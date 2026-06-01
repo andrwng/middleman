@@ -2,6 +2,7 @@ package github
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -550,4 +551,49 @@ func TestIsNotModified(t *testing.T) {
 
 	errNilResp := &gh.ErrorResponse{Response: nil}
 	assert.False(IsNotModified(errNilResp), "nil Response should not panic")
+}
+
+func TestIsNotFound(t *testing.T) {
+	assert := assert.New(t)
+
+	resp404 := &http.Response{StatusCode: 404}
+	assert.True(IsNotFound(&gh.ErrorResponse{Response: resp404}))
+
+	// Wrapped errors should still unwrap correctly.
+	wrapped := fmt.Errorf("get issue #42: %w", &gh.ErrorResponse{Response: resp404})
+	assert.True(IsNotFound(wrapped))
+
+	assert.False(IsNotFound(&gh.ErrorResponse{Response: &http.Response{StatusCode: 500}}))
+	assert.False(IsNotFound(errors.New("random error")))
+	assert.False(IsNotFound(&gh.ErrorResponse{Response: nil}), "nil Response should not panic")
+	assert.False(IsNotFound(nil))
+}
+
+func TestIsPageBeyondMax(t *testing.T) {
+	assert := assert.New(t)
+
+	// 422 + the specific GitHub message that signals the page-cap.
+	respCapped := &http.Response{StatusCode: 422}
+	errCapped := &gh.ErrorResponse{
+		Response: respCapped,
+		Message:  "Pagination with the page parameter is not supported for large datasets, please use cursor based pagination (after/before)",
+	}
+	assert.True(IsPageBeyondMax(errCapped))
+
+	// 422 for an unrelated reason — must NOT match.
+	errOtherUE := &gh.ErrorResponse{
+		Response: &http.Response{StatusCode: 422},
+		Message:  "Validation Failed",
+	}
+	assert.False(IsPageBeyondMax(errOtherUE))
+
+	// Different status code → not a match.
+	err400 := &gh.ErrorResponse{
+		Response: &http.Response{StatusCode: 400},
+		Message:  "Pagination with the page parameter is not supported",
+	}
+	assert.False(IsPageBeyondMax(err400))
+
+	assert.False(IsPageBeyondMax(errors.New("random error")))
+	assert.False(IsPageBeyondMax(nil))
 }

@@ -2419,6 +2419,19 @@ func (s *Syncer) fetchIssueDetail(
 		err = fmt.Errorf("client returned nil issue")
 	}
 	if err != nil {
+		if IsNotFound(err) {
+			// Same shape as fetchAndUpdateClosedIssue: the issue is
+			// gone from GitHub. Mark it closed so the detail-drain
+			// queue doesn't keep scheduling it on every sync.
+			now := time.Now().UTC()
+			if uErr := s.db.UpdateIssueState(ctx, repoID, number, "closed", &now); uErr != nil {
+				return calls, fmt.Errorf("mark removed issue #%d closed: %w", number, uErr)
+			}
+			slog.Info("issue no longer reachable on GitHub; marked closed locally",
+				"repo", repo.Owner+"/"+repo.Name, "number", number,
+			)
+			return calls, nil
+		}
 		return calls, fmt.Errorf(
 			"get issue #%d: %w", number, err,
 		)
@@ -2866,6 +2879,21 @@ func (s *Syncer) fetchAndUpdateClosedIssue(
 		ctx, repo.Owner, repo.Name, number,
 	)
 	if err != nil {
+		if IsNotFound(err) {
+			// Issue was deleted or transferred on GitHub. Mark it
+			// closed locally so it falls off the "previously open"
+			// list and the next sync doesn't try to fetch it again.
+			// Logged at Info so the operator sees the transition once
+			// but doesn't get an ERROR every sync forever.
+			now := time.Now().UTC()
+			if uErr := s.db.UpdateIssueState(ctx, repoID, number, "closed", &now); uErr != nil {
+				return fmt.Errorf("mark removed issue #%d closed: %w", number, uErr)
+			}
+			slog.Info("closed issue no longer reachable on GitHub; marked closed locally",
+				"repo", repo.Owner+"/"+repo.Name, "number", number,
+			)
+			return nil
+		}
 		return fmt.Errorf("get closed issue #%d: %w", number, err)
 	}
 	if ghIssue == nil {
@@ -3224,6 +3252,21 @@ func (s *Syncer) backfillRepo(
 				"closed", prPage,
 			)
 			if err != nil {
+				if IsPageBeyondMax(err) {
+					// We've walked past GitHub's page-pagination cap
+					// for this repo. Mark backfill complete so we
+					// stop hammering the same page on every sync;
+					// the 24h re-window logic upstream gives a fresh
+					// pass once a day.
+					slog.Info("PR backfill reached GitHub's page-pagination cap; marking complete",
+						"repo", repo.Owner+"/"+repo.Name, "page", prPage,
+					)
+					prComplete = true
+					t := now
+					prCompletedAt = &t
+					prPage--
+					break
+				}
 				slog.Warn("backfill PRs failed",
 					"repo", repo.Owner+"/"+repo.Name,
 					"page", prPage, "err", err,
@@ -3299,6 +3342,16 @@ func (s *Syncer) backfillRepo(
 				"closed", issuePage,
 			)
 			if err != nil {
+				if IsPageBeyondMax(err) {
+					slog.Info("issue backfill reached GitHub's page-pagination cap; marking complete",
+						"repo", repo.Owner+"/"+repo.Name, "page", issuePage,
+					)
+					issueComplete = true
+					t := now
+					issueCompletedAt = &t
+					issuePage--
+					break
+				}
 				slog.Warn("backfill issues failed",
 					"repo", repo.Owner+"/"+repo.Name,
 					"page", issuePage, "err", err,

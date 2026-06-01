@@ -139,3 +139,40 @@ func IsNotModified(err error) bool {
 	}
 	return ghErr.Response.StatusCode == http.StatusNotModified
 }
+
+// IsNotFound reports whether err is (or wraps) a GitHub 404 response.
+// Used by sync paths that need to distinguish "this resource is gone
+// from GitHub for good" — e.g., a deleted or transferred issue — from
+// transient failures, so the row can be marked closed locally and the
+// noisy ERROR log stops firing on every sync.
+func IsNotFound(err error) bool {
+	var ghErr *gh.ErrorResponse
+	if !errors.As(err, &ghErr) || ghErr == nil || ghErr.Response == nil {
+		return false
+	}
+	return ghErr.Response.StatusCode == http.StatusNotFound
+}
+
+// IsPageBeyondMax reports whether err is a GitHub 422 that signals
+// the page-based pagination cap for large datasets. GitHub returns
+// this when a page number puts the result window past the supported
+// limit (around 40k items as of writing). The backfill uses this to
+// stop walking further pages — the very old closed items beyond the
+// cap aren't reachable via page= and we'd need cursor-based
+// pagination to fetch them.
+//
+// Status-code-only matching would over-trigger because 422 is also
+// used for unrelated validation failures; we additionally substring-
+// match the message GitHub returns for this specific condition.
+func IsPageBeyondMax(err error) bool {
+	var ghErr *gh.ErrorResponse
+	if !errors.As(err, &ghErr) || ghErr == nil || ghErr.Response == nil {
+		return false
+	}
+	if ghErr.Response.StatusCode != http.StatusUnprocessableEntity {
+		return false
+	}
+	msg := strings.ToLower(ghErr.Message)
+	return strings.Contains(msg, "page parameter is not supported") ||
+		strings.Contains(msg, "cursor based pagination")
+}
