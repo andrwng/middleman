@@ -21,6 +21,37 @@ export interface PullsStoreOptions {
   getGlobalRepo?: () => string | undefined;
   getGroupByRepo?: () => boolean;
   getView?: () => "list" | "board";
+  // Returns the viewer's GitHub login, or "" if not yet resolved.
+  // Used by the "my reviews" filter to recognize PRs where the
+  // viewer is either still on the requested-reviewer list or has
+  // already submitted a review.
+  getViewerLogin?: () => string;
+}
+
+// prMatchesViewerReviewer reports whether the viewer is on the PR's
+// requested-reviewer list OR has already submitted a review. GitHub
+// removes a reviewer from requested_reviewers once they submit, so
+// both lists need to be checked to keep "review queue" sticky after
+// the first pass.
+//
+// Exported for unit testing. Team requests (entries prefixed
+// "team:") are intentionally NOT a match — without knowing which
+// teams the viewer is in we can't be sure a team request is
+// actually addressed to them.
+export function prMatchesViewerReviewer(
+  pr: { requested_reviewers?: string[] | null; reviewer_logins?: string[] | null },
+  viewerLogin: string,
+): boolean {
+  if (!viewerLogin) return false;
+  const needle = viewerLogin.toLowerCase();
+  for (const r of pr.requested_reviewers ?? []) {
+    if (!r || r.startsWith("team:")) continue;
+    if (r.toLowerCase() === needle) return true;
+  }
+  for (const r of pr.reviewer_logins ?? []) {
+    if (r && r.toLowerCase() === needle) return true;
+  }
+  return false;
 }
 
 function apiErrorMessage(
@@ -78,11 +109,31 @@ function saveRecencyFilter(days: number | null): void {
   }
 }
 
+// "Only PRs where I'm a reviewer" toggle. Sticky across reloads so
+// the reviewer's working set survives a refresh.
+function loadMyReviewsFilter(): boolean {
+  try {
+    return localStorage.getItem("pr-my-reviews-filter") === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveMyReviewsFilter(on: boolean): void {
+  try {
+    if (on) localStorage.setItem("pr-my-reviews-filter", "1");
+    else localStorage.removeItem("pr-my-reviews-filter");
+  } catch {
+    /* ignore */
+  }
+}
+
 export function createPullsStore(opts: PullsStoreOptions) {
   const apiClient = opts.client;
   const getGlobalRepo = opts.getGlobalRepo ?? (() => undefined);
   const getGroupByRepo = opts.getGroupByRepo ?? (() => false);
   const getView = opts.getView ?? ((): "list" | "board" => "list");
+  const getViewerLogin = opts.getViewerLogin ?? ((): string => "");
 
   // --- state ---
 
@@ -95,6 +146,7 @@ export function createPullsStore(opts: PullsStoreOptions) {
   let searchQuery = $state<string | undefined>(undefined);
   let filterAuthors = $state<string[]>(loadAuthorFilter());
   let filterRecencyDays = $state<number | null>(loadRecencyFilter());
+  let filterMyReviews = $state<boolean>(loadMyReviewsFilter());
   let selectedPR = $state<
     { owner: string; name: string; number: number } | null
   >(null);
@@ -119,6 +171,17 @@ export function createPullsStore(opts: PullsStoreOptions) {
       if (!Number.isFinite(t)) return true;
       return t >= cutoff;
     });
+  }
+
+  function applyMyReviewsFilter(prs: PullRequest[]): PullRequest[] {
+    if (!filterMyReviews) return prs;
+    const login = getViewerLogin();
+    // If we don't know the viewer's login yet (first /me hasn't
+    // landed), don't hide everything — that would look like an
+    // empty list bug. Let the filter become effective once the
+    // login resolves; the list re-renders reactively.
+    if (!login) return prs;
+    return prs.filter((pr) => prMatchesViewerReviewer(pr, login));
   }
 
   /** Returns all unique authors from the unfiltered PR list. */
@@ -158,8 +221,17 @@ export function createPullsStore(opts: PullsStoreOptions) {
     saveRecencyFilter(days);
   }
 
+  function getFilterMyReviews(): boolean {
+    return filterMyReviews;
+  }
+
+  function setFilterMyReviews(on: boolean): void {
+    filterMyReviews = on;
+    saveMyReviewsFilter(on);
+  }
+
   function getPulls(): PullRequest[] {
-    return applyRecencyFilter(applyAuthorFilter(pulls));
+    return applyMyReviewsFilter(applyRecencyFilter(applyAuthorFilter(pulls)));
   }
 
   function isLoading(): boolean {
@@ -181,7 +253,7 @@ export function createPullsStore(opts: PullsStoreOptions) {
   /** Groups pulls by "owner/name" into a Map. */
   function pullsByRepo(): Map<string, PullRequest[]> {
     const map = new Map<string, PullRequest[]>();
-    for (const pr of applyRecencyFilter(applyAuthorFilter(pulls))) {
+    for (const pr of applyMyReviewsFilter(applyRecencyFilter(applyAuthorFilter(pulls)))) {
       const key =
         `${pr.repo_owner ?? ""}/${pr.repo_name ?? ""}`;
       const existing = map.get(key);
@@ -500,6 +572,8 @@ export function createPullsStore(opts: PullsStoreOptions) {
     setFilterState,
     getFilterRecencyDays,
     setFilterRecencyDays,
+    getFilterMyReviews,
+    setFilterMyReviews,
     getDisplayOrderPRs,
     selectNextPR,
     selectPrevPR,

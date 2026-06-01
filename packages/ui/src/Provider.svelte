@@ -145,7 +145,15 @@
     const collapsedRepos = createCollapsedReposStore();
     const settingsStore = createSettingsStore();
 
-    const pullsOpts: PullsStoreOptions = { client: cl };
+    // Created early so the pulls store can read the viewer's login
+    // for its "my reviews" filter without a circular dependency.
+    const viewerStore = createViewerStore({ client: cl });
+    void viewerStore.load();
+
+    const pullsOpts: PullsStoreOptions = {
+      client: cl,
+      getViewerLogin: () => viewerStore.getLogin() ?? "",
+    };
     if (hs.getGlobalRepo) {
       pullsOpts.getGlobalRepo = hs.getGlobalRepo;
     }
@@ -241,9 +249,6 @@
 
     const authorGroupsStore = createAuthorGroupsStore({ client: cl });
     void authorGroupsStore.load();
-
-    const viewerStore = createViewerStore({ client: cl });
-    void viewerStore.load();
 
     const aiSessionsStore = createAISessionsStore({
       client: cl,

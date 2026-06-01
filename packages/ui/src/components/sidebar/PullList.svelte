@@ -1,6 +1,7 @@
 <script lang="ts">
   import { getStores, getNavigate, getSidebar, getActions, getHostState } from "../../context.js";
   import { groupByWorkflow } from "../../stores/workflow.svelte.js";
+  import { prMatchesViewerReviewer } from "../../stores/pulls.svelte.js";
   import PullItem from "./PullItem.svelte";
   import WorktreeItem from "./WorktreeItem.svelte";
 
@@ -10,23 +11,15 @@
   } = getStores();
 
   // "Awaiting my review" — viewer is on the PR's requested-reviewer
-  // list. These sort to the top of the PR list (and within each
-  // group for the grouped views) so the reviewer sees their queue
-  // first.
+  // list, or has already submitted a review. These sort to the top
+  // of the PR list (and within each group for the grouped views) so
+  // the reviewer sees their queue first. Same predicate the pulls
+  // store uses for the "my reviews only" filter, kept in sync via
+  // the shared helper.
   function awaitsMyReview(
     pr: { requested_reviewers?: string[] | null; reviewer_logins?: string[] | null },
   ): boolean {
-    const login = viewer.getLogin();
-    if (!login) return false;
-    const needle = login.toLowerCase();
-    for (const r of pr.requested_reviewers ?? []) {
-      if (!r || r.startsWith("team:")) continue;
-      if (r.toLowerCase() === needle) return true;
-    }
-    for (const r of pr.reviewer_logins ?? []) {
-      if (r && r.toLowerCase() === needle) return true;
-    }
-    return false;
+    return prMatchesViewerReviewer(pr, viewer.getLogin() ?? "");
   }
 
   // Per-row review state, computed exactly the way PullItem renders
@@ -436,6 +429,21 @@
       />
     </div>
     <button
+      class="my-reviews-btn"
+      class:my-reviews-btn--active={pulls.getFilterMyReviews()}
+      onclick={() => pulls.setFilterMyReviews(!pulls.getFilterMyReviews())}
+      title={pulls.getFilterMyReviews()
+        ? "Showing only PRs where you're a reviewer — click to show all"
+        : "Show only PRs where you're a reviewer"}
+      aria-pressed={pulls.getFilterMyReviews()}
+    >
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="none"
+        stroke="currentColor" stroke-width="1.5">
+        <circle cx="8" cy="5" r="3" />
+        <path d="M2 14c0-3 2.5-5 6-5s6 2 6 5" stroke-linecap="round" />
+      </svg>
+    </button>
+    <button
       class="star-filter-btn"
       class:star-filter-btn--active={pulls.getFilterStarred()}
       onclick={() => { pulls.setFilterStarred(!pulls.getFilterStarred()); void pulls.loadPulls(); }}
@@ -823,6 +831,29 @@
 
   .star-filter-btn--active {
     color: var(--accent-amber);
+  }
+
+  /* Same shape as the star button so they sit nicely next to each
+     other; uses the blue accent so the two toggles read as
+     independent filters rather than two flavours of the same one. */
+  .my-reviews-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: color 0.1s, background 0.1s;
+  }
+  .my-reviews-btn:hover {
+    color: var(--accent-blue);
+    background: var(--bg-surface-hover);
+  }
+  .my-reviews-btn--active {
+    color: var(--accent-blue);
   }
 
   .author-filter-wrap {
