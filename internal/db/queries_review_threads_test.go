@@ -193,6 +193,42 @@ func TestMarkReviewThreadCommentSentToAgent(t *testing.T) {
 	require.True(marked.SentToAgent)
 }
 
+func TestListReviewThreadsForBranchFiltersAndKeepsLegacy(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+	d := openTestDB(t)
+	ctx := context.Background()
+	mrID := insertTestMRLocal(t, d)
+
+	// Two branch-stamped threads and one legacy ('') thread.
+	_, err := d.CreateReviewThreadsOnBranch(ctx, mrID, "a", []NewReviewThread{
+		{Path: "a.go", Side: "RIGHT", Line: 1, CommitSHA: "abc", Body: "on a"},
+	})
+	require.NoError(err)
+	_, err = d.CreateReviewThreadsOnBranch(ctx, mrID, "b", []NewReviewThread{
+		{Path: "b.go", Side: "RIGHT", Line: 2, CommitSHA: "abc", Body: "on b"},
+	})
+	require.NoError(err)
+	legacy, err := d.CreateReviewThreads(ctx, mrID, []NewReviewThread{
+		{Path: "c.go", Side: "RIGHT", Line: 3, CommitSHA: "abc", Body: "legacy"},
+	})
+	require.NoError(err)
+	assert.Equal("", legacy[0].Branch)
+
+	onA, err := d.ListReviewThreadsForMRBranch(ctx, mrID, "a")
+	require.NoError(err)
+	paths := make([]string, 0, len(onA))
+	for _, th := range onA {
+		paths = append(paths, th.Path)
+	}
+	// "a" branch threads plus the legacy '' thread; never "b".
+	assert.ElementsMatch([]string{"a.go", "c.go"}, paths)
+
+	got, err := d.GetReviewThread(ctx, onA[0].ID)
+	require.NoError(err)
+	assert.Contains([]string{"a", ""}, got.Branch)
+}
+
 // TestBranchColumnsMigrationApplied proves migration 000023 added the
 // branch column to both review threads and worktree sessions, defaulting
 // to ''.
