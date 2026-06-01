@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -9,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path"
 	"path/filepath"
@@ -114,6 +117,12 @@ func runConfigRead(args []string, stdout io.Writer) error {
 
 // runMCP parses flags and serves the stdio MCP server. The reader is
 // injected: os.Stdin from the CLI dispatch, an explicit reader in tests.
+//
+// When --owner/--name/--number are all omitted, the proxy self-locates:
+// it finds its git worktree (git rev-parse --show-toplevel in cwd) and
+// asks middleman's /local/resolve for the review handle. The lookup is
+// lazy/best-effort here; if it fails the tools surface a clear MCP error
+// rather than the process crashing.
 func runMCP(args []string, in io.Reader, out io.Writer) error {
 	fs := flag.NewFlagSet("middleman mcp", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -124,17 +133,76 @@ func runMCP(args []string, in io.Reader, out io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *owner == "" || *name == "" || *number == 0 {
-		return fmt.Errorf("mcp: --owner, --name and --number are required")
-	}
-	srv := mcp.New(mcp.Config{
+
+	cfg := mcp.Config{
 		ServerName:   "middleman",
 		BaseURL:      *baseURL,
 		ReviewOwner:  *owner,
 		ReviewName:   *name,
 		ReviewNumber: *number,
-	})
+	}
+
+	// cwd-default mode: no explicit handle → resolve from the current
+	// directory. A resolution failure here is non-fatal; we leave the
+	// (empty) handle so tool calls return a clear isError result.
+	if *owner == "" && *name == "" && *number == 0 {
+		cwd, err := os.Getwd()
+		if err == nil {
+			if ro, rn, rnum, rerr := resolveCwdHandle(*baseURL, cwd); rerr == nil {
+				cfg.ReviewOwner, cfg.ReviewName, cfg.ReviewNumber = ro, rn, rnum
+			} else {
+				cfg.Unresolved = fmt.Sprintf("no middleman review for this directory (%s): %v", cwd, rerr)
+				slog.Warn("middleman mcp: could not resolve review for cwd", "err", rerr)
+			}
+		}
+	}
+
+	srv := mcp.New(cfg)
 	return srv.Serve(context.Background(), in, out)
+}
+
+// resolveCwdHandle finds the git worktree containing dir and asks
+// middleman's /local/resolve for its review handle. Returns an error when
+// dir is not a git worktree, the server is unreachable, or no review
+// matches (the path isn't an enrolled worktree).
+func resolveCwdHandle(baseURL, dir string) (owner, name string, number int, err error) {
+	top, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return "", "", 0, fmt.Errorf("not a git worktree: %s: %w", dir, err)
+	}
+	worktreePath := strings.TrimSpace(string(top))
+
+	req, err := http.NewRequest("GET", baseURL+"/api/v1/local/resolve", nil)
+	if err != nil {
+		return "", "", 0, err
+	}
+	q := req.URL.Query()
+	q.Set("path", worktreePath)
+	req.URL.RawQuery = q.Encode()
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("resolve %s: %w", worktreePath, err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", "", 0, fmt.Errorf("no middleman review for %s: status %d: %s",
+			worktreePath, resp.StatusCode, bytes.TrimSpace(body))
+	}
+	var h struct {
+		Owner  string `json:"owner"`
+		Name   string `json:"name"`
+		Number int    `json:"number"`
+		Branch string `json:"branch"`
+	}
+	if err := json.Unmarshal(body, &h); err != nil {
+		return "", "", 0, fmt.Errorf("decode resolve response: %w", err)
+	}
+	if h.Owner == "" || h.Name == "" || h.Number == 0 {
+		return "", "", 0, fmt.Errorf("incomplete review handle for %s", worktreePath)
+	}
+	return h.Owner, h.Name, h.Number, nil
 }
 
 func run(configPath string) error {

@@ -232,9 +232,12 @@ func TestRunCLIConfigReadPortCreatesDefaultConfig(t *testing.T) {
 	assert.Contains(string(content), "port = 8091")
 }
 
-func TestMCPRequiresReviewFlags(t *testing.T) {
-	err := runCLI([]string{"mcp", "--base-url", "http://127.0.0.1:8091"}, &strings.Builder{})
-	require.Error(t, err) // missing --owner/--name/--number
+func TestMCPCwdDefaultResolverErrorsOutsideWorktree(t *testing.T) {
+	// Outside any git worktree the cwd-default resolver fails cleanly;
+	// the served tools then return isError, the server itself does not
+	// crash. This replaces the old "flags required" contract.
+	_, _, _, err := resolveCwdHandle("http://127.0.0.1:0", t.TempDir())
+	require.Error(t, err)
 }
 
 func TestMCPParsesFlags(t *testing.T) {

@@ -22,6 +22,10 @@ type Config struct {
 	ReviewOwner  string
 	ReviewName   string
 	ReviewNumber int
+	// Unresolved, when non-empty, means cwd-default resolution failed.
+	// Every tools/call returns it as a clear isError result (tools/list
+	// still works, so the client sees the tools and learns why calls fail).
+	Unresolved string
 	// httpDoer is the REST client; defaults to http.DefaultClient in New.
 	httpDoer HTTPDoer
 }

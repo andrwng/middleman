@@ -73,6 +73,14 @@ func builtinTools() map[string]toolDef {
 				return s.restJSON("POST", s.reviewPath(fmt.Sprintf("/review-threads/%d/comments", id)), payload)
 			},
 		},
+		"get_pull": {
+			name:        "get_pull",
+			description: "Get the pull/review detail (title, head/base branch + SHAs) so you can diff the exact range under review yourself.",
+			inputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+			call: func(s *Server, _ map[string]any) (string, error) {
+				return s.restJSON("GET", s.reviewPath(""), nil)
+			},
+		},
 	}
 }
 
@@ -152,6 +160,12 @@ func (s *Server) toolList() []map[string]any {
 
 func (s *Server) handleToolCall(ctx context.Context, w io.Writer, req rpcRequest) error {
 	_ = ctx
+	if s.cfg.Unresolved != "" {
+		return s.writeResult(w, req.ID, map[string]any{
+			"content": []map[string]any{{"type": "text", "text": s.cfg.Unresolved}},
+			"isError": true,
+		})
+	}
 	var p struct {
 		Name      string         `json:"name"`
 		Arguments map[string]any `json:"arguments"`

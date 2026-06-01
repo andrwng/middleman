@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -87,6 +88,42 @@ func TestGetThreadNotFound(t *testing.T) {
 	_, err := s.tools["get_thread"].call(s, map[string]any{"thread_id": float64(99)})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "not found")
+}
+
+func TestGetPullProxiesPullEndpoint(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/api/v1/repos/local/demo/pulls/7", r.URL.Path)
+		_, _ = w.Write([]byte(`{"merge_request":{"number":7,"title":"Worktree: feat","head_branch":"feat"}}`))
+	}))
+	defer srv.Close()
+	s := New(Config{ServerName: "middleman", BaseURL: srv.URL, ReviewOwner: "local", ReviewName: "demo", ReviewNumber: 7})
+	out, err := s.tools["get_pull"].call(s, map[string]any{})
+	require.NoError(t, err)
+	require.Contains(t, out, "Worktree: feat")
+}
+
+func TestToolListIncludesGetPull(t *testing.T) {
+	s := New(Config{ServerName: "middleman", BaseURL: "http://127.0.0.1:0", ReviewOwner: "local", ReviewName: "demo", ReviewNumber: 7})
+	names := map[string]bool{}
+	for _, td := range s.toolList() {
+		names[td["name"].(string)] = true
+	}
+	require.True(t, names["list_threads"])
+	require.True(t, names["get_thread"])
+	require.True(t, names["reply_to_thread"])
+	require.True(t, names["get_pull"])
+}
+
+func TestUnresolvedHandleReturnsClearToolError(t *testing.T) {
+	s := New(Config{ServerName: "middleman", Unresolved: "no middleman review for this directory (/x): boom"})
+	var buf bytes.Buffer
+	req := rpcRequest{
+		JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: "tools/call",
+		Params: json.RawMessage(`{"name":"list_threads","arguments":{}}`),
+	}
+	require.NoError(t, s.handleToolCall(context.Background(), &buf, req))
+	require.Contains(t, buf.String(), "no middleman review for this directory")
+	require.Contains(t, buf.String(), `"isError":true`)
 }
 
 // A tool that fails (empty body fails before any HTTP call) must come back
