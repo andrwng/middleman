@@ -256,7 +256,7 @@ func TestBranchColumnsMigrationApplied(t *testing.T) {
 		Path: "/code/demo", Branch: "feat", HeadSHA: "aaaa",
 	})
 	require.NoError(err)
-	sess, err := d.CreateWorktreeSession(ctx, w.ID)
+	sess, err := d.CreateWorktreeSession(ctx, w.ID, "")
 	require.NoError(err)
 
 	var sessBranch string
