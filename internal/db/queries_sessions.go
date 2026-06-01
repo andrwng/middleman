@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -149,11 +150,11 @@ type NewWorktreeSessionTurn struct {
 // claude_response from queued → running → done|failed|cancelled
 // and to fill in content / raw_json / error when the result lands.
 type UpdateWorktreeSessionTurn struct {
-	Status  *string
-	Content *string
-	RawJSON *string
-	Error   *string
-	PID     *int
+	Status   *string
+	Content  *string
+	RawJSON  *string
+	Error    *string
+	PID      *int
 	ClearPID bool
 }
 
@@ -200,14 +201,14 @@ func (d *DB) UpdateWorktreeSessionTurnFields(
 }
 
 func joinCommas(parts []string) string {
-	out := ""
+	var out strings.Builder
 	for i, p := range parts {
 		if i > 0 {
-			out += ", "
+			out.WriteString(", ")
 		}
-		out += p
+		out.WriteString(p)
 	}
-	return out
+	return out.String()
 }
 
 // GetWorktreeSessionTurn returns one turn by id.

@@ -140,8 +140,8 @@ func TestBuildPrompt_MultiLineRange(t *testing.T) {
 
 func TestCommitCacheNotice(t *testing.T) {
 	// Empty list → no notice (don't lie about resources).
-	assert.Equal(t, "", commitCacheNotice(nil))
-	assert.Equal(t, "", commitCacheNotice([]string{}))
+	assert.Empty(t, commitCacheNotice(nil))
+	assert.Empty(t, commitCacheNotice([]string{}))
 
 	got := commitCacheNotice([]string{"abc1234", "def5678"})
 	assert.Contains(t, got, ".middleman-commits/<full-commit-sha>.diff")
@@ -497,5 +497,5 @@ func TestFakeClaudeIsExecutable(t *testing.T) {
 	writeFakeClaude(t, p, `{"ok":true}`)
 	out, err := exec.Command(p).CombinedOutput()
 	require.NoError(t, err)
-	assert.Equal(t, true, strings.Contains(string(out), `"ok":true`))
+	assert.Contains(t, string(out), `"ok":true`)
 }

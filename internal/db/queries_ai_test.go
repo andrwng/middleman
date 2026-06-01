@@ -92,7 +92,7 @@ func TestAIQuestionLifecycle(t *testing.T) {
 	require.NoError(err)
 	assert.Equal("done", got.Status)
 	assert.Equal("the answer", got.Answer)
-	assert.Equal(`[{"file":"x.go","line":5}]`, got.CitationsJSON)
+	assert.JSONEq(`[{"file":"x.go","line":5}]`, got.CitationsJSON)
 	assert.Nil(got.PID)
 }
 
@@ -225,7 +225,7 @@ func TestListAIThreadsForMR(t *testing.T) {
 	ctx := context.Background()
 	mrID := seedAIQuestionTestMR(t, d)
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		_, _, err := d.CreateAIThread(ctx, NewAIThreadInput{
 			MergeRequestID: mrID, Path: "x.go", AnchorSide: "RIGHT",
 			AnchorLine: i + 1, CommitSHA: "abc", Question: "q",

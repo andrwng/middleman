@@ -81,6 +81,83 @@ func TestDiff(t *testing.T) {
 	assert.Equal("added", result.Files[1].Status)
 }
 
+func TestDiffWhitespaceOnly(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	dir := t.TempDir()
+	remote := filepath.Join(dir, "remote.git")
+	work := filepath.Join(dir, "work")
+
+	run(t, dir, "git", "init", "--bare", "--initial-branch=main", remote)
+	run(t, dir, "git", "clone", remote, work)
+	run(t, work, "git", "config", "user.email", "test@test.com")
+	run(t, work, "git", "config", "user.name", "Test")
+
+	// Initial commit: ws.go is indented with a tab; real.go is normal.
+	require.NoError(os.WriteFile(filepath.Join(work, "ws.go"),
+		[]byte("package main\n\nfunc main() {\n\treturn\n}\n"), 0o644))
+	require.NoError(os.WriteFile(filepath.Join(work, "real.go"),
+		[]byte("package main\n\nvar x = 1\n"), 0o644))
+	run(t, work, "git", "add", ".")
+	run(t, work, "git", "commit", "-m", "initial")
+	run(t, work, "git", "push", "origin", "main")
+
+	// Feature branch: ws.go only re-indents an existing line
+	// (whitespace-only); real.go gets a genuine content change.
+	run(t, work, "git", "checkout", "-b", "feature")
+	require.NoError(os.WriteFile(filepath.Join(work, "ws.go"),
+		[]byte("package main\n\nfunc main() {\n        return\n}\n"), 0o644))
+	require.NoError(os.WriteFile(filepath.Join(work, "real.go"),
+		[]byte("package main\n\nvar x = 2\n"), 0o644))
+	run(t, work, "git", "add", ".")
+	run(t, work, "git", "commit", "-m", "feature")
+	run(t, work, "git", "push", "origin", "feature")
+
+	mainSHA := getSHA(t, work, "origin/main")
+	featureSHA := getSHA(t, work, "origin/feature")
+
+	clonesDir := t.TempDir()
+	mgr := New(clonesDir, nil)
+	require.NoError(mgr.EnsureClone(
+		context.Background(), "github.com", "test", "repo", remote))
+	mb, err := mgr.MergeBase(
+		context.Background(), "github.com", "test", "repo",
+		mainSHA, featureSHA)
+	require.NoError(err)
+
+	// Default mode: ws.go is flagged whitespace-only and counted; the
+	// real change is not. Regression guard: `git diff --raw -w` lists
+	// whitespace-only files on git 2.43, so detection must use --numstat.
+	result, err := mgr.Diff(
+		context.Background(), "github.com", "test", "repo",
+		mb, featureSHA, false)
+	require.NoError(err)
+	assert.Equal(1, result.WhitespaceOnlyCount)
+
+	byPath := make(map[string]DiffFile, len(result.Files))
+	for _, f := range result.Files {
+		byPath[f.Path] = f
+	}
+	require.Contains(byPath, "ws.go")
+	require.Contains(byPath, "real.go")
+	assert.True(byPath["ws.go"].IsWhitespaceOnly)
+	assert.False(byPath["real.go"].IsWhitespaceOnly)
+
+	// Hide mode: the whitespace-only file is removed from the list; the
+	// real change stays.
+	hidden, err := mgr.Diff(
+		context.Background(), "github.com", "test", "repo",
+		mb, featureSHA, true)
+	require.NoError(err)
+	hiddenPaths := make(map[string]bool, len(hidden.Files))
+	for _, f := range hidden.Files {
+		hiddenPaths[f.Path] = true
+	}
+	assert.NotContains(hiddenPaths, "ws.go")
+	assert.Contains(hiddenPaths, "real.go")
+}
+
 func TestDiffFiles(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

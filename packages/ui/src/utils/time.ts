@@ -17,3 +17,7 @@ export function timeAgo(dateStr: string): string {
 export function localDateLabel(dateStr: string): string {
   return parseAPITimestamp(dateStr).toLocaleDateString();
 }
+
+export function localTimeLabel(dateStr: string): string {
+  return parseAPITimestamp(dateStr).toLocaleTimeString();
+}

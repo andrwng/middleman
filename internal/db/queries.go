@@ -1016,7 +1016,7 @@ func (d *DB) ResolveReviewCommentRootID(
 	}
 	// Bounded walk — GitHub threads are rarely more than a handful
 	// deep. Cap at 32 to prevent a malformed cycle from spinning.
-	for i := 0; i < 32; i++ {
+	for range 32 {
 		var metaJSON string
 		err := d.ro.QueryRowContext(ctx,
 			`SELECT COALESCE(metadata_json, '{}')

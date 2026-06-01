@@ -18,18 +18,18 @@ import (
 // --- shared response shapes -------------------------------------------------
 
 type aiThreadResponse struct {
-	ID              int64     `json:"id"`
-	MergeRequestID  int64     `json:"mr_id"`
-	Path            string    `json:"path"`
-	AnchorSide      string    `json:"anchor_side"`
-	AnchorLine      int       `json:"anchor_line"`
-	HunkStartLine   *int      `json:"hunk_start_line,omitempty"`
-	HunkEndLine     *int      `json:"hunk_end_line,omitempty"`
-	SelectionText   *string   `json:"selection_text,omitempty"`
-	CommitSHA       string    `json:"commit_sha"`
-	ClaudeSessionID *string   `json:"claude_session_id,omitempty"`
-	Status          string    `json:"status"`
-	CreatedAt       time.Time `json:"created_at"`
+	ID              int64      `json:"id"`
+	MergeRequestID  int64      `json:"mr_id"`
+	Path            string     `json:"path"`
+	AnchorSide      string     `json:"anchor_side"`
+	AnchorLine      int        `json:"anchor_line"`
+	HunkStartLine   *int       `json:"hunk_start_line,omitempty"`
+	HunkEndLine     *int       `json:"hunk_end_line,omitempty"`
+	SelectionText   *string    `json:"selection_text,omitempty"`
+	CommitSHA       string     `json:"commit_sha"`
+	ClaudeSessionID *string    `json:"claude_session_id,omitempty"`
+	Status          string     `json:"status"`
+	CreatedAt       time.Time  `json:"created_at"`
 	ClosedAt        *time.Time `json:"closed_at,omitempty"`
 }
 
@@ -509,13 +509,12 @@ func (s *Server) createAIBrief(ctx context.Context, input *createBriefInput) (*a
 	gitLog, _ := runGitLogForBrief(ctx, cloneDir, shas.MergeBaseSHA, shas.DiffHeadSHA)
 
 	var ctxBuf strings.Builder
-	ctxBuf.WriteString(fmt.Sprintf("Repo: %s/%s\n", input.Owner, input.Name))
-	ctxBuf.WriteString(fmt.Sprintf("PR #%d: %s\n", pr.Number, pr.Title))
-	ctxBuf.WriteString(fmt.Sprintf("Base: %s  Head: %s  Branch: %s → %s\n",
+	fmt.Fprintf(&ctxBuf, "Repo: %s/%s\n", input.Owner, input.Name)
+	fmt.Fprintf(&ctxBuf, "PR #%d: %s\n", pr.Number, pr.Title)
+	fmt.Fprintf(&ctxBuf, "Base: %s  Head: %s  Branch: %s → %s\n",
 		shas.MergeBaseSHA[:min(7, len(shas.MergeBaseSHA))],
 		shas.DiffHeadSHA[:min(7, len(shas.DiffHeadSHA))],
-		pr.HeadBranch, pr.BaseBranch,
-	))
+		pr.HeadBranch, pr.BaseBranch)
 	if pr.Body != "" {
 		ctxBuf.WriteString("\nAuthor's description:\n")
 		ctxBuf.WriteString(strings.TrimSpace(pr.Body))
@@ -579,12 +578,11 @@ func (s *Server) createAIBriefLocal(
 		branch = "(detached)"
 	}
 	var ctxBuf strings.Builder
-	ctxBuf.WriteString(fmt.Sprintf("Local worktree: %s\n", w.Path))
-	ctxBuf.WriteString(fmt.Sprintf("Branch: %s vs %s\n", branch, base.Ref))
-	ctxBuf.WriteString(fmt.Sprintf("Base: %s  Head: %s\n",
+	fmt.Fprintf(&ctxBuf, "Local worktree: %s\n", w.Path)
+	fmt.Fprintf(&ctxBuf, "Branch: %s vs %s\n", branch, base.Ref)
+	fmt.Fprintf(&ctxBuf, "Base: %s  Head: %s\n",
 		base.SHA[:min(7, len(base.SHA))],
-		w.HeadSHA[:min(7, len(w.HeadSHA))],
-	))
+		w.HeadSHA[:min(7, len(w.HeadSHA))])
 	if gitLog != "" {
 		ctxBuf.WriteString("\nCommit log (oldest first):\n")
 		ctxBuf.WriteString(gitLog)
@@ -707,9 +705,9 @@ func (s *Server) createAICommitAnalysis(ctx context.Context, input *commitAnalys
 	}
 
 	var ctxBuf strings.Builder
-	ctxBuf.WriteString(fmt.Sprintf("Repo: %s/%s\n", input.Owner, input.Name))
-	ctxBuf.WriteString(fmt.Sprintf("PR #%d: %s\n", pr.Number, pr.Title))
-	ctxBuf.WriteString(fmt.Sprintf("Branch: %s → %s\n", pr.HeadBranch, pr.BaseBranch))
+	fmt.Fprintf(&ctxBuf, "Repo: %s/%s\n", input.Owner, input.Name)
+	fmt.Fprintf(&ctxBuf, "PR #%d: %s\n", pr.Number, pr.Title)
+	fmt.Fprintf(&ctxBuf, "Branch: %s → %s\n", pr.HeadBranch, pr.BaseBranch)
 
 	row, err := s.aiReview.CreateCommitAnalysis(ctx, aireview.CommitAnalysisInput{
 		MergeRequestID: mrID,
@@ -781,11 +779,4 @@ func runGitLogForBrief(ctx context.Context, cloneDir, base, head string) (string
 		sb.WriteString("\n")
 	}
 	return sb.String(), nil
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

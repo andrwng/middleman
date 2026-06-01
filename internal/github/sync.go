@@ -19,11 +19,6 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// strPtr returns a pointer to s. Cheap local helper so we can
-// construct gh.User / gh.Team literals without a named variable
-// per field.
-func strPtr(s string) *string { return &s }
-
 // SyncStatus holds the current state of the sync engine.
 type SyncStatus struct {
 	Running     bool      `json:"running"`
@@ -163,12 +158,12 @@ type Syncer struct {
 	// recentDays caps the sync window to PRs updated in the last N
 	// days. 0 = unlimited (fetch every open PR). Set by main.go at
 	// startup based on SyncRecentDays in the TOML config.
-	recentDays    atomic.Int32
-	running       atomic.Bool
-	status        atomic.Value // stores *SyncStatus
-	stopCh        chan struct{}
-	stopOnce      sync.Once
-	wg            sync.WaitGroup
+	recentDays atomic.Int32
+	running    atomic.Bool
+	status     atomic.Value // stores *SyncStatus
+	stopCh     chan struct{}
+	stopOnce   sync.Once
+	wg         sync.WaitGroup
 	// lifecycleMu serializes TriggerRun registration with Stop so
 	// no wg.Add can happen after Stop begins wg.Wait.
 	lifecycleMu        sync.Mutex
@@ -1456,13 +1451,13 @@ func (s *Syncer) indexSyncRepo(
 						for _, login := range reviewersByNumber[n] {
 							bulk.PR.RequestedReviewers = append(
 								bulk.PR.RequestedReviewers,
-								&gh.User{Login: strPtr(login)},
+								&gh.User{Login: new(login)},
 							)
 						}
 						for _, slug := range teamsByNumber[n] {
 							bulk.PR.RequestedTeams = append(
 								bulk.PR.RequestedTeams,
-								&gh.Team{Slug: strPtr(slug)},
+								&gh.Team{Slug: new(slug)},
 							)
 						}
 					}

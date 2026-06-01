@@ -270,12 +270,13 @@ test.describe("diff view", () => {
     await waitForSidebarFilesLoaded(page);
 
     // Each file lives in a different directory, so all 4 should render headers.
+    // The store sorts files by path, so headers appear in alphabetical order.
     const dirHeaders = page.locator(".diff-dir-header");
     await expect(dirHeaders).toHaveCount(4);
-    await expect(dirHeaders.nth(0)).toHaveText("internal/server/");
+    await expect(dirHeaders.nth(0)).toHaveText("assets/");
     await expect(dirHeaders.nth(1)).toHaveText("frontend/src/lib/utils/");
     await expect(dirHeaders.nth(2)).toHaveText("internal/legacy/");
-    await expect(dirHeaders.nth(3)).toHaveText("assets/");
+    await expect(dirHeaders.nth(3)).toHaveText("internal/server/");
   });
 
   test("clicking a sidebar file row highlights it as active", async ({ page }) => {
@@ -307,15 +308,15 @@ test.describe("diff view", () => {
     await navigateToDiff(page);
     await waitForDiffLoaded(page);
 
-    // On the /files route the "Files changed" tab is active.
+    // On the /files route the "Review" tab is active.
     const filesTab = page.locator(".detail-tab", {
-      hasText: "Files changed",
+      hasText: "Review",
     });
     await expect(filesTab).toHaveClass(/detail-tab--active/);
 
-    // Clicking "Conversation" navigates back to the PR detail.
+    // Clicking "Activity" navigates back to the PR detail.
     await page.locator(".detail-tab", {
-      hasText: "Conversation",
+      hasText: "Activity",
     }).click();
     await expect(page).toHaveURL(/\/pulls\/acme\/widgets\/1$/);
   });
@@ -346,8 +347,12 @@ test.describe("diff view", () => {
     await navigateToDiff(page);
     await waitForDiffLoaded(page);
 
-    // Default tab width is 4.
-    const segments = page.locator(".diff-toolbar .segment");
+    // The toolbar has two segmented controls (Layout, then Tab width);
+    // scope to the Tab-width group, whose segments are 1 / 2 / 4 / 8.
+    const tabWidth = page.locator(".diff-toolbar .segmented-control").nth(1);
+    const segments = tabWidth.locator(".segment");
+
+    // Default tab width is 4 (the 3rd segment).
     await expect(segments.nth(2)).toHaveClass(/segment--active/);
 
     // Click tab width 2.
@@ -435,7 +440,9 @@ test.describe("diff view", () => {
     await navigateToDiff(page);
     await waitForDiffLoaded(page);
 
-    const firstFile = page.locator(".diff-file").first();
+    // Files are sorted by path, so target handler.go by its path rather
+    // than position.
+    const firstFile = page.locator('[data-file-path="internal/server/handler.go"]');
 
     // Hunk headers.
     const hunkHeaders = firstFile.locator(".hunk-header");
@@ -456,8 +463,8 @@ test.describe("diff view", () => {
     await navigateToDiff(page);
     await waitForDiffLoaded(page);
 
-    // Binary file is the 4th file (logo.png).
-    const binaryFile = page.locator(".diff-file").nth(3);
+    // Binary file is logo.png (target by path; files are sorted by path).
+    const binaryFile = page.locator('[data-file-path="assets/logo.png"]');
     await expect(binaryFile.locator(".binary-notice")).toHaveText("Binary file changed");
   });
 
@@ -476,39 +483,42 @@ test.describe("diff view", () => {
     await navigateToDiff(page);
     await waitForDiffLoaded(page);
 
-    // First file (handler.go) has 2 hunks with a gap between them.
-    // Hunk 1 ends at old line 14 (old_start=10, old_count=7 -> ends at 17),
+    // handler.go has 2 hunks with a gap between them.
+    // Hunk 1 ends at old line 17 (old_start=10, old_count=7),
     // Hunk 2 starts at old line 30 -> gap = 30 - 17 = 13 unchanged lines.
-    const firstFile = page.locator(".diff-file").first();
-    const collapsed = firstFile.locator(".collapsed-region");
+    // Files are sorted by path, so target handler.go by its path. The file
+    // also renders top/bottom context-expand regions, so scope to the
+    // between-hunks region by its "13 unchanged lines" label.
+    const firstFile = page.locator('[data-file-path="internal/server/handler.go"]');
+    const collapsed = firstFile
+      .locator(".collapsed-region")
+      .filter({ hasText: "13 unchanged lines" });
     await expect(collapsed).toHaveCount(1);
     await expect(collapsed).toContainText("unchanged lines");
   });
 
-  test("fallback file list renders when selected PR is filtered out of sidebar", async ({ page }) => {
+  test("review-surface file list stays reachable when selected PR is filtered out of sidebar", async ({ page }) => {
     await mockDiffApi(page, smallDiff);
     await navigateToDiff(page);
     await waitForDiffLoaded(page);
     await waitForSidebarFilesLoaded(page);
 
-    // PR 1 "Add widget caching layer" is selected and its file list renders
-    // inline under the pull-item.
+    // PR 1 "Add widget caching layer" is selected; its file list renders in
+    // the review surface's sidebar, independent of the PR list.
     const pr1 = page.locator(".pull-item").filter({ hasText: "caching layer" });
     await expect(pr1).toHaveCount(1);
-    const inlineFiles = pr1.locator("..").locator(".diff-files");
-    await expect(inlineFiles).toHaveCount(1);
+    await expect(page.locator(".review-sidebar .diff-file-row")).toHaveCount(4);
 
-    // Filter the sidebar to exclude PR 1 by searching for a different PR.
+    // Filter the PR list to exclude PR 1 by searching for a different PR.
     await page.locator(".search-input").fill("race");
     await expect(page.locator(".count-badge"))
       .toHaveText(/^1 PRs?$/, { timeout: 5_000 });
     await expect(page.locator(".pull-item").filter({ hasText: "caching layer" }))
       .toHaveCount(0);
 
-    // Fallback file list renders outside .list-body (selected PR is gone).
-    const fallback = page.locator(".pull-list > .diff-files-wrap");
-    await expect(fallback).toHaveCount(1);
-    await expect(fallback.locator(".diff-file-row")).toHaveCount(4);
+    // The review-surface file list still shows all 4 files even though the
+    // selected PR is gone from the PR list.
+    await expect(page.locator(".review-sidebar .diff-file-row")).toHaveCount(4);
   });
 
   test("inline file filter appears for large diffs and narrows list", async ({ page }) => {
@@ -615,28 +625,25 @@ test.describe("diff view", () => {
     await expect(page.locator(".diff-file-row")).toHaveCount(4);
   });
 
-  test("fallback file list renders when selected PR's repo group is collapsed", async ({ page }) => {
+  test("review-surface file list stays reachable when selected PR's repo group is collapsed", async ({ page }) => {
     await mockDiffApi(page, smallDiff);
     await navigateToDiff(page);
     await waitForDiffLoaded(page);
     await waitForSidebarFilesLoaded(page);
 
-    // File list renders inline under the PR.
-    const pr1 = page.locator(".pull-item").filter({ hasText: "caching layer" });
-    const inlineFiles = pr1.locator("..").locator(".diff-files");
-    await expect(inlineFiles).toHaveCount(1);
+    // The review surface's sidebar lists all 4 files for the selected PR.
+    await expect(page.locator(".review-sidebar .diff-file-row")).toHaveCount(4);
 
     // Collapse the acme/widgets repo group (containing the selected PR).
     await page.locator(".repo-header", { hasText: "acme/widgets" }).click();
     await expect(page.locator(".repo-header", { hasText: "acme/widgets" }))
       .toHaveAttribute("aria-expanded", "false");
 
-    // PR row hidden, but fallback file list renders outside .list-body.
+    // The PR row is hidden in the PR list, but the review-surface file
+    // list still shows all 4 files (it lives in its own sidebar).
     await expect(page.locator(".pull-item").filter({ hasText: "caching layer" }))
       .toHaveCount(0);
-    const fallback = page.locator(".pull-list > .diff-files-wrap");
-    await expect(fallback).toHaveCount(1);
-    await expect(fallback.locator(".diff-file-row")).toHaveCount(4);
+    await expect(page.locator(".review-sidebar .diff-file-row")).toHaveCount(4);
   });
 
   test("commit list resets expand state when switching PRs", async ({ page }) => {
@@ -672,18 +679,23 @@ test.describe("diff view", () => {
     await waitForDiffLoaded(page);
     await waitForSidebarFilesLoaded(page);
 
-    // Expand commit section under PR 1 and verify a commit row renders.
-    const toggle = page.locator(".commit-section__toggle").first();
-    await toggle.click();
+    // Commit section is expanded by default; a commit row renders.
     await expect(page.locator(".commit-section__body").first()).toBeVisible();
     await expect(page.locator(".commit-item").first()).toBeVisible();
+
+    // Collapse it under PR 1.
+    const toggle = page.locator(".commit-section__toggle").first();
+    await toggle.click();
+    await expect(page.locator(".commit-section__body")).toHaveCount(0);
 
     // Switch to PR 2.
     await page.goto("/pulls/acme/widgets/2/files");
     await waitForSidebarFilesLoaded(page);
 
-    // Commit section should be collapsed on new PR (body hidden).
-    await expect(page.locator(".commit-section__body")).toHaveCount(0);
+    // Expand state resets on the new PR — the section returns to its
+    // expanded default rather than carrying over PR 1's collapsed state.
+    await expect(page.locator(".commit-section__body").first()).toBeVisible();
+    await expect(page.locator(".commit-item").first()).toBeVisible();
   });
 });
 
@@ -929,9 +941,14 @@ test.describe("diff view (git-backed)", () => {
       '[data-file-path="internal/handler.go"]',
     );
 
-    // With 2 hunks separated by unchanged lines, there should be
-    // a collapsed region between them.
-    const collapsed = handlerFile.locator(".collapsed-region");
+    // With 2 hunks separated by unchanged lines, there is a collapsed
+    // region between them. The file also renders top/bottom context-expand
+    // regions, so scope to the between-hunks region by its "17 unchanged
+    // lines" label (gap between hunk 1 ending at old line 15 and hunk 2
+    // starting at old line 32).
+    const collapsed = handlerFile
+      .locator(".collapsed-region")
+      .filter({ hasText: "17 unchanged lines" });
     await expect(collapsed).toHaveCount(1);
     await expect(collapsed).toContainText("unchanged lines");
   });
@@ -943,7 +960,8 @@ test.describe("diff view (git-backed)", () => {
     }, 20 * 24 * 60 * 60 * 1000);
 
     await page.goto("/pulls/acme/widgets/1/files");
-    await page.locator(".commit-section__toggle").click();
+    // The commit section is expanded by default, so the commit rows are
+    // already present — no toggle click needed.
     await page.locator(".commit-item").first()
       .waitFor({ state: "visible", timeout: 10_000 });
 

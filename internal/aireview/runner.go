@@ -3,10 +3,10 @@
 // and a persistent Claude session (via --resume) so follow-ups reuse
 // Claude's conversation state. Thread lifecycle:
 //
-//   CreateThread → worktree add at commit SHA → spawn Claude for Q1
-//                                             → capture session_id
-//   AddFollowUp  → spawn Claude with --resume session_id for Qn
-//   CloseThread  → cancel any running Qs → worktree remove
+//	CreateThread → worktree add at commit SHA → spawn Claude for Q1
+//	                                          → capture session_id
+//	AddFollowUp  → spawn Claude with --resume session_id for Qn
+//	CloseThread  → cancel any running Qs → worktree remove
 //
 // Questions run in their own goroutine with a cancellable context;
 // CancelQuestion cancels the ctx which terminates the subprocess
@@ -58,9 +58,9 @@ type Runner struct {
 
 	briefPromptFile string
 
-	mu                  sync.Mutex
-	running             map[int64]context.CancelFunc // questionID -> cancel
-	briefsRunning       map[int64]context.CancelFunc // briefID -> cancel
+	mu                    sync.Mutex
+	running               map[int64]context.CancelFunc // questionID -> cancel
+	briefsRunning         map[int64]context.CancelFunc // briefID -> cancel
 	commitAnalysisRunning map[int64]context.CancelFunc // commit-analysis ID -> cancel
 }
 
@@ -82,11 +82,11 @@ type RunnerConfig struct {
 
 func New(cfg RunnerConfig) *Runner {
 	return &Runner{
-		db:              cfg.DB,
-		clones:          cfg.Clones,
-		rootDir:         cfg.WorktreeDir,
-		hostFor:         cfg.HostFor,
-		briefPromptFile: cfg.BriefPromptFile,
+		db:                    cfg.DB,
+		clones:                cfg.Clones,
+		rootDir:               cfg.WorktreeDir,
+		hostFor:               cfg.HostFor,
+		briefPromptFile:       cfg.BriefPromptFile,
 		running:               make(map[int64]context.CancelFunc),
 		briefsRunning:         make(map[int64]context.CancelFunc),
 		commitAnalysisRunning: make(map[int64]context.CancelFunc),
@@ -581,13 +581,13 @@ func buildPrompt(in CreateThreadInput, question string, cachedCommitShas []strin
 		b.WriteString(in.PromptContext)
 		b.WriteString("\n\n")
 	}
-	b.WriteString(fmt.Sprintf("File: %s\n", in.Path))
+	fmt.Fprintf(&b, "File: %s\n", in.Path)
 	if in.HunkStartLine != nil && in.HunkEndLine != nil && *in.HunkStartLine != *in.HunkEndLine {
-		b.WriteString(fmt.Sprintf("Anchored lines: %d-%d (%s side)\n", *in.HunkStartLine, *in.HunkEndLine, in.AnchorSide))
+		fmt.Fprintf(&b, "Anchored lines: %d-%d (%s side)\n", *in.HunkStartLine, *in.HunkEndLine, in.AnchorSide)
 	} else {
-		b.WriteString(fmt.Sprintf("Anchored line: %d (%s side)\n", in.AnchorLine, in.AnchorSide))
+		fmt.Fprintf(&b, "Anchored line: %d (%s side)\n", in.AnchorLine, in.AnchorSide)
 	}
-	b.WriteString(fmt.Sprintf("Commit SHA: %s\n", in.CommitSHA))
+	fmt.Fprintf(&b, "Commit SHA: %s\n", in.CommitSHA)
 	if in.HunkText != "" {
 		b.WriteString("\nHunk:\n```diff\n")
 		b.WriteString(in.HunkText)
@@ -863,7 +863,7 @@ func briefContextBlock(in BriefInput) string {
 		b.WriteString(in.PromptContext)
 		b.WriteString("\n\n")
 	}
-	b.WriteString(fmt.Sprintf("Head SHA: %s\n", in.HeadSHA))
+	fmt.Fprintf(&b, "Head SHA: %s\n", in.HeadSHA)
 	if in.Depth == "deep" {
 		b.WriteString("Depth: deep. Explore the repo to understand the before-state and cross-references. Use Read/Glob/Grep liberally.\n")
 	} else {
@@ -1121,7 +1121,7 @@ func buildCommitAnalysisPrompt(in CommitAnalysisInput, cachedShas []string) stri
 		b.WriteString(in.PromptContext)
 		b.WriteString("\n\n")
 	}
-	b.WriteString(fmt.Sprintf("Commit SHA: %s\n", in.CommitSHA))
+	fmt.Fprintf(&b, "Commit SHA: %s\n", in.CommitSHA)
 	b.WriteString(commitCacheNotice(cachedShas))
 	b.WriteString(
 		"\nBash is not available. Read files directly from the working copy — it is checked out at this commit. " +

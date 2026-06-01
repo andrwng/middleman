@@ -115,16 +115,6 @@ type Server struct {
 	connWG sync.WaitGroup
 }
 
-// viewerLoginCached returns whatever's currently cached without
-// triggering a fetch — for handlers that want to attach
-// viewer-relative state (e.g. per-PR review state) when the viewer
-// is known but proceed gracefully when it isn't.
-func (s *Server) viewerLoginCached() string {
-	s.viewerMu.Lock()
-	defer s.viewerMu.Unlock()
-	return s.viewerLogin
-}
-
 // trackHTTPConn is installed as http.Server.ConnState by Serve so
 // Shutdown can wait for per-connection goroutines to fully unwind.
 func (s *Server) trackHTTPConn(_ net.Conn, state http.ConnState) {

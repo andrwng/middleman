@@ -1076,7 +1076,7 @@ name = "foo"
 	require.NoError(t, err)
 	require.Len(t, cfg.Repos, 1)
 	assert.False(cfg.Repos[0].IsLocal())
-	assert.Equal("", cfg.Repos[0].LocalPath)
+	assert.Empty(cfg.Repos[0].LocalPath)
 }
 
 func TestLoadLocalOnlyRepoCarriesBaseRef(t *testing.T) {

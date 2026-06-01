@@ -3,7 +3,6 @@ package db
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -47,7 +46,7 @@ func TestAuthorGroupsCRUD(t *testing.T) {
 	require.NoError(d.DeleteAuthorGroup(ctx, created.ID))
 	_, err = d.GetAuthorGroup(ctx, created.ID)
 	require.Error(err)
-	assert.True(errors.Is(err, sql.ErrNoRows))
+	assert.ErrorIs(err, sql.ErrNoRows)
 }
 
 func TestAuthorGroupsNormalizesMembers(t *testing.T) {
