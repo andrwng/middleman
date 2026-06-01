@@ -14,15 +14,15 @@ Let a maintainer run their own terminal `claude` inside a worktree and have it w
 
 - **External capability = read + discuss.** A terminal Claude already has its own Edit/Bash, so it edits code directly. Through `middleman mcp` it only reads the review and replies; resolving/hiding threads stays in the app. No edit/apply tools.
 - **Addressing = zero-config cwd, single review.** The proxy resolves the review for the worktree it's launched in. No `list_reviews`/`get_review`, no flags, no IDs. (Cross-worktree discovery remains a clean fast-follow on the same endpoint.)
-- **Branch identity = branch-scoped, "light" implementation.** A review's threads are scoped to a branch. Implemented by tagging each thread with its branch and filtering by the worktree's current branch — **not** by re-keying the synthetic MR. `number` stays `worktree.id`; `resolveLocalWorktree` and its ~14 callers, the handle, and UI navigation are untouched.
+- **Branch identity = branch-scoped, "light" implementation.** A review's threads are scoped to a branch. Implemented by tagging each thread with its branch and filtering by the worktree's current branch — **not** by re-keying the synthetic MR. `number` stays `worktree.id`; `resolveLocalWorktree` and its ~14 callers, the handle, and UI navigation are untouched. The in-app `--resume` **session** is scoped the same way — keyed by `(worktree, branch)` — so switching branches starts a fresh agent conversation and switching back resumes the prior one.
 - **Diff is not a tool.** A terminal Claude can `git diff`/read files itself; `get_pull` gives it the base/head SHA so it can diff the exact range under review. So the surface is four tools: `list_threads`, `get_thread`, `reply_to_thread`, `get_pull`.
 - **Auth = loopback only** (matches the server today). Token auth stays deferred.
 
 ## Scope
 
-**In:** a `branch` column on review threads + stamp-on-create + filter-by-current-branch; a `/local/resolve` endpoint (path → review handle + current branch); a cwd-default mode for `middleman mcp` (resolve when `--owner/--name/--number` are absent); a `get_pull` MCP tool; registration docs (`claude mcp add`); tests.
+**In:** a `branch` column on review threads + stamp-on-create + filter-by-current-branch; a `branch` column on worktree sessions so the active in-app `--resume` session is per-`(worktree,branch)`; a `/local/resolve` endpoint (path → review handle + current branch); a cwd-default mode for `middleman mcp` (resolve when `--owner/--name/--number` are absent); a `get_pull` MCP tool; registration docs (`claude mcp add`); tests.
 
-**Out:** `list_reviews`/`get_review` discovery tools; `get_diff`/`resolve_thread`/`hide_thread`/`apply_thread` external tools; per-`(worktree,branch)` review *identity* (the "full" re-key); token auth; per-`(worktree,branch)` in-app `--resume` session scoping (the in-app session stays per-worktree — a separate follow-up).
+**Out:** `list_reviews`/`get_review` discovery tools; `get_diff`/`resolve_thread`/`hide_thread`/`apply_thread` external tools; per-`(worktree,branch)` review *identity* (the "full" re-key — `number` stays `worktree.id`); token auth.
 
 ## Current touch points (verified)
 
@@ -31,19 +31,21 @@ Let a maintainer run their own terminal `claude` inside a worktree and have it w
 - `internal/db/migrations/…_review_threads.up.sql` — `middleman_review_threads.mr_id → merge_requests(id)` (threads FK the MR by primary key, **not** by number).
 - `internal/db/queries_review_threads.go` — `AddReviewThreadComment`, the create/list queries (`loadReviewThreadsResponse`), `scanReviewThread`.
 - `internal/server/huma_routes_review_threads.go` — create / list / `/ask` / resolve / hide; `resolveThreadForMR`.
+- `internal/db/migrations/000019_add_worktree_sessions.up.sql` + the session queries — `middleman_worktree_sessions` keyed by `worktree_id` (active via `idx_worktree_sessions_worktree_active WHERE status='active'`); `ensureWorktreeSession(ctx, worktreeID)` / `GetActiveWorktreeSession(ctx, worktreeID)` (~4 call sites in `huma_routes_sessions.go` + `huma_routes_review_threads.go`); `claude_session_id` is the `--resume` handle.
 - `internal/mcp/server.go` + `tools.go` — stdio JSON-RPC server; `Config{ServerName, BaseURL, ReviewOwner, ReviewName, ReviewNumber}`; `builtinTools()` (the 3 existing tools); `reviewPath` builds `/api/v1/repos/{owner}/{name}/pulls/{number}{suffix}`.
 - `cmd/middleman/main.go` — `runMCP` requires `--owner/--name/--number` today (`baseURL` defaults to `http://127.0.0.1:8091`).
 - `internal/worktrees/` — git helpers (toplevel/branch/base resolution) reused for the live branch read.
 
 ## Design
 
-### 1. Branch-scoped threads (light)
+### 1. Branch-scoped threads + in-app session (light)
 
-- **Migration** `000023` (the branch's last is `000022`; confirm it's still free at impl time): `ALTER TABLE middleman_review_threads ADD COLUMN branch TEXT NOT NULL DEFAULT ''`. Backfill existing rows from their worktree's scanned branch via `mr_id → merge_requests.platform_id → middleman_worktrees.branch` (a correlated `UPDATE`); rows that resolve to nothing stay `''`.
+- **Migration** `000023` (the branch's last is `000022`; confirm it's still free at impl time): add `branch TEXT NOT NULL DEFAULT ''` to **both** `middleman_review_threads` and `middleman_worktree_sessions`. Backfill review-thread rows from their worktree's scanned branch via `mr_id → merge_requests.platform_id → middleman_worktrees.branch` (a correlated `UPDATE`), and active session rows from their worktree's scanned branch; rows that resolve to nothing stay `''`.
 - **Current branch is server-derived and authoritative.** A helper reads the worktree's live branch (`git -C <path> rev-parse --abbrev-ref HEAD`, via `internal/worktrees`), falling back to the scanned `worktrees.branch` on error. This is the single source of truth so the in-app UI and the external proxy always agree, and a branch switch takes effect immediately (no wait for the periodic scan).
 - **Create** (in-app only — external Claude can't create, only reply): stamp `branch` = the worktree's current branch.
 - **List** (`loadReviewThreadsResponse`): filter to the current branch; legacy `''` rows remain visible (migration cushion). `get_thread` (by id) and `reply_to_thread` (by id) need no branch logic — ids come from the already-filtered list.
 - `number` stays `worktree.id`; `resolveLocalWorktree`, the handle, the synthetic MR keying, and UI navigation are unchanged. The in-app UI inherits branch-correct threads for free.
+- **In-app session.** `ensureWorktreeSession` / `GetActiveWorktreeSession` take the current branch (the same server-derived helper) and scope the active session to `(worktree, branch)`; the active-session index becomes `(worktree_id, branch) WHERE status='active'`, and the ~4 call sites pass the current branch. Switching to a separate branch finds no active session → a fresh `--resume` session with clean agent context; switching back resumes the prior one. Turns/activity hang off the session, so the activity log partitions by branch for free. (External terminal Claude is unaffected — each `claude` is its own session; this is purely the in-app agent.)
 
 ### 2. `/local/resolve` endpoint
 
@@ -86,7 +88,7 @@ cd <worktree>; claude
 
 ## Testing (e2e non-negotiable)
 
-- **DB:** create stamps the current branch; list filters by branch (two branches in one worktree → disjoint thread-sets); the backfill `UPDATE` populates legacy rows.
+- **DB:** create stamps the current branch; list filters by branch (two branches in one worktree → disjoint thread-sets); the active session resolves per `(worktree, branch)` (two branches → two sessions, each with its own `claude_session_id`); the backfill `UPDATE`s populate legacy thread + session rows.
 - **API e2e** (generated client): `/local/resolve` returns the handle for a seeded worktree path and `404`s for an unknown path; creating threads on one branch then listing after a branch switch returns the other branch's set (drive the branch via the `internal/worktrees`/git seam used by `seedReviewWorktree`).
 - **MCP** (`httptest` server, cf. `tools_test.go`): `tools/list` includes the four tools; `get_pull` maps to the pull endpoint; cwd-default mode resolves a handle from a path via `/local/resolve` and a tool call routes correctly; an unresolvable cwd yields an `isError` tool result.
 - **Conventions:** `-shuffle=on`, testify; server suite sandboxed with `-short` (real-tmux workspace e2e excluded, per the sandbox note); `make api-generate` regenerates the Go + TS clients for the new endpoint.
@@ -95,5 +97,5 @@ cd <worktree>; claude
 
 - **Per-request git read for the current branch.** A `rev-parse` per list/create is cheap (local, ~ms) and correctness-critical for "switch branch → immediately scoped"; the plan may cache it briefly if the 1.5s in-app poll proves chatty. Fallback to the scanned row keeps it robust if git fails.
 - **`''` legacy threads** stay visible across branches until re-stamped; acceptable — nothing is shipped, so the only such rows are local test data.
-- **In-app session is still per-worktree**, so the `--resume` conversation carries across an in-app branch switch. Out of scope here (each external terminal Claude is its own session); flagged as a separate follow-up.
+- **In-app session is branch-scoped** (§1), so a branch switch starts a fresh `--resume` conversation and a switch-back resumes the prior one — coherent with the branch-scoped threads. (External terminal Claude is its own session regardless.)
 - **Read-only by construction:** the external surface exposes no edit/state-mutation tool; code edits are the terminal Claude's own doing, and review-state changes stay in the app.
