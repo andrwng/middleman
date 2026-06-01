@@ -379,3 +379,21 @@ type activityItemResponse struct {
 	CreatedAt    string `json:"created_at"`
 	BodyPreview  string `json:"body_preview"`
 }
+
+// localResolveInput addresses a worktree by its absolute on-disk path.
+type localResolveInput struct {
+	Path string `query:"path"`
+}
+
+// localResolveResponse is the review handle for a worktree path: the
+// PR-shaped (owner, name, number) plus the live current branch.
+type localResolveResponse struct {
+	Owner  string `json:"owner" doc:"always \"local\""`
+	Name   string `json:"name" doc:"the worktree's parent repo name"`
+	Number int64  `json:"number" doc:"the worktree row id (PR-shaped number)"`
+	Branch string `json:"branch" doc:"the worktree's live current branch"`
+}
+
+type localResolveOutput struct {
+	Body localResolveResponse
+}

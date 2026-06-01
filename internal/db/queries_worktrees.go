@@ -238,6 +238,42 @@ func scanWorktree(row rowScanner) (Worktree, error) {
 	return w, nil
 }
 
+// GetActiveWorktreeByPath finds an active (removed_at IS NULL) worktree
+// by exact path, joined with its repo for the parent name. Returns
+// sql.ErrNoRows when no active worktree matches.
+func (d *DB) GetActiveWorktreeByPath(ctx context.Context, path string) (WorktreeWithRepo, error) {
+	row := d.ro.QueryRowContext(ctx,
+		`SELECT w.id, w.repo_id, w.path, w.branch, w.head_sha,
+		        w.is_detached, w.is_locked, w.is_prunable,
+		        w.discovered_at, w.last_seen_at, w.removed_at,
+		        r.owner, r.name
+		   FROM middleman_worktrees w
+		   JOIN middleman_repos r ON r.id = w.repo_id
+		  WHERE w.path = ? AND w.removed_at IS NULL
+		  LIMIT 1`,
+		path,
+	)
+	var wr WorktreeWithRepo
+	var removedAt sql.NullTime
+	var isDetached, isLocked, isPrunable int
+	if err := row.Scan(
+		&wr.ID, &wr.RepoID, &wr.Path, &wr.Branch, &wr.HeadSHA,
+		&isDetached, &isLocked, &isPrunable,
+		&wr.DiscoveredAt, &wr.LastSeenAt, &removedAt,
+		&wr.RepoOwner, &wr.RepoName,
+	); err != nil {
+		return WorktreeWithRepo{}, err
+	}
+	wr.IsDetached = isDetached != 0
+	wr.IsLocked = isLocked != 0
+	wr.IsPrunable = isPrunable != 0
+	if removedAt.Valid {
+		t := removedAt.Time
+		wr.RemovedAt = &t
+	}
+	return wr, nil
+}
+
 func boolToInt(b bool) int {
 	if b {
 		return 1

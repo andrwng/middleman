@@ -610,6 +610,24 @@ type ListWorkspacesOutputBody struct {
 	Workspaces *[]WorkspaceResponse `json:"workspaces"`
 }
 
+// LocalResolveResponse defines model for LocalResolveResponse.
+type LocalResolveResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+
+	// Branch the worktree's live current branch
+	Branch string `json:"branch"`
+
+	// Name the worktree's parent repo name
+	Name string `json:"name"`
+
+	// Number the worktree row id (PR-shaped number)
+	Number int64 `json:"number"`
+
+	// Owner always "local"
+	Owner string `json:"owner"`
+}
+
 // MREvent defines model for MREvent.
 type MREvent struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -1247,6 +1265,11 @@ type ListIssuesParams struct {
 	Offset  *int64  `form:"offset,omitempty" json:"offset,omitempty"`
 }
 
+// GetLocalResolveParams defines parameters for GetLocalResolve.
+type GetLocalResolveParams struct {
+	Path *string `form:"path,omitempty" json:"path,omitempty"`
+}
+
 // ListPullsParams defines parameters for ListPulls.
 type ListPullsParams struct {
 	Repo    *string `form:"repo,omitempty" json:"repo,omitempty"`
@@ -1493,6 +1516,9 @@ type ClientInterface interface {
 
 	// ListIssues request
 	ListIssues(ctx context.Context, params *ListIssuesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetLocalResolve request
+	GetLocalResolve(ctx context.Context, params *GetLocalResolveParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetMe request
 	GetMe(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1862,6 +1888,18 @@ func (c *Client) PutAuthorGroupsById(ctx context.Context, id int64, body PutAuth
 
 func (c *Client) ListIssues(ctx context.Context, params *ListIssuesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListIssuesRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetLocalResolve(ctx context.Context, params *GetLocalResolveParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetLocalResolveRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -3429,6 +3467,55 @@ func NewListIssuesRequest(server string, params *ListIssuesParams) (*http.Reques
 		if params.Offset != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "offset", *params.Offset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetLocalResolveRequest generates requests for GetLocalResolve
+func NewGetLocalResolveRequest(server string, params *GetLocalResolveParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/local/resolve")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Path != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "path", *params.Path, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err
@@ -7617,6 +7704,9 @@ type ClientWithResponsesInterface interface {
 	// ListIssuesWithResponse request
 	ListIssuesWithResponse(ctx context.Context, params *ListIssuesParams, reqEditors ...RequestEditorFn) (*ListIssuesResponse, error)
 
+	// GetLocalResolveWithResponse request
+	GetLocalResolveWithResponse(ctx context.Context, params *GetLocalResolveParams, reqEditors ...RequestEditorFn) (*GetLocalResolveResponse, error)
+
 	// GetMeWithResponse request
 	GetMeWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetMeResponse, error)
 
@@ -8041,6 +8131,29 @@ func (r ListIssuesResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r ListIssuesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetLocalResolveResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *LocalResolveResponse
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r GetLocalResolveResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetLocalResolveResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -9837,6 +9950,15 @@ func (c *ClientWithResponses) ListIssuesWithResponse(ctx context.Context, params
 	return ParseListIssuesResponse(rsp)
 }
 
+// GetLocalResolveWithResponse request returning *GetLocalResolveResponse
+func (c *ClientWithResponses) GetLocalResolveWithResponse(ctx context.Context, params *GetLocalResolveParams, reqEditors ...RequestEditorFn) (*GetLocalResolveResponse, error) {
+	rsp, err := c.GetLocalResolve(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetLocalResolveResponse(rsp)
+}
+
 // GetMeWithResponse request returning *GetMeResponse
 func (c *ClientWithResponses) GetMeWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetMeResponse, error) {
 	rsp, err := c.GetMe(ctx, reqEditors...)
@@ -10895,6 +11017,39 @@ func ParseListIssuesResponse(rsp *http.Response) (*ListIssuesResponse, error) {
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest []IssueResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetLocalResolveResponse parses an HTTP response from a GetLocalResolveWithResponse call
+func ParseGetLocalResolveResponse(rsp *http.Response) (*GetLocalResolveResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetLocalResolveResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest LocalResolveResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

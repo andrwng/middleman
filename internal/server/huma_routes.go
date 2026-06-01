@@ -388,6 +388,7 @@ func (s *Server) registerAPI(api huma.API) {
 	huma.Get(api, "/worktrees/running-turns", s.listWorktreesRunningTurns)
 	huma.Get(api, "/worktrees/{id}/changed-files", s.getWorktreeChangedFiles)
 	huma.Get(api, "/worktrees/{id}/diff", s.getWorktreeDiff)
+	huma.Get(api, "/local/resolve", s.resolveLocalWorktreeByPath)
 	huma.Get(api, "/repos/{owner}/{name}", s.getRepo)
 	huma.Get(api, "/repos/{owner}/{name}/comment-autocomplete", s.getCommentAutocomplete)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/approve", s.approvePR)

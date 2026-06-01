@@ -90,6 +90,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/local/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get local resolve */
+        get: operations["get-local-resolve"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/me": {
         parameters: {
             query?: never;
@@ -1868,6 +1885,25 @@ export interface components {
             readonly $schema?: string;
             workspaces: components["schemas"]["WorkspaceResponse"][] | null;
         };
+        LocalResolveResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/LocalResolveResponse.json
+             */
+            readonly $schema?: string;
+            /** @description the worktree's live current branch */
+            branch: string;
+            /** @description the worktree's parent repo name */
+            name: string;
+            /**
+             * Format: int64
+             * @description the worktree row id (PR-shaped number)
+             */
+            number: number;
+            /** @description always "local" */
+            owner: string;
+        };
         MREvent: {
             /**
              * Format: uri
@@ -2793,6 +2829,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IssueResponse"][] | null;
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-local-resolve": {
+        parameters: {
+            query?: {
+                path?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocalResolveResponse"];
                 };
             };
             /** @description Error */

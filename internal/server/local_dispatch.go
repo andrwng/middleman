@@ -2,9 +2,11 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -407,5 +409,40 @@ func (s *Server) getFilesLocal(
 	return &getFilesOutput{Body: filesResponse{
 		Stale: false,
 		Files: files,
+	}}, nil
+}
+
+// resolveLocalWorktreeByPath powers GET /local/resolve: given an absolute
+// worktree path, return the PR-shaped review handle and the live current
+// branch. 404 when no active worktree matches. Loopback only, like the
+// rest of the API. The path is canonicalized (EvalSymlinks) so an aliased
+// path resolves the same row `git worktree list` reported.
+func (s *Server) resolveLocalWorktreeByPath(
+	ctx context.Context, input *localResolveInput,
+) (*localResolveOutput, error) {
+	if input.Path == "" {
+		return nil, huma.Error400BadRequest("path is required")
+	}
+	canon := input.Path
+	if resolved, err := filepath.EvalSymlinks(input.Path); err == nil {
+		canon = resolved
+	}
+	wr, err := s.db.GetActiveWorktreeByPath(ctx, canon)
+	if errors.Is(err, sql.ErrNoRows) {
+		// Retry with the raw path in case the stored row isn't canonicalized.
+		wr, err = s.db.GetActiveWorktreeByPath(ctx, input.Path)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, huma.Error404NotFound("no middleman review for this directory: " + input.Path)
+	}
+	if err != nil {
+		return nil, huma.Error500InternalServerError("resolve worktree by path: " + err.Error())
+	}
+	w := wr.Worktree
+	return &localResolveOutput{Body: localResolveResponse{
+		Owner:  localOwner,
+		Name:   wr.RepoName,
+		Number: w.ID,
+		Branch: s.currentWorktreeBranch(ctx, &w),
 	}}, nil
 }
