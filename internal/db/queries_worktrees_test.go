@@ -2,6 +2,8 @@ package db
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -277,4 +279,27 @@ func TestUpsertWorktreeRejectsEmptyPath(t *testing.T) {
 
 	_, err := d.UpsertWorktree(ctx, repoID, ScannedWorktree{Path: ""})
 	require.Error(t, err)
+}
+
+func TestGetActiveWorktreeByPath(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	d := openTestDB(t)
+	ctx := context.Background()
+
+	repoID, err := d.UpsertLocalRepo(ctx, "demo")
+	require.NoError(err)
+	w, err := d.UpsertWorktree(ctx, repoID, ScannedWorktree{
+		Path: "/code/demo-feat", Branch: "feat", HeadSHA: "aaaa",
+	})
+	require.NoError(err)
+
+	got, err := d.GetActiveWorktreeByPath(ctx, "/code/demo-feat")
+	require.NoError(err)
+	assert.Equal(w.ID, got.ID)
+	assert.Equal("demo", got.RepoName)
+	assert.Equal("local", got.RepoOwner)
+
+	_, err = d.GetActiveWorktreeByPath(ctx, "/code/does-not-exist")
+	assert.True(errors.Is(err, sql.ErrNoRows))
 }

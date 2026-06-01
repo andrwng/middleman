@@ -1,0 +1,1 @@
+ALTER TABLE middleman_review_thread_comments DROP COLUMN sent_to_agent;

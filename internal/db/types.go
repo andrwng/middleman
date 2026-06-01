@@ -316,6 +316,7 @@ type WorktreeWithRepo struct {
 type WorktreeSession struct {
 	ID              int64
 	WorktreeID      int64
+	Branch          string // worktree branch this session is scoped to ("" = legacy)
 	ClaudeSessionID string // populated after the first claude --output-format=json reply
 	Status          string // "active" | "killed" | "closed"
 	StartedAt       time.Time

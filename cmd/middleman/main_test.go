@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	gh "github.com/google/go-github/v84/github"
@@ -229,4 +230,24 @@ func TestRunCLIConfigReadPortCreatesDefaultConfig(t *testing.T) {
 	content, err := os.ReadFile(cfgPath)
 	require.NoError(err)
 	assert.Contains(string(content), "port = 8091")
+}
+
+func TestMCPCwdDefaultResolverErrorsOutsideWorktree(t *testing.T) {
+	// Outside any git worktree the cwd-default resolver fails cleanly;
+	// the served tools then return isError, the server itself does not
+	// crash. This replaces the old "flags required" contract.
+	_, _, _, err := resolveCwdHandle("http://127.0.0.1:0", t.TempDir())
+	require.Error(t, err)
+}
+
+func TestMCPParsesFlags(t *testing.T) {
+	// With all flags + empty stdin, the server should start and return
+	// cleanly at EOF. We exercise the flag-parse + Serve path via a helper
+	// that accepts an explicit reader.
+	var out strings.Builder
+	err := runMCP([]string{
+		"--base-url", "http://127.0.0.1:8091",
+		"--owner", "local", "--name", "demo", "--number", "7",
+	}, strings.NewReader(""), &out)
+	require.NoError(t, err)
 }

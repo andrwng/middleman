@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { getStores } from "../../context.js";
 
-  const { diff: diffStore, ai: aiStore, brief: briefStore } = getStores();
+  const { diff: diffStore, ai: aiStore, brief: briefStore, reviewThreads: reviewThreadsStore } = getStores();
   import DiffToolbar from "./DiffToolbar.svelte";
   import DiffFileComponent from "./DiffFile.svelte";
   import ReviewPanel from "./ReviewPanel.svelte";
@@ -27,12 +27,14 @@
     // "on current" (blue) when they're really unknown.
     void diffStore.loadCommits();
     aiStore.start(owner, name, number);
+    void reviewThreadsStore.load(owner, name, number);
     briefStore.start(owner, name, number);
 
     return () => {
       cancelAnimationFrame(scrollRaf);
       diffStore.clearDiff();
       aiStore.stop();
+      reviewThreadsStore.clear();
       briefStore.stop();
     };
   });

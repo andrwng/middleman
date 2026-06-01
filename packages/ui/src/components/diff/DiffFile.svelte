@@ -3,7 +3,7 @@
   import type { DiffFile as DiffFileType, DiffHunk } from "../../api/types.js";
   import { getStores } from "../../context.js";
 
-  const { diff: diffStore, ai: aiStore, detail: detailStore } = getStores();
+  const { diff: diffStore, ai: aiStore, detail: detailStore, reviewThreads: reviewThreadsStore } = getStores();
   import { tokenizeLineDual, langFromPath, type DualToken } from "../../utils/highlight.js";
   import { pairHunk } from "../../utils/diffPairing.js";
   import DiffLineComponent from "./DiffLine.svelte";
@@ -12,6 +12,7 @@
   import PendingCommentCard from "./PendingCommentCard.svelte";
   import AIAskComposer from "./AIAskComposer.svelte";
   import AIThreadCard from "./AIThreadCard.svelte";
+  import ReviewThreadCard from "./ReviewThreadCard.svelte";
   import ReviewCommentCard from "./ReviewCommentCard.svelte";
   import RenderedMarkdownView from "./RenderedMarkdownView.svelte";
   import type { DraftComment } from "../../stores/diff.svelte.js";
@@ -384,6 +385,10 @@
 
   function getAIThreadsAtAnchor(line: number, side: "LEFT" | "RIGHT") {
     return aiStore.getThreadsAtAnchor(file.path, line, side);
+  }
+
+  function getReviewThreadsAtAnchor(line: number, side: "LEFT" | "RIGHT") {
+    return reviewThreadsStore.getThreadsAtAnchor(file.path, line, side);
   }
 
   // Maps a unified-line's type + available line numbers to a (line,
@@ -892,6 +897,9 @@
                     {#each getAIThreadsAtAnchor(leftAnchor.line, leftAnchor.side) as thread (thread.id)}
                       <AIThreadCard {thread} repoOwner={owner} repoName={name} />
                     {/each}
+                    {#each getReviewThreadsAtAnchor(leftAnchor.line, leftAnchor.side) as rt (rt.id)}
+                      <ReviewThreadCard thread={rt} />
+                    {/each}
                   {/if}
                 {/if}
                 {#if rightKey}
@@ -915,6 +923,9 @@
                   {#if rightAnchor}
                     {#each getAIThreadsAtAnchor(rightAnchor.line, rightAnchor.side) as thread (thread.id)}
                       <AIThreadCard {thread} repoOwner={owner} repoName={name} />
+                    {/each}
+                    {#each getReviewThreadsAtAnchor(rightAnchor.line, rightAnchor.side) as rt (rt.id)}
+                      <ReviewThreadCard thread={rt} />
                     {/each}
                   {/if}
                 {/if}
@@ -1012,6 +1023,9 @@
                   {#if anchor}
                     {#each getAIThreadsAtAnchor(anchor.line, anchor.side) as thread (thread.id)}
                       <AIThreadCard {thread} repoOwner={owner} repoName={name} />
+                    {/each}
+                    {#each getReviewThreadsAtAnchor(anchor.line, anchor.side) as rt (rt.id)}
+                      <ReviewThreadCard thread={rt} />
                     {/each}
                   {/if}
                 {/if}

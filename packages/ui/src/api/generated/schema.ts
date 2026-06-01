@@ -90,6 +90,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/local/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get local resolve */
+        get: operations["get-local-resolve"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/me": {
         parameters: {
             query?: never;
@@ -682,6 +699,160 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/repos/{owner}/{name}/pulls/{number}/review-threads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get repos by owner by name pulls by number review threads */
+        get: operations["get-repos-by-owner-by-name-pulls-by-number-review-threads"];
+        put?: never;
+        /** Post repos by owner by name pulls by number review threads */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-review-threads"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{owner}/{name}/pulls/{number}/review-threads/apply-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post repos by owner by name pulls by number review threads apply all */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-review-threads-apply-all"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete repos by owner by name pulls by number review threads by thread ID */
+        delete: operations["delete-repos-by-owner-by-name-pulls-by-number-review-threads-by-thread-id"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post repos by owner by name pulls by number review threads by thread ID apply */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-review-threads-by-thread-id-apply"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/ask": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post repos by owner by name pulls by number review threads by thread ID ask */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-review-threads-by-thread-id-ask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post repos by owner by name pulls by number review threads by thread ID comments */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-review-threads-by-thread-id-comments"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/hide": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post repos by owner by name pulls by number review threads by thread ID hide */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-review-threads-by-thread-id-hide"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post repos by owner by name pulls by number review threads by thread ID resolve */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-review-threads-by-thread-id-resolve"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/unhide": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post repos by owner by name pulls by number review threads by thread ID unhide */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-review-threads-by-thread-id-unhide"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/repos/{owner}/{name}/pulls/{number}/session": {
         parameters: {
             query?: never;
@@ -1051,6 +1222,17 @@ export interface components {
             readonly $schema?: string;
             question: string;
         };
+        AddReviewThreadCommentInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/AddReviewThreadCommentInputBody.json
+             */
+            readonly $schema?: string;
+            /** @description user (default) | agent */
+            author?: string;
+            body: string;
+        };
         AiBriefResponse: {
             /**
              * Format: uri
@@ -1228,6 +1410,15 @@ export interface components {
             readonly $schema?: string;
             body: string;
         };
+        AskReviewThreadInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/AskReviewThreadInputBody.json
+             */
+            readonly $schema?: string;
+            body: string;
+        };
         AuthorGroupResponse: {
             /**
              * Format: uri
@@ -1384,6 +1575,27 @@ export interface components {
             readonly $schema?: string;
             /** @description quick (default) or deep */
             depth?: string;
+        };
+        CreateReviewThreadsInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/CreateReviewThreadsInputBody.json
+             */
+            readonly $schema?: string;
+            /** @description discuss-first | act-immediately | persist-only (default) */
+            mode?: string;
+            threads: components["schemas"]["ReviewThreadDraft"][] | null;
+        };
+        CreateReviewThreadsOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/CreateReviewThreadsOutputBody.json
+             */
+            readonly $schema?: string;
+            /** @description the MR's full review-thread list after creation */
+            threads: components["schemas"]["ReviewThreadResponse"][] | null;
         };
         CreateWorkspaceInputBody: {
             /**
@@ -1655,6 +1867,15 @@ export interface components {
             old_num?: number;
             type: string;
         };
+        ListReviewThreadsOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/ListReviewThreadsOutputBody.json
+             */
+            readonly $schema?: string;
+            threads: components["schemas"]["ReviewThreadResponse"][] | null;
+        };
         ListWorkspacesOutputBody: {
             /**
              * Format: uri
@@ -1663,6 +1884,25 @@ export interface components {
              */
             readonly $schema?: string;
             workspaces: components["schemas"]["WorkspaceResponse"][] | null;
+        };
+        LocalResolveResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/LocalResolveResponse.json
+             */
+            readonly $schema?: string;
+            /** @description the worktree's live current branch */
+            branch: string;
+            /** @description the worktree's parent repo name */
+            name: string;
+            /**
+             * Format: int64
+             * @description the worktree row id (PR-shaped number)
+             */
+            number: number;
+            /** @description always "local" */
+            owner: string;
         };
         MREvent: {
             /**
@@ -2013,6 +2253,55 @@ export interface components {
             /** Format: int64 */
             number: number;
             repo_tracked: boolean;
+        };
+        ReviewThreadCommentResponse: {
+            /** @description user | agent */
+            author: string;
+            body: string;
+            /** @description UTC RFC3339 timestamp */
+            created_at: string;
+            /** Format: int64 */
+            id: number;
+            /** @description true if this comment was sent to the agent (an Ask) */
+            sent_to_agent: boolean;
+        };
+        ReviewThreadDraft: {
+            /** @description the reviewer's root comment */
+            body: string;
+            commit_sha: string;
+            /** Format: int64 */
+            line: number;
+            path: string;
+            /** @description LEFT | RIGHT */
+            side: string;
+            /** Format: int64 */
+            start_line?: number;
+        };
+        ReviewThreadResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/ReviewThreadResponse.json
+             */
+            readonly $schema?: string;
+            comments: components["schemas"]["ReviewThreadCommentResponse"][] | null;
+            commit_sha: string;
+            /** @description UTC RFC3339 timestamp */
+            created_at: string;
+            hidden: boolean;
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            line: number;
+            path: string;
+            /** @description LEFT | RIGHT */
+            side: string;
+            /** Format: int64 */
+            start_line?: number;
+            /** @description open | discussed | applied | resolved */
+            status: string;
+            /** @description UTC RFC3339 timestamp */
+            updated_at: string;
         };
         RunningTurnsResponse: {
             /**
@@ -2540,6 +2829,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IssueResponse"][] | null;
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-local-resolve": {
+        parameters: {
+            query?: {
+                path?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocalResolveResponse"];
                 };
             };
             /** @description Error */
@@ -4030,6 +4350,355 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SubmitReviewResponseBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-repos-by-owner-by-name-pulls-by-number-review-threads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListReviewThreadsOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-review-threads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateReviewThreadsInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreateReviewThreadsOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-review-threads-apply-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListReviewThreadsOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "delete-repos-by-owner-by-name-pulls-by-number-review-threads-by-thread-id": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+                thread_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListReviewThreadsOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-review-threads-by-thread-id-apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+                thread_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListReviewThreadsOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-review-threads-by-thread-id-ask": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+                thread_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AskReviewThreadInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewThreadResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-review-threads-by-thread-id-comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+                thread_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddReviewThreadCommentInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewThreadResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-review-threads-by-thread-id-hide": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+                thread_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewThreadResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-review-threads-by-thread-id-resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+                thread_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewThreadResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-review-threads-by-thread-id-unhide": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+                thread_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewThreadResponse"];
                 };
             };
             /** @description Error */

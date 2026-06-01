@@ -8,8 +8,9 @@
   // Conversation pane for a local worktree session. Renders the
   // back-and-forth between the reviewer (review_feedback +
   // user_message turns) and Claude (claude_response turns). The
-  // textbox at the bottom sends free-text follow-ups; review
-  // feedback comes in via the ReviewPanel's Submit button.
+  // textbox at the bottom sends free-text follow-ups. (Local "Submit"
+  // now persists review threads instead of a review_feedback turn; the
+  // discuss/apply agent flow is Phase 2.)
 
   interface Props {
     owner: string;

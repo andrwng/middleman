@@ -46,3 +46,23 @@ func BranchHeads(ctx context.Context, worktreePath, excludeBranch string) (map[s
 	}
 	return heads, nil
 }
+
+// CurrentBranch returns the worktree's live checked-out branch via
+// `git rev-parse --abbrev-ref HEAD`. A detached HEAD prints "HEAD",
+// which we normalize to "" — the same convention the synthetic MR uses
+// for a detached worktree. Returns an error when the path is not a git
+// worktree (callers fall back to the scanned branch).
+func CurrentBranch(ctx context.Context, worktreePath string) (string, error) {
+	if worktreePath == "" {
+		return "", fmt.Errorf("worktreePath is required")
+	}
+	out, err := gitCmd(ctx, worktreePath, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("rev-parse --abbrev-ref HEAD: %w", err)
+	}
+	branch := strings.TrimSpace(string(out))
+	if branch == "HEAD" {
+		return "", nil // detached
+	}
+	return branch, nil
+}

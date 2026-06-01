@@ -54,6 +54,16 @@ Middleman scans that directory for git worktrees on each sync and surfaces each 
 
 Each worktree also gets an **interactive Claude session**. The Review tab's Submit button doesn't post to GitHub (there's nothing upstream); it pushes a turn into a Claude session running with `cwd = <worktree_path>`. The Activity tab streams the back-and-forth, including Claude's tool calls. You can chat with Claude about your draft and have it edit the worktree directly, then re-review the result. The session persists across turns via `--resume`; killing it ends the conversation but leaves the history.
 
+### Use your own terminal Claude on a worktree's review
+
+Register middleman's MCP server once:
+
+```sh
+claude mcp add middleman -- middleman mcp
+```
+
+Then run `claude` from inside any worktree middleman tracks. It auto-discovers that worktree's review for the current branch (no flags, no IDs) and exposes four read-and-discuss tools: `list_threads`, `get_thread`, `get_pull`, and `reply_to_thread` — it reads the review and replies in threads. Resolving/hiding threads and applying edits stay in the middleman app, and `middleman` must be running (the proxy talks to its loopback API).
+
 ### AI features in detail
 
 - **Brief.** A staff-engineer-style overview of a PR, generated from the diff, commits, and description. Useful as a starting point before scrolling the diff.

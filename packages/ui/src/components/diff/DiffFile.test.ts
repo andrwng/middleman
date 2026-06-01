@@ -61,6 +61,7 @@ import type { MiddlemanClient } from "../../types.js";
 import { STORES_KEY } from "../../context.js";
 import { createDiffStore } from "../../stores/diff.svelte.js";
 import { createAIStore } from "../../stores/ai.svelte.js";
+import { createReviewThreadsStore } from "../../stores/reviewThreads.svelte.js";
 
 function stubClient(): MiddlemanClient {
   return {
@@ -109,6 +110,7 @@ function renderDiffFile(file: DiffFileType) {
         {
           diff: createDiffStore({ client: stubClient() }),
           ai: createAIStore(),
+          reviewThreads: createReviewThreadsStore({ client: stubClient() }),
           detail: {
             getReviewCommentsByFilePath: () => new Map(),
             getHiddenRootSet: () => new Set<number>(),

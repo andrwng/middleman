@@ -22,27 +22,60 @@ func TestWorktreeSessionLifecycle(t *testing.T) {
 	require.NoError(err)
 
 	// No active session yet.
-	_, err = d.GetActiveWorktreeSession(ctx, w.ID)
+	_, err = d.GetActiveWorktreeSession(ctx, w.ID, "feat")
 	require.ErrorIs(err, sql.ErrNoRows)
 
-	sess, err := d.CreateWorktreeSession(ctx, w.ID)
+	sess, err := d.CreateWorktreeSession(ctx, w.ID, "feat")
 	require.NoError(err)
 	assert.Equal("active", sess.Status)
 	assert.NotZero(sess.ID)
 
-	live, err := d.GetActiveWorktreeSession(ctx, w.ID)
+	live, err := d.GetActiveWorktreeSession(ctx, w.ID, "feat")
 	require.NoError(err)
 	assert.Equal(sess.ID, live.ID)
 
 	require.NoError(d.SetWorktreeSessionClaudeID(ctx, sess.ID, "sess-abc123"))
-	live, err = d.GetActiveWorktreeSession(ctx, w.ID)
+	live, err = d.GetActiveWorktreeSession(ctx, w.ID, "feat")
 	require.NoError(err)
 	assert.Equal("sess-abc123", live.ClaudeSessionID)
 
 	// Killing the session removes it from the active query.
 	require.NoError(d.MarkWorktreesSessionStatus(ctx, sess.ID, "killed"))
-	_, err = d.GetActiveWorktreeSession(ctx, w.ID)
+	_, err = d.GetActiveWorktreeSession(ctx, w.ID, "feat")
 	assert.ErrorIs(err, sql.ErrNoRows)
+}
+
+func TestActiveWorktreeSessionIsBranchScoped(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	d := openTestDB(t)
+	ctx := context.Background()
+
+	repoID := insertTestRepo(t, d, "o", "r")
+	w, err := d.UpsertWorktree(ctx, repoID, ScannedWorktree{
+		Path: "/code/o/r", Branch: "a", HeadSHA: "aaaa",
+	})
+	require.NoError(err)
+
+	// No active session on either branch yet.
+	_, err = d.GetActiveWorktreeSession(ctx, w.ID, "a")
+	assert.ErrorIs(err, sql.ErrNoRows)
+
+	sessA, err := d.CreateWorktreeSession(ctx, w.ID, "a")
+	require.NoError(err)
+	sessB, err := d.CreateWorktreeSession(ctx, w.ID, "b")
+	require.NoError(err)
+	assert.NotEqual(sessA.ID, sessB.ID)
+	assert.Equal("a", sessA.Branch)
+	assert.Equal("b", sessB.Branch)
+
+	gotA, err := d.GetActiveWorktreeSession(ctx, w.ID, "a")
+	require.NoError(err)
+	assert.Equal(sessA.ID, gotA.ID)
+
+	gotB, err := d.GetActiveWorktreeSession(ctx, w.ID, "b")
+	require.NoError(err)
+	assert.Equal(sessB.ID, gotB.ID)
 }
 
 func TestWorktreeSessionTurns(t *testing.T) {
@@ -56,7 +89,7 @@ func TestWorktreeSessionTurns(t *testing.T) {
 		Path: "/code/o/r", Branch: "feat",
 	})
 	require.NoError(err)
-	sess, err := d.CreateWorktreeSession(ctx, w.ID)
+	sess, err := d.CreateWorktreeSession(ctx, w.ID, "feat")
 	require.NoError(err)
 
 	// User feedback turn (done immediately).
