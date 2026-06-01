@@ -20,6 +20,7 @@ type ReviewThread struct {
 	StartLine      *int // nullable; multi-line selection start
 	CommitSHA      string
 	Status         string // "open" | "discussed" | "applied" | "resolved"
+	Branch         string // worktree branch this thread is scoped to ("" = legacy/unscoped)
 	HiddenAt       *time.Time
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
@@ -48,10 +49,16 @@ type NewReviewThread struct {
 	Body      string // the reviewer's root comment
 }
 
-// CreateReviewThreads inserts a batch of threads (each with its root
-// 'user' comment) for one MR in a single transaction, and returns the
-// created thread rows in input order.
+// CreateReviewThreads inserts a batch of threads on the unscoped ('')
+// branch. Retained for callers/tests that don't supply a branch.
 func (d *DB) CreateReviewThreads(ctx context.Context, mrID int64, in []NewReviewThread) ([]ReviewThread, error) {
+	return d.CreateReviewThreadsOnBranch(ctx, mrID, "", in)
+}
+
+// CreateReviewThreadsOnBranch inserts a batch of threads (each with its
+// root 'user' comment) for one MR in a single transaction, stamping each
+// with branch, and returns the created thread rows in input order.
+func (d *DB) CreateReviewThreadsOnBranch(ctx context.Context, mrID int64, branch string, in []NewReviewThread) ([]ReviewThread, error) {
 	tx, err := d.rw.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
@@ -62,9 +69,9 @@ func (d *DB) CreateReviewThreads(ctx context.Context, mrID int64, in []NewReview
 	for _, t := range in {
 		res, err := tx.ExecContext(ctx, `
 			INSERT INTO middleman_review_threads
-				(mr_id, path, side, line, start_line, commit_sha)
-			VALUES (?, ?, ?, ?, ?, ?)`,
-			mrID, t.Path, t.Side, t.Line, intPtrToNullable(t.StartLine), t.CommitSHA,
+				(mr_id, path, side, line, start_line, commit_sha, branch)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			mrID, t.Path, t.Side, t.Line, intPtrToNullable(t.StartLine), t.CommitSHA, branch,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("insert thread: %w", err)
@@ -101,7 +108,7 @@ func (d *DB) CreateReviewThreads(ctx context.Context, mrID int64, in []NewReview
 func (d *DB) GetReviewThread(ctx context.Context, id int64) (ReviewThread, error) {
 	return scanReviewThread(d.ro.QueryRowContext(ctx, `
 		SELECT id, mr_id, path, side, line, start_line, commit_sha,
-		       status, hidden_at, created_at, updated_at
+		       status, branch, hidden_at, created_at, updated_at
 		  FROM middleman_review_threads WHERE id = ?`, id))
 }
 
@@ -111,12 +118,37 @@ func (d *DB) GetReviewThread(ctx context.Context, id int64) (ReviewThread, error
 func (d *DB) ListReviewThreadsForMR(ctx context.Context, mrID int64) ([]ReviewThread, error) {
 	rows, err := d.ro.QueryContext(ctx, `
 		SELECT id, mr_id, path, side, line, start_line, commit_sha,
-		       status, hidden_at, created_at, updated_at
+		       status, branch, hidden_at, created_at, updated_at
 		  FROM middleman_review_threads
 		 WHERE mr_id = ?
 		 ORDER BY id ASC`, mrID)
 	if err != nil {
 		return nil, fmt.Errorf("list review threads: %w", err)
+	}
+	defer rows.Close()
+	var out []ReviewThread
+	for rows.Next() {
+		t, err := scanReviewThread(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// ListReviewThreadsForMRBranch returns the MR's threads scoped to branch,
+// oldest-first. Legacy rows with branch = '' are always included so a
+// pre-migration thread never silently disappears.
+func (d *DB) ListReviewThreadsForMRBranch(ctx context.Context, mrID int64, branch string) ([]ReviewThread, error) {
+	rows, err := d.ro.QueryContext(ctx, `
+		SELECT id, mr_id, path, side, line, start_line, commit_sha,
+		       status, branch, hidden_at, created_at, updated_at
+		  FROM middleman_review_threads
+		 WHERE mr_id = ? AND (branch = ? OR branch = '')
+		 ORDER BY id ASC`, mrID, branch)
+	if err != nil {
+		return nil, fmt.Errorf("list review threads for branch: %w", err)
 	}
 	defer rows.Close()
 	var out []ReviewThread
@@ -136,7 +168,7 @@ func scanReviewThread(row scanner) (ReviewThread, error) {
 	var hiddenAt sql.NullTime
 	err := row.Scan(
 		&t.ID, &t.MergeRequestID, &t.Path, &t.Side, &t.Line,
-		&startLine, &t.CommitSHA, &t.Status, &hiddenAt,
+		&startLine, &t.CommitSHA, &t.Status, &t.Branch, &hiddenAt,
 		&t.CreatedAt, &t.UpdatedAt,
 	)
 	if err != nil {
