@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Branch-head decoration — commit picker mockup</title>
+<style>
+  /* ---- real middleman design tokens ---- */
+  body.dark {
+    --bg-app: #0f0f16;
+    --bg-surface: #16161e;
+    --bg-surface-hover: #1f1f2a;
+    --border-default: #333345;
+    --border-muted: #2a2a3a;
+    --text-primary: #ececf1;
+    --text-secondary: #b4bcd0;
+    --text-muted: #8b93a8;
+    --accent-blue: #60a5fa;
+    --accent-green: #4ade80;
+    --diff-sidebar-active: rgba(56, 139, 253, 0.15);
+    --tooltip-bg: #20202c;
+  }
+  body.light {
+    --bg-app: #f6f7f9;
+    --bg-surface: #ffffff;
+    --bg-surface-hover: #f0f1f4;
+    --border-default: #d8dae2;
+    --border-muted: #e4e6ec;
+    --text-primary: #181b24;
+    --text-secondary: #555b6e;
+    --text-muted: #878ea0;
+    --accent-blue: #2563eb;
+    --accent-green: #059669;
+    --diff-sidebar-active: #ddf4ff;
+    --tooltip-bg: #ffffff;
+  }
+  :root {
+    --font-mono: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+
+  body {
+    margin: 0;
+    padding: 28px 28px 80px;
+    background: var(--bg-app);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  h1 { font-size: 17px; margin: 0 0 4px; }
+  .sub { color: var(--text-muted); font-size: 13px; margin: 0 0 22px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em;
+       color: var(--text-secondary); margin: 30px 0 10px; }
+  .note { color: var(--text-muted); font-size: 12px; margin: 2px 0 12px; max-width: 640px; }
+  .rec { color: var(--accent-green); font-weight: 600; }
+
+  .toggle {
+    position: fixed; top: 16px; right: 18px; z-index: 50;
+    background: var(--bg-surface); color: var(--text-primary);
+    border: 1px solid var(--border-default); border-radius: 7px;
+    padding: 6px 12px; font: inherit; font-size: 12px; cursor: pointer;
+  }
+
+  .layout { display: flex; flex-wrap: wrap; gap: 26px; align-items: flex-start; }
+
+  /* ---- commit picker panel ---- */
+  .panel {
+    width: 392px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: 9px;
+    overflow: visible;
+  }
+  .panel__head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 9px 12px; border-bottom: 1px solid var(--border-muted);
+    font-size: 12px; color: var(--text-secondary);
+  }
+  .panel__head .prog { color: var(--text-muted); font-size: 11px; }
+  .panel__body { padding: 26px 0 8px; }
+
+  /* ---- faithful CommitListItem reproduction ---- */
+  .commit-item {
+    display: flex; align-items: center; gap: 6px; width: 100%;
+    padding: 3px 10px 3px 12px;
+    color: var(--text-secondary);
+    font-size: 11px; line-height: 1.4;
+    cursor: pointer; text-align: left; border: none; background: none;
+    font-family: var(--font-sans);
+  }
+  .commit-item:hover { background: var(--bg-surface-hover); }
+  .commit-item--active { background: var(--diff-sidebar-active); color: var(--text-primary); }
+  .commit-item__reviewed { font-size: 10px; color: var(--accent-green);
+    flex-shrink: 0; width: 12px; text-align: center; }
+  .commit-item__sha { font-family: var(--font-mono); font-size: 10px;
+    color: var(--text-muted); width: 52px; flex-shrink: 0; }
+  .commit-item--active .commit-item__sha { color: var(--accent-blue); }
+  .commit-item__msg { flex: 1; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; min-width: 0; }
+  .commit-item__date { font-size: 10px; color: var(--text-muted); flex-shrink: 0; }
+  .commit-item__wip { font-style: italic; color: var(--text-muted); }
+
+  /* ---- the new branch-head marker ---- */
+  .branch-mark {
+    position: relative;
+    display: inline-flex; align-items: center; gap: 1px;
+    flex-shrink: 0;
+    color: var(--text-muted);
+  }
+  .commit-item:hover .branch-mark { color: var(--accent-blue); }
+  .branch-mark svg { width: 11px; height: 11px; display: block; }
+  .branch-mark__count { font-family: var(--font-mono); font-size: 9px; line-height: 1; }
+
+  /* demo tooltip (real impl can use native title=) */
+  .branch-mark:hover::after {
+    content: attr(data-tip);
+    position: absolute; bottom: calc(100% + 7px); right: -4px;
+    white-space: nowrap;
+    background: var(--tooltip-bg); color: var(--text-primary);
+    border: 1px solid var(--border-default);
+    padding: 4px 8px; border-radius: 6px;
+    font-family: var(--font-sans); font-size: 11px; font-weight: 500;
+    box-shadow: 0 6px 20px rgba(0,0,0,.35); z-index: 30; pointer-events: none;
+  }
+  .branch-mark:hover::before {
+    content: ""; position: absolute; bottom: calc(100% + 2px); right: 3px;
+    border: 5px solid transparent; border-top-color: var(--border-default); z-index: 30;
+  }
+
+  .glyph-row { display: flex; align-items: center; gap: 10px; padding: 4px 12px; font-size: 11px; }
+  .glyph-row .lbl { color: var(--text-muted); width: 130px; }
+</style>
+</head>
+<body class="dark">
+<button class="toggle" onclick="document.body.classList.toggle('dark');document.body.classList.toggle('light')">Toggle light / dark</button>
+
+<h1>Branch-head decoration in the commit picker</h1>
+<p class="sub">A small icon marks any commit that is also the tip of another local branch. Hover the icon to see the branch name(s). Hover rows to see active/hover states.</p>
+
+<div class="layout">
+
+  <!-- ===== Variant 1: right gutter ===== -->
+  <div>
+    <h2>Placement A &mdash; right gutter <span class="rec">(recommended)</span></h2>
+    <p class="note">Marker sits with the date, in the calm right gutter. Message text stays left-aligned across every row, so the list scans cleanly; branch info reads as metadata alongside the date.</p>
+    <div class="panel">
+      <div class="panel__head"><span>Commits</span><span class="prog">2 / 6 reviewed</span></div>
+      <div class="panel__body">
+        <button class="commit-item">
+          <span class="commit-item__reviewed"></span>
+          <span class="commit-item__sha commit-item__wip">~~~~~~~</span>
+          <span class="commit-item__msg commit-item__wip">Uncommitted changes</span>
+          <span class="commit-item__date">now</span>
+        </button>
+        <button class="commit-item commit-item--active">
+          <span class="commit-item__reviewed">&check;</span>
+          <span class="commit-item__sha">f3a9c21</span>
+          <span class="commit-item__msg">feat(ui): scope header Sync button to selected repo</span>
+          <span class="commit-item__date">2h ago</span>
+        </button>
+        <button class="commit-item">
+          <span class="commit-item__reviewed">&check;</span>
+          <span class="commit-item__sha">1db14e3</span>
+          <span class="commit-item__msg">fix(ui): diff store refresh uses typed client</span>
+          <span class="branch-mark" data-tip="pr-focus"><svg><use href="#i-branch"/></svg></span>
+          <span class="commit-item__date">5h ago</span>
+        </button>
+        <button class="commit-item">
+          <span class="commit-item__reviewed"></span>
+          <span class="commit-item__sha">a77c0e9</span>
+          <span class="commit-item__msg">feat(server): attach branch_heads to local commits</span>
+          <span class="commit-item__date">1d ago</span>
+        </button>
+        <button class="commit-item">
+          <span class="commit-item__reviewed"></span>
+          <span class="commit-item__sha">2c4ee10</span>
+          <span class="commit-item__msg">refactor(worktrees): extract gitCmd helper</span>
+          <span class="branch-mark" data-tip="selective-sync, wip/cleanup"><svg><use href="#i-branch"/></svg><span class="branch-mark__count">2</span></span>
+          <span class="commit-item__date">2d ago</span>
+        </button>
+        <button class="commit-item">
+          <span class="commit-item__reviewed">&check;</span>
+          <span class="commit-item__sha">9b1f0aa</span>
+          <span class="commit-item__msg">test: cover ParsePorcelain edge cases</span>
+          <span class="commit-item__date">3d ago</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Variant 2: after sha ===== -->
+  <div>
+    <h2>Placement B &mdash; right after the SHA</h2>
+    <p class="note">Marker groups with the commit identity (sha + which branches point here). Trade-off: it only appears on some rows, so the message start column is slightly ragged between decorated and plain rows.</p>
+    <div class="panel">
+      <div class="panel__head"><span>Commits</span><span class="prog">2 / 6 reviewed</span></div>
+      <div class="panel__body">
+        <button class="commit-item">
+          <span class="commit-item__reviewed"></span>
+          <span class="commit-item__sha commit-item__wip">~~~~~~~</span>
+          <span class="commit-item__msg commit-item__wip">Uncommitted changes</span>
+          <span class="commit-item__date">now</span>
+        </button>
+        <button class="commit-item commit-item--active">
+          <span class="commit-item__reviewed">&check;</span>
+          <span class="commit-item__sha">f3a9c21</span>
+          <span class="commit-item__msg">feat(ui): scope header Sync button to selected repo</span>
+          <span class="commit-item__date">2h ago</span>
+        </button>
+        <button class="commit-item">
+          <span class="commit-item__reviewed">&check;</span>
+          <span class="commit-item__sha">1db14e3</span>
+          <span class="branch-mark" data-tip="pr-focus"><svg><use href="#i-branch"/></svg></span>
+          <span class="commit-item__msg">fix(ui): diff store refresh uses typed client</span>
+          <span class="commit-item__date">5h ago</span>
+        </button>
+        <button class="commit-item">
+          <span class="commit-item__reviewed"></span>
+          <span class="commit-item__sha">a77c0e9</span>
+          <span class="commit-item__msg">feat(server): attach branch_heads to local commits</span>
+          <span class="commit-item__date">1d ago</span>
+        </button>
+        <button class="commit-item">
+          <span class="commit-item__reviewed"></span>
+          <span class="commit-item__sha">2c4ee10</span>
+          <span class="branch-mark" data-tip="selective-sync, wip/cleanup"><svg><use href="#i-branch"/></svg><span class="branch-mark__count">2</span></span>
+          <span class="commit-item__msg">refactor(worktrees): extract gitCmd helper</span>
+          <span class="commit-item__date">2d ago</span>
+        </button>
+        <button class="commit-item">
+          <span class="commit-item__reviewed">&check;</span>
+          <span class="commit-item__sha">9b1f0aa</span>
+          <span class="commit-item__msg">test: cover ParsePorcelain edge cases</span>
+          <span class="commit-item__date">3d ago</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== glyph options ===== -->
+  <div>
+    <h2>Glyph options</h2>
+    <p class="note">Same marker, different icon. Hover each to see the tooltip.</p>
+    <div class="panel">
+      <div class="panel__body" style="padding:12px 0;">
+        <div class="glyph-row"><span class="lbl">SVG git-branch <span class="rec">(rec)</span></span>
+          <span class="branch-mark" data-tip="feat/login" style="color:var(--accent-blue)"><svg><use href="#i-branch"/></svg></span></div>
+        <div class="glyph-row"><span class="lbl">Unicode &#x2387;</span>
+          <span class="branch-mark" data-tip="feat/login" style="color:var(--accent-blue);font-size:12px;font-family:var(--font-mono)">&#x2387;</span></div>
+        <div class="glyph-row"><span class="lbl">Fork dots</span>
+          <span class="branch-mark" data-tip="feat/login" style="color:var(--accent-blue)"><svg viewBox="0 0 16 16"><circle cx="4" cy="4" r="2" fill="currentColor"/><circle cx="4" cy="12" r="2" fill="currentColor"/><circle cx="12" cy="9" r="2" fill="currentColor"/><path d="M4 6v3a3 3 0 0 0 3 3h3" stroke="currentColor" stroke-width="1.4" fill="none"/></svg></span></div>
+      </div>
+    </div>
+
+    <h2 style="margin-top:26px;">Multiple branches on one commit</h2>
+    <p class="note">When 2+ branch tips share a commit. Hover to see all names listed.</p>
+    <div class="panel">
+      <div class="panel__body" style="padding:12px 0;">
+        <div class="glyph-row"><span class="lbl">Count badge <span class="rec">(rec)</span></span>
+          <span class="branch-mark" data-tip="selective-sync, wip/cleanup" style="color:var(--accent-blue)"><svg><use href="#i-branch"/></svg><span class="branch-mark__count">2</span></span></div>
+        <div class="glyph-row"><span class="lbl">Plain icon</span>
+          <span class="branch-mark" data-tip="selective-sync, wip/cleanup" style="color:var(--accent-blue)"><svg><use href="#i-branch"/></svg></span></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- sprite -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-branch" viewBox="0 0 16 16">
+    <path fill="currentColor" d="M9.5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.251 2.251 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.5 0v1.836A2.493 2.493 0 0 1 6 7h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25Zm-6 0a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Zm8.25-.75a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM4.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z"/>
+  </symbol>
+</svg>
+</body>
+</html>

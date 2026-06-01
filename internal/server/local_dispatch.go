@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -280,6 +281,21 @@ func (s *Server) getCommitsLocal(
 			AuthoredAt: c.AuthoredAt.UTC(),
 		})
 	}
+
+	// Mark commits that are also the tip of another local branch.
+	// Cosmetic only: on error, leave the commits undecorated rather
+	// than failing the whole panel.
+	if heads, err := worktrees.BranchHeads(ctx, w.Path, w.Branch); err != nil {
+		slog.WarnContext(ctx, "resolve branch heads for worktree",
+			"path", w.Path, "err", err)
+	} else {
+		for i := range resp.Commits {
+			if names := heads[resp.Commits[i].SHA]; len(names) > 0 {
+				resp.Commits[i].BranchHeads = names
+			}
+		}
+	}
+
 	if resp.Commits == nil {
 		resp.Commits = []commitResponse{}
 	}

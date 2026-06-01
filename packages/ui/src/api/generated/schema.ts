@@ -1309,6 +1309,8 @@ export interface components {
             authored_at: string;
             /** @description Commit message body (trimmed, empty when the message has no body) */
             body?: string;
+            /** @description Names of other local branches whose tip is this commit (local worktree review only) */
+            branch_heads?: string[] | null;
             /** @description Subject (first line) of commit message */
             message: string;
             /** @description Full commit SHA */

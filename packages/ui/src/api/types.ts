@@ -113,6 +113,7 @@ export interface CommitInfo {
   body?: string;
   author_name: string;
   authored_at: string;
+  branch_heads?: string[];
 }
 
 export interface WorkspaceHost {

@@ -149,11 +149,12 @@ type rateLimitsResponse struct {
 }
 
 type commitResponse struct {
-	SHA        string    `json:"sha"              doc:"Full commit SHA"`
-	Message    string    `json:"message"          doc:"Subject (first line) of commit message"`
-	Body       string    `json:"body,omitempty"   doc:"Commit message body (trimmed, empty when the message has no body)"`
-	AuthorName string    `json:"author_name"      doc:"Commit author display name"`
-	AuthoredAt time.Time `json:"authored_at"      doc:"Commit author date (RFC3339)"`
+	SHA         string    `json:"sha"              doc:"Full commit SHA"`
+	Message     string    `json:"message"          doc:"Subject (first line) of commit message"`
+	Body        string    `json:"body,omitempty"   doc:"Commit message body (trimmed, empty when the message has no body)"`
+	AuthorName  string    `json:"author_name"      doc:"Commit author display name"`
+	AuthoredAt  time.Time `json:"authored_at"      doc:"Commit author date (RFC3339)"`
+	BranchHeads []string  `json:"branch_heads,omitempty" doc:"Names of other local branches whose tip is this commit (local worktree review only)"`
 }
 
 type commitsResponse struct {

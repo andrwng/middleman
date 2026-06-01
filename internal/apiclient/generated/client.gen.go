@@ -268,6 +268,9 @@ type CommitResponse struct {
 	// Body Commit message body (trimmed, empty when the message has no body)
 	Body *string `json:"body,omitempty"`
 
+	// BranchHeads Names of other local branches whose tip is this commit (local worktree review only)
+	BranchHeads *[]string `json:"branch_heads,omitempty"`
+
 	// Message Subject (first line) of commit message
 	Message string `json:"message"`
 
