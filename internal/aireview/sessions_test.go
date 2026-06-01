@@ -35,7 +35,7 @@ func setupSessionTest(t *testing.T) (*db.DB, *SessionRunner, string, int64) {
 	})
 	require.NoError(t, err)
 
-	sess, err := database.CreateWorktreeSession(ctx, w.ID)
+	sess, err := database.CreateWorktreeSession(ctx, w.ID, "")
 	require.NoError(t, err)
 
 	runner := NewSessionRunner(database)
@@ -106,7 +106,7 @@ func TestSessionRunnerSubprocessFails(t *testing.T) {
 		Path: tmp, Branch: "feat/x",
 	})
 	require.NoError(err)
-	sess, err := database.CreateWorktreeSession(ctx, w.ID)
+	sess, err := database.CreateWorktreeSession(ctx, w.ID, "")
 	require.NoError(err)
 
 	runner := NewSessionRunner(database)
@@ -188,7 +188,7 @@ func TestSessionRunnerCancelTurn(t *testing.T) {
 		Path: tmp, Branch: "feat",
 	})
 	require.NoError(err)
-	sess, err := database.CreateWorktreeSession(ctx, w.ID)
+	sess, err := database.CreateWorktreeSession(ctx, w.ID, "")
 	require.NoError(err)
 	runner := NewSessionRunner(database)
 
@@ -231,7 +231,7 @@ func TestSessionRunnerReconcileOnStartup(t *testing.T) {
 		Path: "/code/demo", Branch: "feat/x",
 	})
 	require.NoError(err)
-	sess, err := database.CreateWorktreeSession(ctx, w.ID)
+	sess, err := database.CreateWorktreeSession(ctx, w.ID, "")
 	require.NoError(err)
 
 	// Seed one queued + one running + one done. Reconciler should

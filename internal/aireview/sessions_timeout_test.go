@@ -26,7 +26,7 @@ func TestHungTurnTimesOutAndFreesSession(t *testing.T) {
 	require.NoError(err)
 	w, err := database.UpsertWorktree(ctx, repoID, db.ScannedWorktree{Path: tmp, Branch: "f", HeadSHA: "h"})
 	require.NoError(err)
-	sess, err := database.CreateWorktreeSession(ctx, w.ID)
+	sess, err := database.CreateWorktreeSession(ctx, w.ID, "")
 	require.NoError(err)
 
 	runner := NewSessionRunner(database)

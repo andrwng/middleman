@@ -42,7 +42,7 @@ func setupRecordingSessionTest(t *testing.T) (*db.DB, *SessionRunner, string, db
 		Path: tmp, Branch: "feat/x", HeadSHA: "deadbeef",
 	})
 	require.NoError(t, err)
-	sess, err := database.CreateWorktreeSession(ctx, w.ID)
+	sess, err := database.CreateWorktreeSession(ctx, w.ID, "")
 	require.NoError(t, err)
 
 	runner := NewSessionRunner(database)
