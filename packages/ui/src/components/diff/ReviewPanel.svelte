@@ -1,7 +1,8 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import { getClient } from "../../context.js";
   import { getStores } from "../../context.js";
-  import type { ReviewEvent } from "../../stores/diff.svelte.js";
+  import type { ReviewEvent, DraftComment } from "../../stores/diff.svelte.js";
 
   interface Props {
     owner: string;
@@ -197,6 +198,42 @@
     }
   }
 
+  // Clicking a draft in the preview list jumps the diff to the
+  // comment's anchor. Same shape as QuestionsSection.scrollToThread:
+  // switch scope to the commit the draft was anchored on (so line
+  // numbers resolve), expand the file if it's collapsed, then
+  // scroll to the line. Panel is left open by design — the
+  // reviewer often wants to step through several drafts in a row.
+  async function jumpToDraft(c: DraftComment): Promise<void> {
+    const scope = diffStore.getScope();
+    const alreadyHere = scope.kind === "commit" && scope.sha === c.commitSha;
+    if (c.commitSha && !alreadyHere) {
+      await diffStore.selectCommit(c.commitSha);
+      await tick();
+    }
+    if (diffStore.isFileCollapsed(owner, name, number, c.path)) {
+      diffStore.toggleFileCollapsed(owner, name, number, c.path);
+      await tick();
+    }
+    const selector =
+      `.diff-file[data-file-path="${CSS.escape(c.path)}"] ` +
+      `.line-wrap[data-anchor-line="${c.line}"]` +
+      `[data-anchor-side="${c.side}"]`;
+    const el = document.querySelector<HTMLElement>(selector);
+    if (el) {
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      el.classList.add("line-wrap--flash");
+      window.setTimeout(() => el.classList.remove("line-wrap--flash"), 1500);
+      return;
+    }
+    const fileEl = document.querySelector<HTMLElement>(
+      `.diff-file[data-file-path="${CSS.escape(c.path)}"]`,
+    );
+    if (fileEl) {
+      fileEl.scrollIntoView({ block: "start", behavior: "smooth" });
+    }
+  }
+
   // Group pending comments by file for a compact preview list.
   const commentsByPath = $derived.by(() => {
     const map = new Map<string, typeof draft.comments>();
@@ -276,14 +313,19 @@
         <div class="preview-file">
           <div class="preview-file__path">{group.path}</div>
           {#each group.comments as c (c.id)}
-            <div class="preview-comment">
+            <button
+              type="button"
+              class="preview-comment preview-comment--clickable"
+              onclick={() => void jumpToDraft(c)}
+              title="Jump to this comment's anchor"
+            >
               <span class="preview-comment__anchor">
                 {c.side === "LEFT" ? "−" : "+"}{c.startLine != null && c.startLine !== c.line
                   ? `${c.startLine}–${c.line}`
                   : c.line}
               </span>
               <span class="preview-comment__body">{c.body}</span>
-            </div>
+            </button>
           {/each}
         </div>
       {/each}
@@ -466,6 +508,30 @@
     gap: 6px;
     font-size: 12px;
     padding: 2px 0;
+  }
+
+  /* The preview-comment is now a button so it can be clicked to
+     jump to the comment's anchor. Strip the native button chrome
+     and add a hover affordance so it reads as interactive without
+     looking like a chunky button. */
+  .preview-comment--clickable {
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: 0;
+    border-radius: var(--radius-sm);
+    padding: 2px 4px;
+    margin: 0;
+    cursor: pointer;
+    font: inherit;
+    color: inherit;
+  }
+  .preview-comment--clickable:hover {
+    background: var(--bg-surface-hover, color-mix(in srgb, var(--text-primary) 6%, transparent));
+  }
+  .preview-comment--clickable:focus-visible {
+    outline: 2px solid var(--accent-blue);
+    outline-offset: -2px;
   }
 
   .preview-comment__anchor {
