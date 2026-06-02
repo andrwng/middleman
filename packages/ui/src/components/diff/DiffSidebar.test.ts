@@ -76,6 +76,20 @@ function worktreeSessionStub() {
   };
 }
 
+// ReviewCommentsSection (mounted in the sidebar) reads detail + viewer at
+// render; provide empty stubs so it renders its empty state without crashing.
+function detailStub() {
+  return {
+    getReviewCommentsByFilePath: () => new Map(),
+  };
+}
+
+function viewerStub() {
+  return {
+    getLogin: () => null,
+  };
+}
+
 function renderSidebar() {
   return render(DiffSidebar, {
     context: new Map<symbol, unknown>([
@@ -87,6 +101,8 @@ function renderSidebar() {
           ai: aiStub(),
           reviewThreads: reviewThreadsStub(),
           worktreeSession: worktreeSessionStub(),
+          detail: detailStub(),
+          viewer: viewerStub(),
         },
       ],
     ]),
