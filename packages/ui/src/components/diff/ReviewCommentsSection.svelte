@@ -12,8 +12,6 @@
 
   const { detail: detailStore, diff: diffStore, viewer: viewerStore } = getStores();
 
-  // All published comments across all files, filtered to roots that
-  // still resolve to a line in the current diff scope.
   const roots = $derived.by<PublishedReviewComment[]>(() => {
     const byPath = detailStore.getReviewCommentsByFilePath();
     const out: PublishedReviewComment[] = [];
@@ -22,8 +20,6 @@
         if (c.inReplyTo === 0 && c.line > 0) out.push(c);
       }
     }
-    // Stable order: by file path, then by line. Avoids the list
-    // shuffling on every refresh.
     out.sort((a, b) => {
       if (a.path !== b.path) return a.path.localeCompare(b.path);
       return a.line - b.line;
@@ -44,9 +40,6 @@
       : roots,
   );
 
-  // Collapsed by default — section stays quiet on PRs without
-  // posted review comments. Auto-expands the first time roots
-  // appear so the reviewer notices new conversation.
   let expanded = $state(false);
   let userCollapsed = $state(false);
 
@@ -76,27 +69,34 @@
   }
 
   async function scrollToComment(c: PublishedReviewComment): Promise<void> {
-    // Same scope-routing dance as QuestionsSection.scrollToThread:
-    // if the comment's anchor commit is the current PR head, route
-    // to HEAD scope (commit scope at head SHA shows head^..head,
-    // not base..head, and the anchor's line numbers wouldn't
-    // resolve).
+    // Scope routing has three tiers:
+    //   1. SHA is current head            → resetToHead (full base..head diff)
+    //   2. SHA is a non-head PR commit    → selectCommit (per-commit diff)
+    //   3. SHA isn't in current commits   → skip scope switch entirely
+    //      (the comment was anchored to a force-pushed-away commit;
+    //      calling selectCommit would hit a 400 from the server's
+    //      "sha not in pull request" guard. Falling through with no
+    //      switch is the least-bad option — the scroll may miss and
+    //      the file-header fallback below will fire.)
     if (c.commitId) {
       const scope = diffStore.getScope();
       const commits = diffStore.getCommits();
       const isCurrentHead =
         commits && commits.length > 0 && commits[0]!.sha === c.commitId;
-      const alreadyHeadHere = isCurrentHead && scope.kind === "head";
-      const alreadyCommitHere =
-        scope.kind === "commit" && scope.sha === c.commitId;
-      if (!alreadyHeadHere && !alreadyCommitHere) {
-        if (isCurrentHead) {
+      const inCurrentCommits =
+        commits?.some((cc) => cc.sha === c.commitId) ?? false;
+      if (isCurrentHead) {
+        if (scope.kind !== "head") {
           await diffStore.resetToHead();
-        } else {
-          await diffStore.selectCommit(c.commitId);
+          await tick();
         }
-        await tick();
+      } else if (inCurrentCommits) {
+        if (scope.kind !== "commit" || scope.sha !== c.commitId) {
+          await diffStore.selectCommit(c.commitId);
+          await tick();
+        }
       }
+      // else: SHA is unreachable from current head; leave scope alone.
     }
     const pr = diffStore.getCurrentPR();
     if (pr && diffStore.isFileCollapsed(pr.owner, pr.name, pr.number, c.path)) {
@@ -138,36 +138,40 @@
         {#if mine.length > 0}
           <div class="rc-subhead">Mine</div>
           {#each mine as c (c.id)}
-            <button
-              type="button"
-              class="rc-item"
-              onclick={() => void scrollToComment(c)}
-              title="Jump to this comment in the diff"
-            >
-              <span class="rc-item__location">
-                {c.path}
-                <span class="rc-item__anchor">{anchorLabel(c)}</span>
-              </span>
-              <span class="rc-item__preview">{truncate(c.body, 80)}</span>
-            </button>
+            <div class="rc-item">
+              <button
+                type="button"
+                class="rc-item__main"
+                onclick={() => void scrollToComment(c)}
+                title="Jump to this comment in the diff"
+              >
+                <span class="rc-item__location">
+                  {c.path}
+                  <span class="rc-item__anchor">{anchorLabel(c)}</span>
+                </span>
+                <span class="rc-item__preview">{truncate(c.body, 80)}</span>
+              </button>
+            </div>
           {/each}
         {/if}
         {#if others.length > 0}
           <div class="rc-subhead">Others</div>
           {#each others as c (c.id)}
-            <button
-              type="button"
-              class="rc-item"
-              onclick={() => void scrollToComment(c)}
-              title="Jump to this comment in the diff"
-            >
-              <span class="rc-item__location">
-                {c.path}
-                <span class="rc-item__anchor">{anchorLabel(c)}</span>
-              </span>
-              <span class="rc-item__author">{c.author}</span>
-              <span class="rc-item__preview">{truncate(c.body, 80)}</span>
-            </button>
+            <div class="rc-item">
+              <button
+                type="button"
+                class="rc-item__main"
+                onclick={() => void scrollToComment(c)}
+                title="Jump to this comment in the diff"
+              >
+                <span class="rc-item__location">
+                  {c.path}
+                  <span class="rc-item__anchor">{anchorLabel(c)}</span>
+                </span>
+                <span class="rc-item__author">{c.author}</span>
+                <span class="rc-item__preview">{truncate(c.body, 80)}</span>
+              </button>
+            </div>
           {/each}
         {/if}
       </div>
@@ -176,53 +180,74 @@
 {/if}
 
 <style>
+  /* Mirrors QuestionsSection styling so the sidebar reads as a
+     coherent stack of sections. Only difference: a subhead row
+     between "Mine" and "Others" subgroups. */
   .rc-section {
-    border-bottom: 1px solid var(--border-muted);
-    background: var(--bg-surface);
+    background: var(--bg-inset);
+    border-bottom: 1px solid var(--diff-border);
+  }
+
+  .rc-section__header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 10px 2px 0;
   }
 
   .rc-section__toggle {
     display: flex;
     align-items: center;
     gap: 6px;
-    width: 100%;
-    padding: 8px 12px;
-    background: transparent;
-    border: 0;
+    flex: 1;
+    min-width: 0;
+    padding: 4px 6px 4px 10px;
+    border: none;
+    background: none;
     cursor: pointer;
-    font: inherit;
-    color: var(--text-primary);
     text-align: left;
+    color: var(--text-primary);
+    border-radius: var(--radius-sm);
   }
   .rc-section__toggle:hover {
-    background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+    background: var(--bg-surface-hover);
   }
 
   .rc-section__chevron {
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
     width: 12px;
+    height: 12px;
     color: var(--text-muted);
-    transition: transform 0.1s;
+    transition: transform 0.15s;
   }
   .rc-section__chevron--open {
     transform: rotate(90deg);
   }
 
   .rc-section__label {
-    font-size: 12px;
-    font-weight: 600;
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
   }
 
   .rc-section__count {
-    font-size: 11px;
+    font-size: 10px;
+    font-family: var(--font-mono);
     color: var(--text-muted);
-    background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+    background: var(--diff-bg);
+    border: 1px solid var(--diff-border);
     border-radius: 999px;
-    padding: 0 6px;
+    padding: 1px 6px;
   }
 
   .rc-section__body {
-    padding: 4px 4px 8px;
+    padding: 2px 0 4px;
+    max-height: 40vh;
+    overflow-y: auto;
   }
 
   .rc-subhead {
@@ -235,57 +260,59 @@
   }
 
   .rc-item {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    gap: 2px 8px;
-    width: 100%;
-    padding: 6px 12px;
-    background: transparent;
-    border: 0;
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    font: inherit;
-    color: inherit;
-    text-align: left;
+    display: flex;
+    align-items: stretch;
+    padding: 4px 10px 4px 12px;
+    gap: 4px;
   }
   .rc-item:hover {
-    background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+    background: var(--bg-surface-hover);
   }
-  .rc-item:focus-visible {
-    outline: 2px solid var(--accent-blue);
-    outline-offset: -2px;
+
+  .rc-item__main {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1;
+    min-width: 0;
+    border: none;
+    background: none;
+    text-align: left;
+    cursor: pointer;
+    padding: 0;
+    color: inherit;
   }
 
   .rc-item__location {
-    grid-column: 1 / 2;
     font-family: var(--font-mono);
     font-size: 11px;
     color: var(--text-secondary);
-    white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 0 1 auto;
     min-width: 0;
   }
 
   .rc-item__anchor {
     color: var(--text-muted);
-    margin-left: 4px;
+    margin-left: 3px;
   }
 
   .rc-item__author {
-    grid-column: 2 / 3;
-    grid-row: 1 / 2;
     font-size: 10px;
-    color: var(--text-muted);
     font-family: var(--font-mono);
+    color: var(--text-muted);
+    flex-shrink: 0;
   }
 
   .rc-item__preview {
-    grid-column: 1 / -1;
-    font-size: 12px;
-    color: var(--text-primary);
-    white-space: nowrap;
+    font-size: 11px;
+    color: var(--text-muted);
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1 1 auto;
+    min-width: 0;
   }
 </style>
