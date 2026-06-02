@@ -55,6 +55,22 @@
   }
 
   async function scrollToThread(thread: AIThread): Promise<void> {
+    // If the user clicks a thread whose anchor commit isn't the
+    // current diff scope, switch scope to that commit first. Line
+    // numbers in the displayed diff only resolve when the diff is
+    // viewed at the commit the question was asked against; without
+    // this jump the selector below silently misses and the
+    // fallback scrolls the file header — which looks like the
+    // click did nothing.
+    const scope = diffStore.getScope();
+    const alreadyHere = scope.kind === "commit" && scope.sha === thread.commit_sha;
+    if (thread.commit_sha && !alreadyHere) {
+      await diffStore.selectCommit(thread.commit_sha);
+      // selectCommit awaits the diff fetch but DOM hasn't necessarily
+      // committed yet — let the new files render before querying.
+      await tick();
+    }
+
     // If the file is collapsed, the .line-wrap nodes aren't in the
     // DOM and the selector would silently find nothing. Expand it
     // first, then await a render tick so the lines mount before we

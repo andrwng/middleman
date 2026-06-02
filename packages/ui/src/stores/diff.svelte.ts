@@ -1186,11 +1186,12 @@ export function createDiffStore(opts: DiffStoreOptions) {
     return { reviewed: count, total: commits.length };
   }
 
-  function selectCommit(sha: string): void {
+  function selectCommit(sha: string): Promise<void> {
     scope = { kind: "commit", sha };
     if (currentOwner && currentName && currentNumber) {
-      void loadDiff(currentOwner, currentName, currentNumber);
+      return loadDiff(currentOwner, currentName, currentNumber);
     }
+    return Promise.resolve();
   }
 
   function selectRange(fromSha: string, toSha: string): void {
