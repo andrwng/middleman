@@ -8,6 +8,7 @@
   import CommitListSection from "./CommitListSection.svelte";
   import QuestionsSection from "./QuestionsSection.svelte";
   import PendingCommentsSection from "./PendingCommentsSection.svelte";
+  import ReviewCommentsSection from "./ReviewCommentsSection.svelte";
 
   // Reusable file-tree + commit-list panel for the diff Files view.
   // Mounted by PRListView and PullDetail as the left pane of the
@@ -152,6 +153,7 @@
   </button>
   <CommitListSection />
   <PendingCommentsSection />
+  <ReviewCommentsSection />
   <QuestionsSection />
   <div class="diff-files">
     {#if diff.isFileListLoading() && !diff.getFileList()}
