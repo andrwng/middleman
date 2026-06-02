@@ -222,6 +222,8 @@
   .commit-banner__crumb--sha {
     font-family: var(--font-mono);
     font-size: 10px;
+    /* Selectable inside the toggle button so the SHA can be copied. */
+    user-select: text;
   }
 
   .commit-banner__sep {

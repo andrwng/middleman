@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/wesm/middleman/internal/db"
 )
@@ -39,6 +41,11 @@ type SessionRunner struct {
 
 	mu      sync.Mutex
 	running map[int64]context.CancelFunc // by turn id
+
+	// turnTimeout caps a single claude turn so a hung subprocess can't
+	// wedge the session forever (a hung turn stays "running" and the
+	// one-turn-at-a-time busy gate then 409s every later turn).
+	turnTimeout time.Duration
 }
 
 // SessionDB is the narrow DB surface the SessionRunner needs.
@@ -54,8 +61,9 @@ type SessionDB interface {
 // NewSessionRunner builds a runner backed by the given DB.
 func NewSessionRunner(database SessionDB) *SessionRunner {
 	return &SessionRunner{
-		db:      database,
-		running: make(map[int64]context.CancelFunc),
+		db:          database,
+		running:     make(map[int64]context.CancelFunc),
+		turnTimeout: 10 * time.Minute,
 	}
 }
 
@@ -81,6 +89,25 @@ func (r *SessionRunner) ReconcileOnStartup(ctx context.Context) error {
 	return nil
 }
 
+// ThreadContext is the minimal per-thread context the prompt needs.
+type ThreadContext struct {
+	ID          int64
+	Path        string
+	Line        int
+	Side        string
+	RootComment string
+}
+
+// MCPConfig tells the runner how to wire the middleman MCP server for a
+// turn. Nil => no MCP (e.g. legacy review_feedback turns).
+type MCPConfig struct {
+	Binary  string // path to the middleman executable
+	BaseURL string
+	Owner   string
+	Name    string
+	Number  int
+}
+
 // SubmitTurnInput packages a user-driven turn submission.
 type SubmitTurnInput struct {
 	SessionID    int64
@@ -99,6 +126,10 @@ type SubmitTurnInput struct {
 	// session — the runner primes the prompt with worktree context
 	// instead of relying on --resume.
 	IsFirstTurn bool
+	// Action is "discuss" | "apply" | "steer" | "" (legacy review_feedback/user_message free-text follow-ups).
+	Action  string
+	Threads []ThreadContext
+	MCP     *MCPConfig
 }
 
 // SubmitResult bundles the two new turn rows created by SubmitTurn.
@@ -165,7 +196,7 @@ func (r *SessionRunner) CancelTurn(ctx context.Context, turnID int64) error {
 }
 
 func (r *SessionRunner) spawnTurn(in SubmitTurnInput, respTurn db.WorktreeSessionTurn) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), r.turnTimeout)
 	r.mu.Lock()
 	r.running[respTurn.ID] = cancel
 	r.mu.Unlock()
@@ -201,13 +232,38 @@ func (r *SessionRunner) runTurn(
 	// activity in near-real-time instead of waiting for the final
 	// summary. --verbose is required by the CLI for stream-json with
 	// -p.
+	allowed := "Read,Glob,Grep"
+	// These tool names must stay in sync with internal/mcp/tools.go. The
+	// "mcp__<server>__<tool>" prefix uses the --mcp-config server key
+	// "middleman" written by writeMCPConfig (not mcp.Config.ServerName).
+	mcpToolNames := "mcp__middleman__list_threads,mcp__middleman__get_thread,mcp__middleman__reply_to_thread"
+	if in.MCP != nil {
+		allowed += "," + mcpToolNames
+	}
+	if in.Action == "apply" || in.Action == "" {
+		// apply (and legacy review_feedback / user_message) may edit the worktree.
+		allowed += ",Edit,Write,MultiEdit,Bash"
+	}
+
 	args := []string{
 		"-p", prompt,
 		"--output-format", "stream-json",
 		"--verbose",
 		"--permission-mode", "bypassPermissions",
-		"--allowedTools", "Read,Glob,Grep,Edit,Write,MultiEdit,Bash",
+		"--allowedTools", allowed,
 	}
+
+	// Wire the middleman MCP server for this turn (discuss/apply).
+	if in.MCP != nil {
+		mcpConfigPath, cleanup, err := writeMCPConfig(*in.MCP)
+		if err != nil {
+			r.markFailed(ctx, respTurn.ID, "write mcp config: "+err.Error())
+			return
+		}
+		defer cleanup()
+		args = append(args, "--mcp-config", mcpConfigPath, "--strict-mcp-config")
+	}
+
 	if sess.ClaudeSessionID != "" {
 		args = append(args, "--resume", sess.ClaudeSessionID)
 	}
@@ -215,6 +271,12 @@ func (r *SessionRunner) runTurn(
 	cmd := exec.CommandContext(ctx, claudeBinary, args...)
 	cmd.Dir = in.WorktreePath
 	setPgid(cmd)
+	// CommandContext's default Cancel kills only the leader; with setPgid
+	// a hung grandchild can keep the stdout pipe open so the stream loop
+	// and cmd.Wait block past the deadline. Kill the whole group instead,
+	// and bound the post-cancel wait so Wait can't hang on the pipe.
+	cmd.Cancel = func() error { return killProcessGroup(cmd) }
+	cmd.WaitDelay = 5 * time.Second
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -263,7 +325,17 @@ func (r *SessionRunner) runTurn(
 	waitErr := cmd.Wait()
 
 	if ctx.Err() != nil {
-		// CancelTurn flipped the row to cancelled; don't overwrite.
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			// Hung turn: CommandContext killed claude on the deadline.
+			// Mark it failed so the session frees (the busy gate no longer
+			// 409s). Use a fresh context — the turn ctx is already Done, so
+			// DB writes on it would fail.
+			bg := context.Background()
+			r.flushStreamState(bg, respTurn.ID, state)
+			r.markFailed(bg, respTurn.ID, fmt.Sprintf("claude turn timed out after %s", r.turnTimeout))
+		}
+		// context.Canceled => CancelTurn already set status "cancelled";
+		// don't overwrite it.
 		return
 	}
 	if waitErr != nil {
@@ -500,12 +572,95 @@ func (r *SessionRunner) markFailed(ctx context.Context, turnID int64, msg string
 	}
 }
 
+// writeMCPConfig writes a temp `claude --mcp-config` JSON declaring the
+// middleman stdio server for one review, and returns its path + a cleanup.
+func writeMCPConfig(c MCPConfig) (string, func(), error) {
+	cfg := map[string]any{
+		"mcpServers": map[string]any{
+			"middleman": map[string]any{
+				"command": c.Binary,
+				"args": []string{
+					"mcp",
+					"--base-url", c.BaseURL,
+					"--owner", c.Owner,
+					"--name", c.Name,
+					"--number", fmt.Sprintf("%d", c.Number),
+				},
+			},
+		},
+	}
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		return "", func() {}, err
+	}
+	f, err := os.CreateTemp("", "middleman-mcp-*.json")
+	if err != nil {
+		return "", func() {}, err
+	}
+	if _, err := f.Write(b); err != nil {
+		_ = f.Close()
+		_ = os.Remove(f.Name())
+		return "", func() {}, err
+	}
+	_ = f.Close()
+	return f.Name(), func() { _ = os.Remove(f.Name()) }, nil
+}
+
+func formatThreads(ts []ThreadContext) string {
+	var b strings.Builder
+	for _, t := range ts {
+		side := "after"
+		if t.Side == "LEFT" {
+			side = "before"
+		}
+		fmt.Fprintf(&b, "- thread %d - %s:%d (%s): %s\n", t.ID, t.Path, t.Line, side, t.RootComment)
+	}
+	return b.String()
+}
+
 // buildSessionPrompt assembles the prompt sent on each turn. The
 // first turn primes Claude with worktree context (where it is,
 // what branch, what base, what's middleman expecting). Subsequent
 // turns rely on --resume so the model keeps that context already
 // — we only send the new user message.
 func buildSessionPrompt(in SubmitTurnInput) string {
+	// discuss/apply produce their own action-specific prompts (first turn
+	// AND resumed) and must NOT inherit the generic "full Read / Edit /
+	// Write / Bash access ... act directly" priming below: discuss is
+	// read-only (reply only), and the thread list must always be included.
+	switch in.Action {
+	case "discuss":
+		var b strings.Builder
+		writeWorktreeContext(&b, in)
+		b.WriteString("\n")
+		b.WriteString("These review comment threads need your response. For EACH thread, " +
+			"read the relevant code and call the reply_to_thread tool (thread_id + body) with your " +
+			"reading and a proposed approach or a clarifying question. Do not change any files yet.\n\n")
+		b.WriteString(formatThreads(in.Threads))
+		return b.String()
+	case "apply":
+		var b strings.Builder
+		writeWorktreeContext(&b, in)
+		b.WriteString("\n")
+		b.WriteString("Apply the change(s) discussed in the following thread(s). Make the changes in the " +
+			"worktree, then call reply_to_thread on each with a one-line summary of what you changed. " +
+			"Don't push, don't open PRs, don't touch remotes.\n\n")
+		b.WriteString(formatThreads(in.Threads))
+		return b.String()
+	case "steer":
+		var b strings.Builder
+		writeWorktreeContext(&b, in)
+		b.WriteString("\n")
+		b.WriteString("The reviewer replied in a review thread. Read the relevant code, " +
+			"respond to continue the discussion, and call the reply_to_thread tool (thread_id + body) " +
+			"with your reply. Do not change any files — this is discussion only.\n\n")
+		b.WriteString(formatThreads(in.Threads))
+		b.WriteString("\nThe reviewer's message:\n")
+		b.WriteString(in.UserTurnContent)
+		return b.String()
+	}
+
+	// legacy path (review_feedback + free-text follow-ups)
 	if !in.IsFirstTurn {
 		return in.UserTurnContent
 	}
@@ -525,6 +680,19 @@ func buildSessionPrompt(in SubmitTurnInput) string {
 		"You can use `git log`, `git diff`, etc. to ground yourself in the commit history. " +
 			"Don't push, don't open PRs, don't touch remotes.\n\n",
 	)
+	writeWorktreeContext(&b, in)
+	b.WriteString("\n")
+	if in.UserTurnType == "review_feedback" {
+		b.WriteString("The reviewer has submitted the following feedback. " +
+			"Read the comments, look at the relevant files, and make the requested changes.\n\n")
+	}
+	b.WriteString(in.UserTurnContent)
+	return b.String()
+}
+
+// writeWorktreeContext writes the worktree location block (path/branch/
+// base/head) shared by the legacy priming and the discuss/apply prompts.
+func writeWorktreeContext(b *strings.Builder, in SubmitTurnInput) {
 	b.WriteString("Worktree path: ")
 	b.WriteString(in.WorktreePath)
 	b.WriteString("\n")
@@ -548,13 +716,6 @@ func buildSessionPrompt(in SubmitTurnInput) string {
 		b.WriteString(shortSHA(in.HeadSHA))
 		b.WriteString("\n")
 	}
-	b.WriteString("\n")
-	if in.UserTurnType == "review_feedback" {
-		b.WriteString("The reviewer has submitted the following feedback. " +
-			"Read the comments, look at the relevant files, and make the requested changes.\n\n")
-	}
-	b.WriteString(in.UserTurnContent)
-	return b.String()
 }
 
 func shortSHA(sha string) string {

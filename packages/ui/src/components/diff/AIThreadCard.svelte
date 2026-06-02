@@ -2,6 +2,7 @@
   import { getStores } from "../../context.js";
   import { renderMarkdown } from "../../utils/markdown.js";
   import type { AIThread, AIQuestion } from "../../stores/ai.svelte.js";
+  import type { ReviewThreadDraftInput } from "../../stores/reviewThreads.svelte.js";
   import { extractFileRefs } from "../../stores/fileResolver.svelte.js";
 
   interface Props {
@@ -12,9 +13,14 @@
 
   const { thread, repoOwner, repoName }: Props = $props();
 
-  const { ai: aiStore, diff: diffStore, fileResolver } = getStores();
+  const { ai: aiStore, diff: diffStore, fileResolver, reviewThreads } = getStores();
 
   const questions = $derived(aiStore.getQuestionsForThread(thread.id));
+
+  // Promote-to-review-thread is local-only (review threads exist only on
+  // worktrees) and needs at least one answered turn to capture.
+  const isLocal = $derived(repoOwner === "local");
+  const answered = $derived(questions.filter((q) => q.status === "done" && !!q.answer));
 
   // Kick off filename resolution whenever a question's answer arrives,
   // so basenames Claude mentions get deep-linked when the server can
@@ -87,6 +93,36 @@
       commitSha: thread.commit_sha,
       body: q.answer,
     });
+  }
+
+  // Promote the whole Q&A session into one persisted review thread: the
+  // first answered question becomes the root comment, then each answered
+  // turn lands as agent/user comments. The thread is created 'discussed'
+  // (it already carries agent input) and keeps its own Apply / Ask
+  // buttons, so a code change can be made from it async. Once captured,
+  // the ephemeral Q&A thread (and its worktree) is removed.
+  async function promoteSession(): Promise<void> {
+    if (answered.length === 0) return;
+    const comments: { author: "user" | "agent"; body: string }[] = [
+      { author: "agent", body: answered[0]!.answer },
+    ];
+    for (let i = 1; i < answered.length; i++) {
+      comments.push({ author: "user", body: answered[i]!.question });
+      comments.push({ author: "agent", body: answered[i]!.answer });
+    }
+    const draft: ReviewThreadDraftInput = {
+      path: thread.path,
+      side: thread.anchor_side as "LEFT" | "RIGHT",
+      line: thread.anchor_line,
+      ...(thread.hunk_start_line != null && thread.hunk_start_line < thread.anchor_line
+        ? { startLine: thread.hunk_start_line }
+        : {}),
+      commitSha: thread.commit_sha,
+      body: answered[0]!.question,
+      comments,
+    };
+    const ok = await reviewThreads.createThreads([draft]);
+    if (ok) await aiStore.deleteThread(thread.id);
   }
 
   function statusLabel(q: AIQuestion): string {
@@ -192,6 +228,19 @@
       {/if}
     </div>
   {/each}
+
+  {#if isLocal && answered.length > 0}
+    <div class="ai-thread__promote-session">
+      <button
+        type="button"
+        class="ai-thread__promote"
+        onclick={() => void promoteSession()}
+        title="Create a review thread from this whole discussion, then close this Q&A"
+      >
+        Promote to review thread
+      </button>
+    </div>
+  {/if}
 
   {#if thread.status === "active"}
     <div class="ai-thread__followup">
@@ -390,6 +439,17 @@
     background: var(--bg-surface-hover);
     color: var(--text-primary);
   }
+
+  .ai-thread__promote-session {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border-muted);
+  }
+
 
   .ai-thread__error {
     margin-top: 6px;

@@ -63,12 +63,47 @@ function aiStub() {
   };
 }
 
+function reviewThreadsStub() {
+  return {
+    getThreads: () => [],
+    applyAll: vi.fn(async () => true),
+  };
+}
+
+function worktreeSessionStub() {
+  return {
+    hasRunningTurn: () => false,
+  };
+}
+
+// ReviewCommentsSection (mounted in the sidebar) reads detail + viewer at
+// render; provide empty stubs so it renders its empty state without crashing.
+function detailStub() {
+  return {
+    getReviewCommentsByFilePath: () => new Map(),
+  };
+}
+
+function viewerStub() {
+  return {
+    getLogin: () => null,
+  };
+}
+
 function renderSidebar() {
   return render(DiffSidebar, {
     context: new Map<symbol, unknown>([
       [
         STORES_KEY,
-        { diff: diffStub(), pulls: pullsStub(), ai: aiStub() },
+        {
+          diff: diffStub(),
+          pulls: pullsStub(),
+          ai: aiStub(),
+          reviewThreads: reviewThreadsStub(),
+          worktreeSession: worktreeSessionStub(),
+          detail: detailStub(),
+          viewer: viewerStub(),
+        },
       ],
     ]),
   });

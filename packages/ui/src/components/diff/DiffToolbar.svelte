@@ -7,7 +7,7 @@
 
   const { onReviewClick }: Props = $props();
 
-  const { diff, detail: detailStore } = getStores();
+  const { diff, detail: detailStore, reviewThreads } = getStores();
   const tabOptions = [1, 2, 4, 8] as const;
   const layoutOptions = [
     { value: "unified", label: "Unified" },
@@ -23,6 +23,15 @@
   // GitHub-side URL) — the link is rendered conditionally so it
   // doesn't navigate to "" / the current page.
   const githubURL = $derived(detailStore.getDetail()?.merge_request.URL ?? "");
+
+  // On a local worktree there's no GitHub side, so the GitHub /sync that
+  // diff.refresh() runs errors. Route Refresh there to a thread sync from
+  // the DB instead (the diff itself is the worktree's live git state).
+  const isLocal = $derived(diff.getCurrentPR()?.owner === "local");
+  function onRefresh(): void {
+    if (isLocal) void reviewThreads.refresh();
+    else void diff.refresh();
+  }
 </script>
 
 <div class="diff-toolbar">
@@ -83,11 +92,13 @@
     <button
       type="button"
       class="refresh-btn"
-      onclick={() => void diff.refresh()}
+      onclick={onRefresh}
       disabled={diff.isRefreshing()}
-      title={diff.isRefreshing()
-        ? "Syncing with GitHub..."
-        : "Refresh the diff and commits from GitHub"}
+      title={isLocal
+        ? "Sync review threads from the database"
+        : diff.isRefreshing()
+          ? "Syncing with GitHub..."
+          : "Refresh the diff and commits from GitHub"}
     >
       <svg
         width="12" height="12" viewBox="0 0 12 12" fill="none"

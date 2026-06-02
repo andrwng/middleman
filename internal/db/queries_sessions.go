@@ -10,20 +10,20 @@ import (
 )
 
 // GetActiveWorktreeSession returns the live (status='active')
-// session row for a worktree, or sql.ErrNoRows when there isn't
-// one. Callers use this to decide whether to start a new session
-// or resume the existing one.
+// session row for a (worktree, branch), or sql.ErrNoRows when there
+// isn't one. Callers use this to decide whether to start a new
+// session or resume the existing one.
 func (d *DB) GetActiveWorktreeSession(
-	ctx context.Context, worktreeID int64,
+	ctx context.Context, worktreeID int64, branch string,
 ) (WorktreeSession, error) {
 	row := d.ro.QueryRowContext(ctx,
-		`SELECT id, worktree_id, claude_session_id, status,
+		`SELECT id, worktree_id, branch, claude_session_id, status,
 		        started_at, last_activity_at
 		   FROM middleman_worktree_sessions
-		  WHERE worktree_id = ? AND status = 'active'
+		  WHERE worktree_id = ? AND branch = ? AND status = 'active'
 		  ORDER BY id DESC
 		  LIMIT 1`,
-		worktreeID,
+		worktreeID, branch,
 	)
 	return scanWorktreeSession(row)
 }
@@ -33,7 +33,7 @@ func (d *DB) GetWorktreeSession(
 	ctx context.Context, id int64,
 ) (WorktreeSession, error) {
 	row := d.ro.QueryRowContext(ctx,
-		`SELECT id, worktree_id, claude_session_id, status,
+		`SELECT id, worktree_id, branch, claude_session_id, status,
 		        started_at, last_activity_at
 		   FROM middleman_worktree_sessions
 		  WHERE id = ?`,
@@ -42,16 +42,17 @@ func (d *DB) GetWorktreeSession(
 	return scanWorktreeSession(row)
 }
 
-// CreateWorktreeSession opens a fresh active session for a worktree.
+// CreateWorktreeSession opens a fresh active session for a
+// (worktree, branch).
 func (d *DB) CreateWorktreeSession(
-	ctx context.Context, worktreeID int64,
+	ctx context.Context, worktreeID int64, branch string,
 ) (WorktreeSession, error) {
 	now := time.Now().UTC()
 	res, err := d.rw.ExecContext(ctx,
 		`INSERT INTO middleman_worktree_sessions
-		    (worktree_id, status, started_at, last_activity_at)
-		 VALUES (?, 'active', ?, ?)`,
-		worktreeID, now, now,
+		    (worktree_id, branch, status, started_at, last_activity_at)
+		 VALUES (?, ?, 'active', ?, ?)`,
+		worktreeID, branch, now, now,
 	)
 	if err != nil {
 		return WorktreeSession{}, fmt.Errorf("create worktree session: %w", err)
@@ -317,7 +318,7 @@ func (d *DB) ListWorktreeSessionTurns(
 func scanWorktreeSession(row rowScanner) (WorktreeSession, error) {
 	var s WorktreeSession
 	err := row.Scan(
-		&s.ID, &s.WorktreeID, &s.ClaudeSessionID, &s.Status,
+		&s.ID, &s.WorktreeID, &s.Branch, &s.ClaudeSessionID, &s.Status,
 		&s.StartedAt, &s.LastActivityAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {

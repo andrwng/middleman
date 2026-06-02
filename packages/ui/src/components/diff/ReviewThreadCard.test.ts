@@ -1,0 +1,146 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, fireEvent } from "@testing-library/svelte";
+
+const resolve = vi.fn(async () => true);
+const hide = vi.fn(async () => true);
+const addComment = vi.fn(async () => true);
+const apply = vi.fn(async () => true);
+const deleteThread = vi.fn(async () => true);
+const ask = vi.fn(async () => true);
+const discuss = vi.fn(async () => true);
+const unresolve = vi.fn(async () => true);
+let running = false;
+
+vi.mock("../../context.js", () => ({
+  getStores: () => ({
+    reviewThreads: { resolve, unresolve, hide, unhide: vi.fn(), addComment, apply, deleteThread, ask, discuss },
+    worktreeSession: { hasRunningTurn: () => running },
+  }),
+}));
+
+import ReviewThreadCard from "./ReviewThreadCard.svelte";
+
+function thread(over: Record<string, unknown> = {}) {
+  return {
+    id: 5, path: "a.go", side: "RIGHT", line: 12, commit_sha: "abc1234",
+    status: "open", hidden: false, created_at: "", updated_at: "",
+    comments: [
+      { id: 1, author: "user", body: "rename this", created_at: "" },
+      { id: 2, author: "agent", body: "agreed", created_at: "" },
+    ],
+    ...over,
+  };
+}
+
+afterEach(() => { cleanup(); vi.clearAllMocks(); running = false; });
+
+describe("ReviewThreadCard", () => {
+  it("renders the comments and a status chip", () => {
+    const { getByText } = render(ReviewThreadCard, { props: { thread: thread() } });
+    expect(getByText("rename this")).toBeTruthy();
+    expect(getByText("agreed")).toBeTruthy();
+    expect(getByText(/open/i)).toBeTruthy();
+  });
+
+  it("resolve button calls the store", async () => {
+    const { getByTitle } = render(ReviewThreadCard, { props: { thread: thread() } });
+    await fireEvent.click(getByTitle("Resolve this thread"));
+    expect(resolve).toHaveBeenCalledWith(5);
+  });
+
+  it("collapses to a stub when hidden, with an unhide affordance", () => {
+    const { getByText, queryByText } = render(ReviewThreadCard, {
+      props: { thread: thread({ hidden: true }) },
+    });
+    expect(getByText(/hidden/i)).toBeTruthy();
+    expect(queryByText("rename this")).toBeNull(); // body not shown while hidden
+  });
+
+  it("shows Apply for open/discussed threads and calls the store", async () => {
+    const { getByTitle } = render(ReviewThreadCard, { props: { thread: thread({ status: "discussed" }) } });
+    await fireEvent.click(getByTitle("Apply this thread's change"));
+    expect(apply).toHaveBeenCalledWith(5);
+  });
+
+  it("hides Apply once applied/resolved", () => {
+    const { queryByTitle } = render(ReviewThreadCard, { props: { thread: thread({ status: "applied" }) } });
+    expect(queryByTitle("Apply this thread's change")).toBeNull();
+  });
+
+  it("delete requires a confirm click before calling the store", async () => {
+    const { getByText, getByTitle } = render(ReviewThreadCard, { props: { thread: thread() } });
+    await fireEvent.click(getByTitle("Delete this thread permanently"));
+    expect(deleteThread).not.toHaveBeenCalled();
+    expect(getByText("Confirm?")).toBeTruthy();
+    await fireEvent.click(getByText("Confirm?"));
+    expect(deleteThread).toHaveBeenCalledWith(5);
+  });
+
+  it("Ask Claude calls ask and not addComment", async () => {
+    const { getByText, getByPlaceholderText } = render(ReviewThreadCard, { props: { thread: thread() } });
+    const box = getByPlaceholderText(/Reply/i) as HTMLTextAreaElement;
+    await fireEvent.input(box, { target: { value: "why a mutex?" } });
+    await fireEvent.click(getByText("Ask Claude"));
+    expect(ask).toHaveBeenCalledWith(5, "why a mutex?");
+    expect(addComment).not.toHaveBeenCalled();
+  });
+
+  it("Send calls addComment and not ask", async () => {
+    const { getByText, getByPlaceholderText } = render(ReviewThreadCard, { props: { thread: thread() } });
+    const box = getByPlaceholderText(/Reply/i) as HTMLTextAreaElement;
+    await fireEvent.input(box, { target: { value: "why a mutex?" } });
+    await fireEvent.click(getByText("Send"));
+    expect(addComment).toHaveBeenCalledWith(5, "why a mutex?");
+    expect(ask).not.toHaveBeenCalled();
+  });
+
+  it("the agent button and Apply are disabled while a turn runs", () => {
+    running = true;
+    const { getByText, getByTitle } = render(ReviewThreadCard, { props: { thread: thread({ status: "discussed" }) } });
+    // Empty composer => the button reads "Discuss"; still disabled while busy.
+    expect((getByText("Discuss") as HTMLButtonElement).disabled).toBe(true);
+    expect((getByTitle("Apply this thread's change") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("the agent button is Discuss when the composer is empty and calls discuss", async () => {
+    const { getByText } = render(ReviewThreadCard, { props: { thread: thread() } });
+    await fireEvent.click(getByText("Discuss"));
+    expect(discuss).toHaveBeenCalledWith(5);
+    expect(ask).not.toHaveBeenCalled();
+  });
+
+  it("pops an asking badge when Discuss is pressed", async () => {
+    const { getByText, container } = render(ReviewThreadCard, { props: { thread: thread() } });
+    expect(container.querySelector(".review-thread__asking")).toBeNull();
+    await fireEvent.click(getByText("Discuss"));
+    expect(container.querySelector(".review-thread__asking")).toBeTruthy();
+  });
+
+  it("a resolved thread offers Unresolve instead of Resolve", async () => {
+    const { getByTitle, queryByTitle } = render(ReviewThreadCard, { props: { thread: thread({ status: "resolved" }) } });
+    expect(queryByTitle("Resolve this thread")).toBeNull();
+    await fireEvent.click(getByTitle("Reopen this thread"));
+    expect(unresolve).toHaveBeenCalledWith(5);
+  });
+
+  it("marks user comments that were sent to the agent", () => {
+    const { container } = render(ReviewThreadCard, {
+      props: { thread: thread({ comments: [{ id: 1, author: "user", body: "ask", sent_to_agent: true, created_at: "" }] }) },
+    });
+    expect(container.querySelector(".review-thread__sent-badge")).toBeTruthy();
+  });
+
+  it("badge is absent for un-asked user comments and agent comments", () => {
+    const { container } = render(ReviewThreadCard, {
+      props: {
+        thread: thread({
+          comments: [
+            { id: 1, author: "user", body: "just a note", sent_to_agent: false, created_at: "" },
+            { id: 2, author: "agent", body: "ok", sent_to_agent: false, created_at: "" },
+          ],
+        }),
+      },
+    });
+    expect(container.querySelector(".review-thread__sent-badge")).toBeNull();
+  });
+});

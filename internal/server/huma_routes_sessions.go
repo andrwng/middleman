@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -106,7 +107,7 @@ func (s *Server) getWorktreeSession(
 		return nil, huma.Error404NotFound("worktree not found")
 	}
 
-	sess, err := s.db.GetActiveWorktreeSession(ctx, w.ID)
+	sess, err := s.db.GetActiveWorktreeSession(ctx, w.ID, s.currentWorktreeBranch(ctx, w))
 	if errors.Is(err, sql.ErrNoRows) {
 		return &getSessionOutput{Body: getSessionResponse{Turns: []sessionTurnResponse{}}}, nil
 	}
@@ -155,20 +156,9 @@ func (s *Server) submitWorktreeSessionTurn(
 	}
 
 	// Ensure an active session exists.
-	sess, err := s.db.GetActiveWorktreeSession(ctx, w.ID)
-	isFirstTurn := false
-	if errors.Is(err, sql.ErrNoRows) {
-		sess, err = s.db.CreateWorktreeSession(ctx, w.ID)
-		if err != nil {
-			return nil, huma.Error500InternalServerError("create session: " + err.Error())
-		}
-		isFirstTurn = true
-	} else if err != nil {
-		return nil, huma.Error500InternalServerError("get session: " + err.Error())
-	} else if sess.ClaudeSessionID == "" {
-		// Session row exists but Claude hasn't ack'd it yet — treat
-		// this as a first turn so the prompt re-primes context.
-		isFirstTurn = true
+	sess, isFirstTurn, err := s.ensureWorktreeSession(ctx, w.ID, s.currentWorktreeBranch(ctx, w))
+	if err != nil {
+		return nil, huma.Error500InternalServerError("ensure session: " + err.Error())
 	}
 
 	// Pull worktree context for the prompt.
@@ -215,7 +205,7 @@ func (s *Server) killWorktreeSession(
 	if err != nil {
 		return nil, huma.Error404NotFound("worktree not found")
 	}
-	sess, err := s.db.GetActiveWorktreeSession(ctx, w.ID)
+	sess, err := s.db.GetActiveWorktreeSession(ctx, w.ID, s.currentWorktreeBranch(ctx, w))
 	if errors.Is(err, sql.ErrNoRows) {
 		// No active session; treat as no-op (idempotent kill).
 		return &emptyOutput{}, nil
@@ -258,6 +248,61 @@ func (s *Server) cancelWorktreeSessionTurn(
 		return nil, huma.Error500InternalServerError("cancel turn: " + err.Error())
 	}
 	return &emptyOutput{}, nil
+}
+
+// ensureWorktreeSession returns the active session for a (worktree,
+// branch), creating one if none exists. The bool is isFirstTurn: true
+// when the session was just created, or when it exists but Claude hasn't
+// ack'd a claude_session_id yet (so the prompt re-primes worktree
+// context).
+func (s *Server) ensureWorktreeSession(ctx context.Context, worktreeID int64, branch string) (db.WorktreeSession, bool, error) {
+	sess, err := s.db.GetActiveWorktreeSession(ctx, worktreeID, branch)
+	if errors.Is(err, sql.ErrNoRows) {
+		sess, err = s.db.CreateWorktreeSession(ctx, worktreeID, branch)
+		if err != nil {
+			return db.WorktreeSession{}, false, err
+		}
+		return sess, true, nil
+	}
+	if err != nil {
+		return db.WorktreeSession{}, false, err
+	}
+	if sess.ClaudeSessionID == "" {
+		return sess, true, nil // exists but Claude hasn't ack'd → re-prime
+	}
+	return sess, false, nil
+}
+
+// sessionHasRunningTurn reports whether the session has a claude_response
+// turn that is queued or running — i.e. the agent is busy.
+func (s *Server) sessionHasRunningTurn(ctx context.Context, sessID int64) bool {
+	turns, err := s.db.ListWorktreeSessionTurns(ctx, sessID)
+	if err != nil {
+		return false
+	}
+	for _, t := range turns {
+		if t.TurnType == "claude_response" && (t.Status == "queued" || t.Status == "running") {
+			return true
+		}
+	}
+	return false
+}
+
+// selfBaseURL is the loopback base URL the spawned MCP server uses to
+// call back into this server's REST API.
+func (s *Server) selfBaseURL() string {
+	host := "127.0.0.1:8091"
+	if s.cfg != nil {
+		if addr := s.cfg.ListenAddr(); addr != "" {
+			host = addr
+		}
+	}
+	base := "http://" + host
+	// Honor a non-default outer basePath; the MCP proxy appends /api/v1.
+	if s.basePath != "" && s.basePath != "/" {
+		base += strings.TrimSuffix(s.basePath, "/")
+	}
+	return base
 }
 
 func toSessionResponse(s db.WorktreeSession) sessionResponse {

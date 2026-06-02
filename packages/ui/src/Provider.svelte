@@ -88,6 +88,7 @@
   import { createAISessionsStore } from "./stores/aiSessions.svelte.js";
   import { createWorktreesStore } from "./stores/worktrees.svelte.js";
   import { createWorktreeSessionStore } from "./stores/worktreeSession.svelte.js";
+  import { createReviewThreadsStore } from "./stores/reviewThreads.svelte.js";
 
   interface Props {
     client: MiddlemanClient;
@@ -219,6 +220,8 @@
 
     const worktreesStore = createWorktreesStore({ client: cl });
 
+    const reviewThreadsStore = createReviewThreadsStore({ client: cl });
+
     const eventsStore = createEventsStore({
       ...(cfg.basePath != null && {
         getBasePath: () => cfg.basePath as string,
@@ -228,6 +231,7 @@
         void issuesStore.loadIssues();
         void activityStore.loadActivity();
         void worktreesStore.loadWorktrees();
+        void reviewThreadsStore.refresh();
       },
       onSyncStatus: (status) => {
         syncStore.setSyncStatus(status);
@@ -278,6 +282,7 @@
       commitAnalysis: commitAnalysisStore,
       worktrees: worktreesStore,
       worktreeSession: createWorktreeSessionStore({ client: cl }),
+      reviewThreads: reviewThreadsStore,
     };
 
     if (roborevBase) {
@@ -344,6 +349,26 @@
     onNavigate, onEvent, prepareRoute,
     sidebar, getPage, roborevBaseUrl, onError,
   );
+
+  // Phase 2b (5A): while an agent turn is running, re-read the review's
+  // threads on the same cadence as the session poll so statuses flip
+  // (discussed/applied) and agent replies appear live. The $derived
+  // expression re-evaluates on every turns mutation, but Svelte's
+  // value-equality memoization means the $effect re-runs only when the
+  // boolean actually flips — so the interval is created/torn down once
+  // per turn, not on each poll tick.
+  const sessionRunning = $derived(
+    stores?.worktreeSession?.hasRunningTurn() ?? false,
+  );
+  $effect(() => {
+    if (!sessionRunning) return;
+    const rt = stores?.reviewThreads;
+    if (!rt) return;
+    const id = setInterval(() => {
+      void rt.refresh();
+    }, 1500);
+    return () => clearInterval(id);
+  });
 
   onDestroy(() => {
     stores?.roborevDaemon?.stopPolling();
