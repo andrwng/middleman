@@ -284,12 +284,42 @@
           return `<pre><code${langAttr}>${wrapCodeBlock(text, currentBlockStart, renderedSide)}</code></pre>\n`;
         },
         listitem(item: Tokens.ListItem): string {
-          return `<li>${wrapProseBlock(
-            item.raw.replace(/^[-*+]\s+|^\d+\.\s+/, ""),
-            currentBlockStart,
-            renderedSide,
-            (s) => m.parseInline(s) as string,
-          )}</li>\n`;
+          // Walk item.tokens rather than re-parsing item.raw as inline.
+          // The old approach swallowed every block child — nested lists,
+          // fenced code, blockquotes — into a single inline string, so
+          // `- top\n  - nested` rendered as inline text with a literal
+          // dash. Recursing through m.parser for non-text/paragraph
+          // tokens lets marked re-enter our overrides and emit a real
+          // nested <ul>/<ol>.
+          //
+          // Anchor lines on items within a list still share the list's
+          // start line (currentBlockStart is set once per top-level
+          // token). That's a known imprecision, separate from nested
+          // rendering — fix it when per-item anchoring matters.
+          const tokens = (item.tokens ?? []) as Token[];
+          let out = "";
+          for (const tok of tokens) {
+            if (tok.type === "text") {
+              const t = tok as Tokens.Text;
+              out += wrapProseBlock(
+                t.raw.replace(/\n$/, ""),
+                currentBlockStart,
+                renderedSide,
+                (s) => m.parseInline(s) as string,
+              );
+            } else if (tok.type === "paragraph") {
+              const p = tok as Tokens.Paragraph;
+              out += `<p>${wrapProseBlock(
+                p.raw.replace(/\n$/, ""),
+                currentBlockStart,
+                renderedSide,
+                (s) => m.parseInline(s) as string,
+              )}</p>`;
+            } else {
+              out += m.parser([tok]);
+            }
+          }
+          return `<li>${out}</li>\n`;
         },
       },
     });
