@@ -81,6 +81,100 @@ func builtinTools() map[string]toolDef {
 				return s.restJSON("GET", s.reviewPath(""), nil)
 			},
 		},
+		"start_thread": {
+			name: "start_thread",
+			description: "Create a new review thread anchored to a line in the current review. " +
+				"Use this to flag code for the reviewer (or another agent) to see. " +
+				"The thread is created in persist-only mode (no auto-engage).",
+			inputSchema: map[string]any{
+				"type":     "object",
+				"required": []string{"path", "side", "line", "body"},
+				"properties": map[string]any{
+					"path":       strSchema,
+					"side":       map[string]any{"type": "string", "enum": []string{"LEFT", "RIGHT"}},
+					"line":       map[string]any{"type": "integer", "minimum": 1},
+					"body":       strSchema,
+					"start_line": map[string]any{"type": "integer", "minimum": 1},
+					"commit_sha": strSchema,
+				},
+			},
+			call: func(s *Server, args map[string]any) (string, error) {
+				path, _ := args["path"].(string)
+				if path == "" {
+					return "", fmt.Errorf("path is required")
+				}
+				side, _ := args["side"].(string)
+				if side != "LEFT" && side != "RIGHT" {
+					return "", fmt.Errorf("side must be LEFT or RIGHT")
+				}
+				line, err := intArg(args, "line")
+				if err != nil || line < 1 {
+					return "", fmt.Errorf("line must be a positive integer")
+				}
+				body, _ := args["body"].(string)
+				if body == "" {
+					return "", fmt.Errorf("body is required")
+				}
+				commitSHA, _ := args["commit_sha"].(string)
+				if commitSHA == "" {
+					pull, err := s.restJSON("GET", s.reviewPath(""), nil)
+					if err != nil {
+						return "", fmt.Errorf("resolve HEAD via get_pull: %w", err)
+					}
+					var parsed struct {
+						Head struct {
+							SHA string `json:"sha"`
+						} `json:"head"`
+					}
+					if err := json.Unmarshal([]byte(pull), &parsed); err != nil || parsed.Head.SHA == "" {
+						return "", fmt.Errorf("resolve HEAD: could not parse head.sha from get_pull")
+					}
+					commitSHA = parsed.Head.SHA
+				}
+				draft := map[string]any{
+					"path":       path,
+					"side":       side,
+					"line":       line,
+					"commit_sha": commitSHA,
+					"body":       body,
+				}
+				if sl, ok := args["start_line"]; ok {
+					if n, err := intArg(map[string]any{"start_line": sl}, "start_line"); err == nil {
+						draft["start_line"] = n
+					}
+				}
+				payload, _ := json.Marshal(map[string]any{
+					"mode":    "",
+					"threads": []any{draft},
+				})
+				resp, err := s.restJSON("POST", s.reviewPath("/review-threads"), payload)
+				if err != nil {
+					return "", err
+				}
+				// Server returns {threads: [...]}; pick the row with max id (the just-created one).
+				var listed struct {
+					Threads []json.RawMessage `json:"threads"`
+				}
+				if err := json.Unmarshal([]byte(resp), &listed); err != nil {
+					return resp, nil // best-effort: return the raw payload if shape changes
+				}
+				var bestID int64
+				var best json.RawMessage
+				for _, raw := range listed.Threads {
+					var probe struct {
+						ID int64 `json:"id"`
+					}
+					if json.Unmarshal(raw, &probe) == nil && probe.ID > bestID {
+						bestID = probe.ID
+						best = raw
+					}
+				}
+				if best != nil {
+					return string(best), nil
+				}
+				return resp, nil
+			},
+		},
 	}
 }
 
