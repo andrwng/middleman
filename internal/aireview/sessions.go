@@ -96,6 +96,10 @@ type ThreadContext struct {
 	Line        int
 	Side        string
 	RootComment string
+	// WritesAllowed is true when this thread's status == "applied". The
+	// server sets it at kickoff time; sessions use it to gate edit tools
+	// on steer turns.
+	WritesAllowed bool
 }
 
 // MCPConfig tells the runner how to wire the middleman MCP server for a
@@ -129,7 +133,13 @@ type SubmitTurnInput struct {
 	// Action is "discuss" | "apply" | "steer" | "" (legacy review_feedback/user_message free-text follow-ups).
 	Action  string
 	Threads []ThreadContext
-	MCP     *MCPConfig
+	// AllowWrites grants edit tools (Edit/Write/MultiEdit/Bash) to steer
+	// turns on threads that the reviewer has already applied. Server sets
+	// this when every engaged thread has WritesAllowed==true. Apply turns
+	// always get write tools regardless of this field; this flag exists to
+	// let steer turns inherit them.
+	AllowWrites bool
+	MCP         *MCPConfig
 }
 
 // SubmitResult bundles the two new turn rows created by SubmitTurn.
@@ -240,8 +250,9 @@ func (r *SessionRunner) runTurn(
 	if in.MCP != nil {
 		allowed += "," + mcpToolNames
 	}
-	if in.Action == "apply" || in.Action == "" {
+	if in.Action == "apply" || in.Action == "" || in.AllowWrites {
 		// apply (and legacy review_feedback / user_message) may edit the worktree.
+		// AllowWrites also unlocks edits for steer turns on already-applied threads.
 		allowed += ",Edit,Write,MultiEdit,Bash"
 	}
 
@@ -651,9 +662,16 @@ func buildSessionPrompt(in SubmitTurnInput) string {
 		var b strings.Builder
 		writeWorktreeContext(&b, in)
 		b.WriteString("\n")
-		b.WriteString("The reviewer replied in a review thread. Read the relevant code, " +
-			"respond to continue the discussion, and call the reply_to_thread tool (thread_id + body) " +
-			"with your reply. Do not change any files — this is discussion only.\n\n")
+		if in.AllowWrites {
+			b.WriteString("The reviewer replied in a review thread. Read the relevant code, " +
+				"respond to continue the discussion, and call the reply_to_thread tool (thread_id + body) " +
+				"with your reply. You may edit files in the worktree if the reviewer's message asks for a change; " +
+				"if you do, include a one-line summary of what you changed in your reply_to_thread call.\n\n")
+		} else {
+			b.WriteString("The reviewer replied in a review thread. Read the relevant code, " +
+				"respond to continue the discussion, and call the reply_to_thread tool (thread_id + body) " +
+				"with your reply. Do not change any files — this is discussion only.\n\n")
+		}
 		b.WriteString(formatThreads(in.Threads))
 		b.WriteString("\nThe reviewer's message:\n")
 		b.WriteString(in.UserTurnContent)

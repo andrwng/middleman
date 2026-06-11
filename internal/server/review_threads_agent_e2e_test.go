@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	Assert "github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -375,4 +376,134 @@ func TestDiscussDoesNotDowngradeAppliedStatus(t *testing.T) {
 	}
 	require.NotNil(afterDiscuss)
 	assert.Equal("applied", afterDiscuss.Status)
+}
+
+// recordingFakeClaude writes the args passed to claude to outPath
+// before emitting its success result. Used by tests that need to
+// assert on the --allowedTools list.
+func recordingFakeClaude(t *testing.T, outPath string) string {
+	t.Helper()
+	stub := filepath.Join(t.TempDir(), "claude.sh")
+	script := "#!/bin/sh\n" +
+		"echo \"$@\" >> " + outPath + "\n" +
+		`echo '{"type":"result","subtype":"success","is_error":false,"result":"done","session_id":"s1"}'` + "\n"
+	require.NoError(t, os.WriteFile(stub, []byte(script), 0o755))
+	return stub
+}
+
+// waitForFile polls until the file at path is non-empty or timeout elapses.
+func waitForFile(t *testing.T, path string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		fi, err := os.Stat(path)
+		if err == nil && fi.Size() > 0 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	require.FailNow(t, "timed out waiting for "+path+" to be non-empty")
+}
+
+// TestSteerOnAppliedThreadGetsWriteTools verifies that an /ask turn
+// on a thread that is already in "applied" state receives the edit
+// tools (Edit/Write/MultiEdit/Bash) in its --allowedTools list.
+func TestSteerOnAppliedThreadGetsWriteTools(t *testing.T) {
+	require := require.New(t)
+	srv, database := setupTestServer(t)
+	srv.sessionRunner = aireview.NewSessionRunner(database)
+
+	argsPath := filepath.Join(t.TempDir(), "args.log")
+	aireview.SetBinaryForTest(recordingFakeClaude(t, argsPath))
+	t.Cleanup(func() { aireview.SetBinaryForTest("claude") })
+
+	client := setupTestClient(t, srv)
+	ctx := context.Background()
+	num := seedReviewWorktree(t, database)
+
+	// Create with act-immediately so the thread goes straight to "applied".
+	mode := "act-immediately"
+	threads := []generated.ReviewThreadDraft{
+		{Path: "a.go", Side: "RIGHT", Line: 12, CommitSha: "deadbeef", Body: "fix this"},
+	}
+	createResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(
+		ctx, "local", "demo", num,
+		generated.CreateReviewThreadsInputBody{
+			Mode:    &mode,
+			Threads: &threads,
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, createResp.StatusCode())
+	require.NotNil(createResp.JSON200)
+	require.NotNil(createResp.JSON200.Threads)
+	require.Len(*createResp.JSON200.Threads, 1)
+	threadID := (*createResp.JSON200.Threads)[0].Id
+
+	// Wait for the apply turn's args to land.
+	waitForFile(t, argsPath, 3*time.Second)
+
+	// Truncate the log so the next turn's args are isolated.
+	require.NoError(os.Truncate(argsPath, 0))
+
+	// Now /ask on the same thread; should get edit tools.
+	askResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsByThreadIdAskWithResponse(
+		ctx, "local", "demo", num, threadID,
+		generated.AskReviewThreadInputBody{Body: "now also rename Foo to Bar"},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, askResp.StatusCode())
+
+	waitForFile(t, argsPath, 3*time.Second)
+	b, err := os.ReadFile(argsPath)
+	require.NoError(err)
+	require.Contains(string(b), "Edit,Write,MultiEdit,Bash")
+}
+
+// TestSteerOnUnappliedThreadStaysReadOnly verifies that an /ask turn
+// on a thread that has NOT been applied does NOT receive edit tools.
+func TestSteerOnUnappliedThreadStaysReadOnly(t *testing.T) {
+	require := require.New(t)
+	srv, database := setupTestServer(t)
+	srv.sessionRunner = aireview.NewSessionRunner(database)
+
+	argsPath := filepath.Join(t.TempDir(), "args.log")
+	aireview.SetBinaryForTest(recordingFakeClaude(t, argsPath))
+	t.Cleanup(func() { aireview.SetBinaryForTest("claude") })
+
+	client := setupTestClient(t, srv)
+	ctx := context.Background()
+	num := seedReviewWorktree(t, database)
+
+	// Create a thread WITHOUT applying (persist-only → status "open").
+	mode := "persist-only"
+	threads := []generated.ReviewThreadDraft{
+		{Path: "b.go", Side: "RIGHT", Line: 5, CommitSha: "deadbeef", Body: "question?"},
+	}
+	createResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(
+		ctx, "local", "demo", num,
+		generated.CreateReviewThreadsInputBody{
+			Mode:    &mode,
+			Threads: &threads,
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, createResp.StatusCode())
+	require.NotNil(createResp.JSON200)
+	require.NotNil(createResp.JSON200.Threads)
+	require.Len(*createResp.JSON200.Threads, 1)
+	threadID := (*createResp.JSON200.Threads)[0].Id
+
+	// /ask — should NOT get edit tools.
+	askResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsByThreadIdAskWithResponse(
+		ctx, "local", "demo", num, threadID,
+		generated.AskReviewThreadInputBody{Body: "what did you mean"},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, askResp.StatusCode())
+
+	waitForFile(t, argsPath, 3*time.Second)
+	b, err := os.ReadFile(argsPath)
+	require.NoError(err)
+	require.NotContains(string(b), "Edit,Write,MultiEdit,Bash")
 }

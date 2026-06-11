@@ -116,7 +116,7 @@ func TestDiscussTurnIsReadOnlyAndConfiguresMCP(t *testing.T) {
 	require.Contains(args, "--mcp-config")
 	// discuss is read-only: exact gating, no Edit/Write/Bash.
 	require.Equal(
-		"Read,Glob,Grep,mcp__middleman__list_threads,mcp__middleman__get_thread,mcp__middleman__reply_to_thread",
+		"Read,Glob,Grep,mcp__middleman__list_threads,mcp__middleman__get_thread,mcp__middleman__reply_to_thread,mcp__middleman__start_thread",
 		allowedToolsArg(t, argsFile),
 	)
 }
@@ -155,7 +155,7 @@ func TestApplyTurnGetsEditTools(t *testing.T) {
 	require.Contains(args, "--mcp-config")
 	// apply gets the edit tools appended after the read-only + mcp set.
 	require.Equal(
-		"Read,Glob,Grep,mcp__middleman__list_threads,mcp__middleman__get_thread,mcp__middleman__reply_to_thread,Edit,Write,MultiEdit,Bash",
+		"Read,Glob,Grep,mcp__middleman__list_threads,mcp__middleman__get_thread,mcp__middleman__reply_to_thread,mcp__middleman__start_thread,Edit,Write,MultiEdit,Bash",
 		allowedToolsArg(t, argsFile),
 	)
 }
@@ -187,7 +187,7 @@ func TestSteerTurnIsReadOnlyAndCarriesTheMessage(t *testing.T) {
 	require.Contains(a, "--mcp-config")
 	// steer is read-only: exact gating, no Edit/Write/Bash.
 	require.Equal(
-		"Read,Glob,Grep,mcp__middleman__list_threads,mcp__middleman__get_thread,mcp__middleman__reply_to_thread",
+		"Read,Glob,Grep,mcp__middleman__list_threads,mcp__middleman__get_thread,mcp__middleman__reply_to_thread,mcp__middleman__start_thread",
 		allowedToolsArg(t, argsFile),
 	)
 	// The steer prompt carries the reviewer's message AND instructs the reply tool.

@@ -494,12 +494,19 @@ func (s *Server) kickoffReviewTurn(
 		return huma.Error409Conflict("the review agent is busy; wait for the current turn to finish")
 	}
 	tcs := make([]aireview.ThreadContext, 0, len(threads))
+	allApplied := len(threads) > 0
 	for _, t := range threads {
+		writesAllowed := t.Status == "applied"
+		if !writesAllowed {
+			allApplied = false
+		}
 		tcs = append(tcs, aireview.ThreadContext{
 			ID: t.ID, Path: t.Path, Line: t.Line, Side: t.Side,
-			RootComment: s.firstThreadCommentBody(ctx, t.ID),
+			RootComment:   s.firstThreadCommentBody(ctx, t.ID),
+			WritesAllowed: writesAllowed,
 		})
 	}
+	allowWrites := action == "steer" && allApplied
 	baseRef := s.lookupBaseRefForWorktree(ctx, *w)
 	base, _ := worktrees.ResolveBase(ctx, w.Path, baseRef)
 	exe, err := os.Executable()
@@ -520,7 +527,7 @@ func (s *Server) kickoffReviewTurn(
 		SessionID: sess.ID, WorktreePath: w.Path, Branch: w.Branch,
 		BaseRef: base.Ref, BaseSHA: base.SHA, HeadSHA: w.HeadSHA,
 		UserTurnType: verb, UserTurnContent: content, IsFirstTurn: isFirst,
-		Action: action, Threads: tcs,
+		Action: action, Threads: tcs, AllowWrites: allowWrites,
 		MCP: &aireview.MCPConfig{Binary: exe, BaseURL: s.selfBaseURL(), Owner: owner, Name: name, Number: number},
 	}); err != nil {
 		return huma.Error500InternalServerError("submit turn: " + err.Error())

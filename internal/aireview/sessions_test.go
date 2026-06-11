@@ -270,6 +270,32 @@ func TestSessionRunnerReconcileOnStartup(t *testing.T) {
 	assert.Equal("all good", d.Content)
 }
 
+func TestBuildSessionPromptSteerWithAllowWritesSwapsReadOnlySentence(t *testing.T) {
+	in := SubmitTurnInput{
+		WorktreePath: "/tmp/wt", Branch: "main",
+		Action: "steer", AllowWrites: true,
+		UserTurnContent: "go ahead",
+		Threads: []ThreadContext{{ID: 1, Path: "a.go", Line: 12, Side: "RIGHT", RootComment: "fix", WritesAllowed: true}},
+	}
+	prompt := buildSessionPrompt(in)
+	assert := assert.New(t)
+	assert.NotContains(prompt, "Do not change any files")
+	assert.Contains(prompt, "You may edit files in the worktree")
+}
+
+func TestBuildSessionPromptSteerWithoutAllowWritesStaysReadOnly(t *testing.T) {
+	in := SubmitTurnInput{
+		WorktreePath: "/tmp/wt", Branch: "main",
+		Action: "steer", AllowWrites: false,
+		UserTurnContent: "what about",
+		Threads: []ThreadContext{{ID: 1, Path: "a.go", Line: 12, Side: "RIGHT", RootComment: "fix"}},
+	}
+	prompt := buildSessionPrompt(in)
+	assert := assert.New(t)
+	assert.Contains(prompt, "Do not change any files")
+	assert.NotContains(prompt, "You may edit files")
+}
+
 // Suppress unused import vet failures when the test file is the only
 // consumer of the symbol below.
 var _ = fmt.Sprintf
