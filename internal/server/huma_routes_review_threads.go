@@ -532,6 +532,14 @@ func (s *Server) kickoffReviewTurn(
 			target = "applied"
 		}
 		for _, t := range threads {
+			// Item 4: don't downgrade an already-applied thread back to "discussed"
+			// when a subsequent Discuss fires — "applied" is the writes-allowed
+			// signal and must stay sticky across later Discuss turns. Apply itself
+			// is still hidden by the UI on applied threads (canApply gates on
+			// open|discussed), so this only matters when /discuss is hit directly.
+			if action == "discuss" && t.Status == "applied" {
+				continue
+			}
 			_ = s.db.SetReviewThreadStatus(ctx, t.ID, target)
 		}
 	}

@@ -303,3 +303,76 @@ func TestAPIReviewThreadAskWhileBusyPersistsNoteAndReturns409(t *testing.T) {
 		ctx, "local", "demo", num,
 	)
 }
+
+// TestDiscussDoesNotDowngradeAppliedStatus verifies that firing /discuss on a
+// thread already in "applied" state does NOT downgrade the status back to
+// "discussed". "applied" is the writes-allowed signal and must stay sticky
+// across later discuss turns.
+func TestDiscussDoesNotDowngradeAppliedStatus(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+	srv, database := setupTestServer(t)
+	srv.sessionRunner = aireview.NewSessionRunner(database)
+	aireview.SetBinaryForTest(fastFakeClaude(t))
+	t.Cleanup(func() { aireview.SetBinaryForTest("claude") })
+
+	client := setupTestClient(t, srv)
+	ctx := context.Background()
+	num := seedReviewWorktree(t, database)
+
+	// Create a persist-only thread (status "open").
+	createResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(
+		ctx, "local", "demo", num,
+		generated.CreateReviewThreadsInputBody{
+			Threads: &[]generated.ReviewThreadDraft{
+				{Path: "a.go", Side: "RIGHT", Line: 12, CommitSha: "abc", Body: "fix this"},
+			},
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, createResp.StatusCode())
+	require.NotNil(createResp.JSON200)
+	require.NotNil(createResp.JSON200.Threads)
+	created := *createResp.JSON200.Threads
+	require.Len(created, 1)
+	threadID := created[0].Id
+
+	// Apply the thread — status must become "applied".
+	applyResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsByThreadIdApplyWithResponse(
+		ctx, "local", "demo", num, threadID,
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, applyResp.StatusCode())
+	require.NotNil(applyResp.JSON200)
+	require.NotNil(applyResp.JSON200.Threads)
+	var afterApply *generated.ReviewThreadResponse
+	for i := range *applyResp.JSON200.Threads {
+		th := &(*applyResp.JSON200.Threads)[i]
+		if th.Id == threadID {
+			afterApply = th
+			break
+		}
+	}
+	require.NotNil(afterApply)
+	assert.Equal("applied", afterApply.Status)
+
+	// Now fire /discuss on the same thread. The status must stay "applied",
+	// not downgrade to "discussed".
+	discussResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsByThreadIdDiscussWithResponse(
+		ctx, "local", "demo", num, threadID,
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, discussResp.StatusCode())
+	require.NotNil(discussResp.JSON200)
+	require.NotNil(discussResp.JSON200.Threads)
+	var afterDiscuss *generated.ReviewThreadResponse
+	for i := range *discussResp.JSON200.Threads {
+		th := &(*discussResp.JSON200.Threads)[i]
+		if th.Id == threadID {
+			afterDiscuss = th
+			break
+		}
+	}
+	require.NotNil(afterDiscuss)
+	assert.Equal("applied", afterDiscuss.Status)
+}
