@@ -103,7 +103,7 @@ func TestGetPullProxiesPullEndpoint(t *testing.T) {
 	require.Contains(t, out, "Worktree: feat")
 }
 
-func TestToolListIncludesGetPull(t *testing.T) {
+func TestToolListIncludesAllTools(t *testing.T) {
 	s := New(Config{ServerName: "middleman", BaseURL: "http://127.0.0.1:0", ReviewOwner: "local", ReviewName: "demo", ReviewNumber: 7})
 	names := map[string]bool{}
 	for _, td := range s.toolList() {
@@ -113,6 +113,7 @@ func TestToolListIncludesGetPull(t *testing.T) {
 	require.True(t, names["get_thread"])
 	require.True(t, names["reply_to_thread"])
 	require.True(t, names["get_pull"])
+	require.True(t, names["start_thread"])
 }
 
 func TestUnresolvedHandleReturnsClearToolError(t *testing.T) {
@@ -226,6 +227,37 @@ func TestStartThreadValidatesRequiredArgs(t *testing.T) {
 			assert.Contains(t, err.Error(), c.want)
 		})
 	}
+}
+
+func TestStartThreadFallsBackWhenResponseHasNoThreads(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"threads":[]}`))
+	}))
+	defer srv.Close()
+	s := New(Config{ServerName: "middleman", BaseURL: srv.URL, ReviewOwner: "local", ReviewName: "demo", ReviewNumber: 7})
+	out, err := s.tools["start_thread"].call(s, map[string]any{
+		"path": "a.go", "side": "RIGHT", "line": float64(1),
+		"body": "x", "commit_sha": "deadbeef",
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, `"threads":[]`) // raw envelope returned as fallback
+}
+
+func TestStartThreadFailsWhenHeadShaIsEmpty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" {
+			_, _ = w.Write([]byte(`{"head":{"sha":""}}`))
+			return
+		}
+		t.Errorf("unexpected POST when HEAD resolution should have failed")
+	}))
+	defer srv.Close()
+	s := New(Config{ServerName: "middleman", BaseURL: srv.URL, ReviewOwner: "local", ReviewName: "demo", ReviewNumber: 7})
+	_, err := s.tools["start_thread"].call(s, map[string]any{
+		"path": "a.go", "side": "RIGHT", "line": float64(1), "body": "x",
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "head.sha")
 }
 
 type recordedPost struct{ path, body string }

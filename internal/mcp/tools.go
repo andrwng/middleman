@@ -138,10 +138,8 @@ func builtinTools() map[string]toolDef {
 					"commit_sha": commitSHA,
 					"body":       body,
 				}
-				if sl, ok := args["start_line"]; ok {
-					if n, err := intArg(map[string]any{"start_line": sl}, "start_line"); err == nil {
-						draft["start_line"] = n
-					}
+				if n, err := intArg(args, "start_line"); err == nil {
+					draft["start_line"] = n
 				}
 				payload, _ := json.Marshal(map[string]any{
 					"mode":    "",
