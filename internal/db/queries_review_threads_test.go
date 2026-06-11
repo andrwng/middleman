@@ -284,6 +284,39 @@ func TestListReviewThreadsForBranchFiltersAndKeepsLegacy(t *testing.T) {
 	assert.Contains([]string{"a", ""}, got.Branch)
 }
 
+func TestListUnsentUserComments(t *testing.T) {
+	d := openTestDB(t)
+	ctx := context.Background()
+	mrID := insertTestMRLocal(t, d)
+	threads, err := d.CreateReviewThreadsOnBranch(ctx, mrID, "main", []NewReviewThread{
+		{Path: "a.go", Side: "RIGHT", Line: 1, CommitSHA: "deadbeef", Body: "root"},
+	})
+	require.NoError(t, err)
+	tID := threads[0].ID
+
+	// root user comment exists from create; add an agent reply + two more user replies
+	_, err = d.AddReviewThreadComment(ctx, tID, "agent", "ack", nil)
+	require.NoError(t, err)
+	c1, err := d.AddReviewThreadComment(ctx, tID, "user", "follow-up 1", nil)
+	require.NoError(t, err)
+	c2, err := d.AddReviewThreadComment(ctx, tID, "user", "follow-up 2", nil)
+	require.NoError(t, err)
+
+	// Mark only c1 as sent
+	require.NoError(t, d.MarkReviewThreadCommentSentToAgent(ctx, c1.ID))
+
+	got, err := d.ListUnsentUserComments(ctx, tID)
+	require.NoError(t, err)
+
+	assert := Assert.New(t)
+	assert.Len(got, 2)           // the root + c2 (c1 was sent, agent excluded by author)
+	assert.Equal("root", got[0].Body)
+	assert.Equal("follow-up 2", got[1].Body)
+	// Sanity: results are in id ASC.
+	assert.Less(got[0].ID, got[1].ID)
+	_ = c2
+}
+
 // TestBranchColumnsMigrationApplied proves migration 000023 added the
 // branch column to both review threads and worktree sessions, defaulting
 // to ''.
