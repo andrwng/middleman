@@ -37,24 +37,13 @@
   }
 
   async function scrollToThread(t: ReviewThread): Promise<void> {
-    const commits = diff.getCommits();
+    // Always navigate to HEAD scope so the thread's file is visible.
+    // (A mid-stack commit's diff only shows files modified in that commit,
+    // which can hide threads whose anchored file wasn't touched there.)
     const scope = diff.getScope();
-    if (commits && commits.length > 0) {
-      const isCurrentHead = commits[0]!.sha === t.commit_sha;
-      const alreadyHeadHere = isCurrentHead && scope.kind === "head";
-      // Only consider "already at the right commit scope" when the thread is NOT
-      // the head — if the thread IS the head we want to be in head scope, not
-      // commit scope, so we must still switch.
-      const alreadyCommitHere = !isCurrentHead && scope.kind === "commit" && scope.sha === t.commit_sha;
-      const known = commits.some((c) => c.sha === t.commit_sha);
-      if (!alreadyHeadHere && !alreadyCommitHere) {
-        if (isCurrentHead || !known) {
-          await diff.resetToHead();
-        } else {
-          await diff.selectCommit(t.commit_sha);
-        }
-        await tick();
-      }
+    if (scope.kind !== "head") {
+      await diff.resetToHead();
+      await tick();
     }
 
     const pr = diff.getCurrentPR();

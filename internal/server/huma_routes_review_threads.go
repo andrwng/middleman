@@ -231,6 +231,24 @@ func (s *Server) createReviewThreads(ctx context.Context, input *createReviewThr
 	}
 	branch := s.currentWorktreeBranch(ctx, w)
 
+	// Resolve any empty commit_sha to the worktree's live HEAD. An agent
+	// caller (e.g. start_thread MCP without an explicit SHA) sends "" so
+	// the server can fill in a current SHA from git rather than a possibly
+	// stale scanned one.
+	var headSHA string
+	for i := range input.Body.Threads {
+		if input.Body.Threads[i].CommitSHA == "" {
+			if headSHA == "" {
+				sha, err := worktrees.CurrentHeadSHA(ctx, w.Path)
+				if err != nil {
+					return nil, huma.Error500InternalServerError("resolve HEAD: " + err.Error())
+				}
+				headSHA = sha
+			}
+			input.Body.Threads[i].CommitSHA = headSHA
+		}
+	}
+
 	in := make([]db.NewReviewThread, 0, len(input.Body.Threads))
 	for _, t := range input.Body.Threads {
 		if t.Side != "LEFT" && t.Side != "RIGHT" {
@@ -243,7 +261,8 @@ func (s *Server) createReviewThreads(ctx context.Context, input *createReviewThr
 			return nil, huma.Error400BadRequest("line must be >= 1")
 		}
 		if t.CommitSHA == "" {
-			return nil, huma.Error400BadRequest("commit_sha is required")
+			// Defense-in-depth: should never fire after the resolution block above.
+			return nil, huma.Error500InternalServerError("commit_sha is required (server failed to resolve)")
 		}
 		if t.Body == "" {
 			return nil, huma.Error400BadRequest("each thread needs a comment body")

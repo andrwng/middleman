@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -723,4 +724,45 @@ func TestAskFlushesStackedPureCommentsTogether(t *testing.T) {
 	assert.Contains(joined, "pure-1")
 	assert.Contains(joined, "pure-2")
 	assert.Contains(joined, "and one more thing")
+}
+
+// TestAPICreateReviewThreadEmptyCommitSHAResolvesToLiveHead verifies that
+// POSTing a thread with commit_sha="" causes the server to fill in the
+// worktree's live HEAD SHA via git rev-parse (not the stale scanned value).
+//
+// Uses seedReviewWorktreeGit (a real git repo) so CurrentHeadSHA succeeds.
+// The worktree's DB HeadSHA is set to the stale value "deadbeef"; the test
+// asserts the response commit_sha is a full 40-char SHA (the real git HEAD),
+// not "deadbeef".
+func TestAPICreateReviewThreadEmptyCommitSHAResolvesToLiveHead(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on PATH")
+	}
+	require := require.New(t)
+	assert := Assert.New(t)
+	srv, database := setupTestServer(t)
+	client := setupTestClient(t, srv)
+	ctx := context.Background()
+
+	num, _ := seedReviewWorktreeGit(t, database)
+
+	drafts := []generated.ReviewThreadDraft{
+		{Path: "main.go", Side: "RIGHT", Line: 1, Body: "check this", CommitSha: ""},
+	}
+	resp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(
+		ctx, "local", "demo", num,
+		generated.CreateReviewThreadsInputBody{
+			Threads: &drafts,
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, resp.StatusCode())
+	require.NotNil(resp.JSON200)
+	threads := *resp.JSON200.Threads
+	require.Len(threads, 1)
+
+	sha := threads[0].CommitSha
+	assert.NotEmpty(sha, "commit_sha should be filled in by server")
+	assert.NotEqual("deadbeef", sha, "should not be stale DB value")
+	assert.Len(sha, 40, "should be a full 40-char git SHA")
 }

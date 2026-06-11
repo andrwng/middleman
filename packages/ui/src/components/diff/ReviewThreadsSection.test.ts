@@ -131,7 +131,20 @@ describe("ReviewThreadsSection — click-to-navigate", () => {
     expect(selectCommit).not.toHaveBeenCalled();
   });
 
-  it("clicks a thread anchored to a mid-stack commit → selectCommit(sha)", async () => {
+  it("clicks a thread anchored to a mid-stack commit → resetToHead (not selectCommit)", async () => {
+    const t = thread({ id: 1, commit_sha: "midsha" });
+    threadsRef.value = [t];
+    commitsRef.value = [commit({ sha: "headsha" }), commit({ sha: "midsha" })];
+    scopeRef.value = { kind: "commit", sha: "midsha" };
+
+    const { getByTitle } = render(ReviewThreadsSection);
+    await fireEvent.click(getByTitle(t.path));
+
+    expect(resetToHead).toHaveBeenCalledOnce();
+    expect(selectCommit).not.toHaveBeenCalled();
+  });
+
+  it("clicks any thread when already at HEAD scope → no extra resetToHead call (no-op)", async () => {
     const t = thread({ id: 1, commit_sha: "midsha" });
     threadsRef.value = [t];
     commitsRef.value = [commit({ sha: "headsha" }), commit({ sha: "midsha" })];
@@ -140,15 +153,16 @@ describe("ReviewThreadsSection — click-to-navigate", () => {
     const { getByTitle } = render(ReviewThreadsSection);
     await fireEvent.click(getByTitle(t.path));
 
-    expect(selectCommit).toHaveBeenCalledWith("midsha");
     expect(resetToHead).not.toHaveBeenCalled();
+    expect(selectCommit).not.toHaveBeenCalled();
   });
 
   it("clicks a thread whose commit_sha is not in the commit list → resetToHead AND row flagged orphan", async () => {
     const t = thread({ id: 1, commit_sha: "rebased-away-sha" });
     threadsRef.value = [t];
     commitsRef.value = [commit({ sha: "headsha" })];
-    scopeRef.value = { kind: "head" };
+    // Start in commit scope so navigation fires; the orphan dot should always appear.
+    scopeRef.value = { kind: "commit", sha: "headsha" };
 
     const { container, getByTitle } = render(ReviewThreadsSection);
     await fireEvent.click(getByTitle(t.path));

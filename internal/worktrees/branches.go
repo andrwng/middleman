@@ -66,3 +66,22 @@ func CurrentBranch(ctx context.Context, worktreePath string) (string, error) {
 	}
 	return branch, nil
 }
+
+// CurrentHeadSHA returns the worktree's live HEAD commit SHA via
+// `git rev-parse HEAD`. Used at thread-create time so a commit_sha
+// defaulted by an agent reflects the worktree's actual state (the
+// scanned MR row may be stale).
+func CurrentHeadSHA(ctx context.Context, worktreePath string) (string, error) {
+	if worktreePath == "" {
+		return "", fmt.Errorf("worktreePath is required")
+	}
+	out, err := gitCmd(ctx, worktreePath, "rev-parse", "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("rev-parse HEAD: %w", err)
+	}
+	sha := strings.TrimSpace(string(out))
+	if sha == "" {
+		return "", fmt.Errorf("rev-parse HEAD returned empty")
+	}
+	return sha, nil
+}

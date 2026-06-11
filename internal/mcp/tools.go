@@ -116,21 +116,8 @@ func builtinTools() map[string]toolDef {
 					return "", fmt.Errorf("body is required")
 				}
 				commitSHA, _ := args["commit_sha"].(string)
-				if commitSHA == "" {
-					pull, err := s.restJSON("GET", s.reviewPath(""), nil)
-					if err != nil {
-						return "", fmt.Errorf("resolve HEAD via get_pull: %w", err)
-					}
-					var parsed struct {
-						Head struct {
-							SHA string `json:"sha"`
-						} `json:"head"`
-					}
-					if err := json.Unmarshal([]byte(pull), &parsed); err != nil || parsed.Head.SHA == "" {
-						return "", fmt.Errorf("resolve HEAD: could not parse head.sha from get_pull")
-					}
-					commitSHA = parsed.Head.SHA
-				}
+				// commit_sha may be "" — the server resolves it to the
+				// worktree's live HEAD via git rev-parse, so we forward as-is.
 				draft := map[string]any{
 					"path":       path,
 					"side":       side,

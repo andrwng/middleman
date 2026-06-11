@@ -180,13 +180,15 @@ func TestStartThreadWithExplicitCommitSHA(t *testing.T) {
 }
 
 func TestStartThreadResolvesHeadWhenCommitOmitted(t *testing.T) {
+	// Server is now responsible for HEAD resolution. The MCP should forward
+	// commit_sha as "" (empty) when the caller omits it, and NOT call get_pull.
 	var sawPullGet bool
 	var postBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == "GET" && r.URL.Path == "/api/v1/repos/local/demo/pulls/7":
+		case r.Method == "GET":
 			sawPullGet = true
-			_, _ = w.Write([]byte(`{"head":{"sha":"abc12345"}}`))
+			_, _ = w.Write([]byte(`{}`))
 		case r.Method == "POST" && r.URL.Path == "/api/v1/repos/local/demo/pulls/7/review-threads":
 			b, _ := io.ReadAll(r.Body)
 			postBody = string(b)
@@ -201,10 +203,11 @@ func TestStartThreadResolvesHeadWhenCommitOmitted(t *testing.T) {
 	_, err := s.tools["start_thread"].call(s, map[string]any{
 		"path": "x.go", "side": "LEFT", "line": float64(1), "body": "nit",
 	})
-	require.NoError(t, err)
+	require := require.New(t)
+	require.NoError(err)
 	assert := assert.New(t)
-	assert.True(sawPullGet, "should have called get_pull to resolve HEAD")
-	assert.Contains(postBody, `"commit_sha":"abc12345"`)
+	assert.False(sawPullGet, "MCP must NOT call get_pull — server resolves HEAD now")
+	assert.Contains(postBody, `"commit_sha":""`)
 }
 
 func TestStartThreadValidatesRequiredArgs(t *testing.T) {
@@ -241,23 +244,6 @@ func TestStartThreadFallsBackWhenResponseHasNoThreads(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Contains(t, out, `"threads":[]`) // raw envelope returned as fallback
-}
-
-func TestStartThreadFailsWhenHeadShaIsEmpty(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == "GET" {
-			_, _ = w.Write([]byte(`{"head":{"sha":""}}`))
-			return
-		}
-		assert.Fail(t, "unexpected POST when HEAD resolution should have failed")
-	}))
-	defer srv.Close()
-	s := New(Config{ServerName: "middleman", BaseURL: srv.URL, ReviewOwner: "local", ReviewName: "demo", ReviewNumber: 7})
-	_, err := s.tools["start_thread"].call(s, map[string]any{
-		"path": "a.go", "side": "RIGHT", "line": float64(1), "body": "x",
-	})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "head.sha")
 }
 
 type recordedPost struct{ path, body string }
