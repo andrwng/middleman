@@ -5,6 +5,9 @@ const applyAll = vi.fn(async () => true);
 const deleteThread = vi.fn(async () => true);
 const selectCommit = vi.fn(async () => undefined);
 const resetToHead = vi.fn(async () => undefined);
+const getCurrentPR = vi.fn(() => null);
+const isFileCollapsed = vi.fn(() => false);
+const toggleFileCollapsed = vi.fn();
 let running = false;
 const threadsRef: { value: unknown[] } = { value: [] };
 const commitsRef: { value: unknown } = { value: [] };
@@ -19,6 +22,9 @@ vi.mock("../../context.js", () => ({
       getScope: () => scopeRef.value,
       selectCommit,
       resetToHead,
+      getCurrentPR,
+      isFileCollapsed,
+      toggleFileCollapsed,
     },
   }),
 }));
@@ -159,5 +165,15 @@ describe("ReviewThreadsSection — click-to-navigate", () => {
 
     const { container } = render(ReviewThreadsSection);
     expect(container.querySelector(".thread-item__dot--orphan")).toBeNull();
+  });
+
+  it("attaches an orphan aria-label to the button for orphan threads", async () => {
+    const t = thread({ id: 1, commit_sha: "rebased-away-sha" });
+    threadsRef.value = [t];
+    commitsRef.value = [commit({ sha: "headsha" })];
+    scopeRef.value = { kind: "head" };
+    const { getByTitle } = render(ReviewThreadsSection);
+    const btn = getByTitle(t.path) as HTMLButtonElement;
+    expect(btn.getAttribute("aria-label") ?? "").toMatch(/anchored to a commit no longer in this branch/);
   });
 });

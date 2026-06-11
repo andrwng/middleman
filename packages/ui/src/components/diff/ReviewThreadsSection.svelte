@@ -57,6 +57,15 @@
       }
     }
 
+    const pr = diff.getCurrentPR();
+    if (
+      pr &&
+      diff.isFileCollapsed(pr.owner, pr.name, pr.number, t.path)
+    ) {
+      diff.toggleFileCollapsed(pr.owner, pr.name, pr.number, t.path);
+      await tick();
+    }
+
     const path = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(t.path) : t.path;
     const selector =
       `.diff-file[data-file-path="${path}"] ` +
@@ -117,16 +126,18 @@
     {#if expanded}
       <div class="threads-section__body">
         {#each threads as t (t.id)}
+          {@const orphan = isOrphan(t)}
           <div class="thread-item-row" class:thread-item-row--active={activeId === t.id}>
             <button
               type="button"
               class="thread-item"
               title={t.path}
+              aria-label={orphan ? `${t.path} — anchored to a commit no longer in this branch` : undefined}
               onclick={() => void selectThread(t)}
             >
               <span
-                class="thread-item__dot thread-item__dot--{isOrphan(t) ? 'orphan' : t.status}"
-                title={isOrphan(t) ? "anchored to a commit no longer in this branch" : t.status}
+                class="thread-item__dot thread-item__dot--{orphan ? 'orphan' : t.status}"
+                title={orphan ? "anchored to a commit no longer in this branch" : t.status}
               ></span>
               <span class="thread-item__anchor">{anchorLabel(t)}</span>
               <span class="thread-item__path">{t.path}</span>
