@@ -600,6 +600,72 @@ func TestPureCommentsAreFlushedOnNextDiscuss(t *testing.T) {
 	}
 }
 
+// TestSteerAfterResolveUnresolveLosesWriteTools verifies that a thread
+// which was applied, then resolved, then unresolved (status back to "open")
+// does NOT receive edit tools on a subsequent /ask. Resolving then
+// unresolving must reset the writes-allowed gate — the thread is no longer
+// in "applied" state.
+func TestSteerAfterResolveUnresolveLosesWriteTools(t *testing.T) {
+	require := require.New(t)
+	srv, database := setupTestServer(t)
+	srv.sessionRunner = aireview.NewSessionRunner(database)
+
+	argsPath := filepath.Join(t.TempDir(), "args.log")
+	aireview.SetBinaryForTest(recordingFakeClaude(t, argsPath))
+	t.Cleanup(func() { aireview.SetBinaryForTest("claude") })
+
+	client := setupTestClient(t, srv)
+	ctx := context.Background()
+	num := seedReviewWorktree(t, database)
+
+	// Create + apply a thread so status becomes "applied".
+	mode := "act-immediately"
+	createResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(
+		ctx, "local", "demo", num,
+		generated.CreateReviewThreadsInputBody{
+			Mode: &mode,
+			Threads: &[]generated.ReviewThreadDraft{
+				{Path: "a.go", Side: "RIGHT", Line: 12, CommitSha: "deadbeef", Body: "fix this"},
+			},
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, createResp.StatusCode())
+	require.NotNil(createResp.JSON200)
+	require.NotNil(createResp.JSON200.Threads)
+	thID := (*createResp.JSON200.Threads)[0].Id
+
+	// Wait for the apply turn to complete, then clear the log.
+	waitForFile(t, argsPath, 3*time.Second)
+	require.NoError(os.Truncate(argsPath, 0))
+
+	// Resolve, then unresolve — status goes applied → resolved → open.
+	resolveResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsByThreadIdResolveWithResponse(
+		ctx, "local", "demo", num, thID,
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, resolveResp.StatusCode())
+
+	unresolveResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsByThreadIdUnresolveWithResponse(
+		ctx, "local", "demo", num, thID,
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, unresolveResp.StatusCode())
+
+	// /ask now — status is "open", so no edit tools.
+	askResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsByThreadIdAskWithResponse(
+		ctx, "local", "demo", num, thID,
+		generated.AskReviewThreadInputBody{Body: "is this ok"},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, askResp.StatusCode())
+
+	waitForFile(t, argsPath, 3*time.Second)
+	args, err := os.ReadFile(argsPath)
+	require.NoError(err)
+	require.NotContains(string(args), "Edit,Write,MultiEdit,Bash")
+}
+
 // TestAskFlushesStackedPureCommentsTogether verifies that when /ask is called,
 // it flushes all prior unsent pure comments plus the ask body together in the
 // steer prompt.

@@ -57,7 +57,7 @@ type SessionRunner struct {
 
 	// turnTimeout caps a single claude turn so a hung subprocess can't
 	// wedge the session forever (a hung turn stays "running" and the
-	// one-turn-at-a-time busy gate then 409s every later turn).
+	// per-session FIFO would back up indefinitely without a timeout).
 	turnTimeout time.Duration
 }
 
@@ -420,8 +420,8 @@ func (r *SessionRunner) runTurn(
 	if ctx.Err() != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			// Hung turn: CommandContext killed claude on the deadline.
-			// Mark it failed so the session frees (the busy gate no longer
-			// 409s). Use a fresh context — the turn ctx is already Done, so
+			// Mark it failed so the queue can advance. Use a fresh context —
+			// the turn ctx is already Done, so
 			// DB writes on it would fail.
 			bg := context.Background()
 			r.flushStreamState(bg, respTurn.ID, state)

@@ -332,11 +332,10 @@ func (s *Server) addReviewThreadComment(ctx context.Context, input *addReviewThr
 	return s.oneReviewThreadOutput(ctx, input.ThreadID)
 }
 
-// askReviewThread persists the reviewer's comment, then kicks off a
-// read-only steer turn so the agent continues the thread's discussion.
-// On success the comment is marked sent_to_agent. If the agent is busy
-// the comment persists as a plain note and the busy state is surfaced
-// (the reviewer's message is never lost).
+// askReviewThread persists the reviewer's comment, then enqueues a
+// read-only steer turn via the per-session FIFO. The comment is always
+// persisted and marked sent_to_agent once the turn is enqueued; the
+// reviewer's message is never lost regardless of session queue depth.
 func (s *Server) askReviewThread(ctx context.Context, input *askReviewThreadInput) (*reviewThreadOutput, error) {
 	if !isLocalSource(input.Owner) {
 		return nil, huma.Error400BadRequest("review threads are local-worktree only")
@@ -355,7 +354,7 @@ func (s *Server) askReviewThread(ctx context.Context, input *askReviewThreadInpu
 		return nil, huma.Error500InternalServerError("add comment: " + err.Error())
 	}
 	if err := s.kickoffReviewTurn(ctx, input.Owner, input.Name, input.Number, "steer", []db.ReviewThread{th}); err != nil {
-		// Comment is persisted as a plain note; surface the error (e.g. 409 busy).
+		// Comment is persisted; surface any infrastructure error.
 		return nil, err
 	}
 	return s.oneReviewThreadOutput(ctx, input.ThreadID)
@@ -468,7 +467,8 @@ func (s *Server) oneReviewThreadOutput(ctx context.Context, threadID int64) (*re
 // kickoffReviewTurn drives the review agent for a set of threads. It
 // mirrors submitWorktreeSessionTurn (ensure session, resolve base,
 // SubmitTurn) but adds the discuss/apply Action, per-thread context,
-// the middleman MCP wiring, a busy gate, and an optimistic status set.
+// the middleman MCP wiring, the per-session FIFO enqueue, and an
+// optimistic status set.
 //
 // Status is set optimistically at kickoff (discussed for discuss,
 // applied for apply): simple and acceptable for a local single-user
@@ -495,6 +495,10 @@ func (s *Server) kickoffReviewTurn(
 		commentIDs []int64
 	}
 	var toMark []flushEntry
+	// steerLastBody holds the reviewer's typed message for single-thread steer
+	// turns; it becomes the UserTurnContent so the conversation pane shows the
+	// actual typed text instead of the generic "Discuss N thread(s)." summary.
+	var steerLastBody string
 	for _, t := range threads {
 		writesAllowed := t.Status == "applied"
 		if !writesAllowed {
@@ -525,6 +529,9 @@ func (s *Server) kickoffReviewTurn(
 			}
 			stacked = append(stacked, c.Body)
 		}
+		if action == "steer" && len(threads) == 1 && len(unsent) > 0 {
+			steerLastBody = unsent[len(unsent)-1].Body
+		}
 		if len(ids) > 0 {
 			toMark = append(toMark, flushEntry{threadID: t.ID, commentIDs: ids})
 		}
@@ -544,13 +551,17 @@ func (s *Server) kickoffReviewTurn(
 		return huma.Error500InternalServerError("cannot resolve middleman executable for the MCP server")
 	}
 	// discuss = read-only review_feedback; apply = user_message (may edit);
-	// steer = read-only user_message continuation carrying the reviewer's message
-	// (the message arrives via StackedComments, not UserTurnContent).
+	// steer = read-only user_message continuation. For single-thread steer,
+	// UserTurnContent is the reviewer's typed body so the conversation pane
+	// shows the actual message; the agent also gets it via StackedComments.
 	verb := "review_feedback"
 	if action == "apply" || action == "steer" {
 		verb = "user_message"
 	}
 	content := actionMessage(action, tcs)
+	if action == "steer" && steerLastBody != "" {
+		content = steerLastBody
+	}
 	if _, err := s.sessionRunner.SubmitTurn(ctx, aireview.SubmitTurnInput{
 		SessionID: sess.ID, WorktreePath: w.Path, Branch: w.Branch,
 		BaseRef: base.Ref, BaseSHA: base.SHA, HeadSHA: w.HeadSHA,
