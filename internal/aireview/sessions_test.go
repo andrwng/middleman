@@ -21,9 +21,8 @@ func setupSessionTest(t *testing.T) (*db.DB, *SessionRunner, string, int64) {
 	writeFakeClaude(t, fakeClaude,
 		`{"type":"result","subtype":"success","is_error":false,"result":"made the changes","session_id":"sess-abc"}`)
 
-	orig := claudeBinary
-	claudeBinary = fakeClaude
-	t.Cleanup(func() { claudeBinary = orig })
+	orig := SetBinaryForTest(fakeClaude)
+	t.Cleanup(func() { SetBinaryForTest(orig) })
 
 	database := openTestDB(t)
 
@@ -95,9 +94,8 @@ func TestSessionRunnerSubprocessFails(t *testing.T) {
 	fakeClaude := filepath.Join(tmp, "claude.sh")
 	script := "#!/bin/sh\necho 'nope' >&2\nexit 2\n"
 	require.NoError(os.WriteFile(fakeClaude, []byte(script), 0o755))
-	orig := claudeBinary
-	claudeBinary = fakeClaude
-	t.Cleanup(func() { claudeBinary = orig })
+	orig := SetBinaryForTest(fakeClaude)
+	t.Cleanup(func() { SetBinaryForTest(orig) })
 
 	database := openTestDB(t)
 	ctx := context.Background()
@@ -177,9 +175,8 @@ func TestSessionRunnerCancelTurn(t *testing.T) {
 	// A subprocess that sleeps so cancellation has time to fire.
 	script := "#!/bin/sh\nsleep 60\n"
 	require.NoError(os.WriteFile(fakeClaude, []byte(script), 0o755))
-	orig := claudeBinary
-	claudeBinary = fakeClaude
-	t.Cleanup(func() { claudeBinary = orig })
+	orig := SetBinaryForTest(fakeClaude)
+	t.Cleanup(func() { SetBinaryForTest(orig) })
 
 	database := openTestDB(t)
 	ctx := context.Background()
@@ -386,9 +383,8 @@ func TestSessionRunnerSerializesConcurrentSubmits(t *testing.T) {
 	fakeClaude := filepath.Join(tmp, "claude.sh")
 	gate := writeGateClaude(t, fakeClaude)
 
-	orig := claudeBinary
-	claudeBinary = fakeClaude
-	t.Cleanup(func() { claudeBinary = orig })
+	orig := SetBinaryForTest(fakeClaude)
+	t.Cleanup(func() { SetBinaryForTest(orig) })
 
 	database := openTestDB(t)
 	ctx := context.Background()
@@ -438,9 +434,8 @@ func TestSessionRunnerCancelQueuedTurnSkipsDispatch(t *testing.T) {
 	fakeClaude := filepath.Join(tmp, "claude.sh")
 	gate := writeGateClaude(t, fakeClaude)
 
-	orig := claudeBinary
-	claudeBinary = fakeClaude
-	t.Cleanup(func() { claudeBinary = orig })
+	orig := SetBinaryForTest(fakeClaude)
+	t.Cleanup(func() { SetBinaryForTest(orig) })
 
 	database := openTestDB(t)
 	ctx := context.Background()

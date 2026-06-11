@@ -25,23 +25,41 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/wesm/middleman/internal/db"
 	"github.com/wesm/middleman/internal/gitclone"
 )
 
-// claudeBinary is the executable name used to spawn Claude Code. Kept
-// as a variable so tests can swap in a fake.
-var claudeBinary = "claude"
+// claudeBinary is the executable name used to spawn Claude Code, stored
+// atomically. In production it is written once at init and never again,
+// so the atomic is purely to keep access race-free between a turn that
+// runs in a background dispatcher goroutine (which reads it via claudeBin)
+// and a test that swaps in a fake via SetBinaryForTest. Without this, a
+// queued turn whose runTurn reads the binary after its test returns races
+// with the cleanup that resets the global.
+var claudeBinary atomic.Pointer[string]
+
+func init() {
+	def := "claude"
+	claudeBinary.Store(&def)
+}
+
+// claudeBin returns the current Claude executable name/path.
+func claudeBin() string {
+	return *claudeBinary.Load()
+}
 
 // SetBinaryForTest overrides the claude executable path. Returns the
-// previous value. Intended for test packages that need to stub out
-// the real CLI.
+// previous value. Intended for tests that need to stub out the real CLI;
+// pair it with a t.Cleanup that restores the returned value.
 func SetBinaryForTest(path string) string {
-	old := claudeBinary
-	claudeBinary = path
-	return old
+	old := claudeBinary.Swap(&path)
+	if old == nil {
+		return ""
+	}
+	return *old
 }
 
 // Runner owns the lifecycle of all active AI Q&A threads for this
@@ -365,7 +383,7 @@ func (r *Runner) runQuestion(ctx context.Context, thread db.AIThread, question d
 		args = append(args, "--resume", *thread.ClaudeSessionID)
 	}
 
-	cmd := exec.CommandContext(ctx, claudeBinary, args...)
+	cmd := exec.CommandContext(ctx, claudeBin(), args...)
 	cmd.Dir = *thread.WorktreePath
 	setPgid(cmd) // so we can kill the whole process group
 
@@ -782,7 +800,7 @@ func (r *Runner) runBrief(ctx context.Context, brief db.AIBrief, worktreePath st
 		"--disallowedTools", "Edit,Write,NotebookEdit,Bash,Agent",
 	}
 
-	cmd := exec.CommandContext(ctx, claudeBinary, args...)
+	cmd := exec.CommandContext(ctx, claudeBin(), args...)
 	cmd.Dir = worktreePath
 	setPgid(cmd)
 
@@ -1061,7 +1079,7 @@ func (r *Runner) runCommitAnalysis(
 		"--allowedTools", "Read,Glob,Grep",
 		"--disallowedTools", "Edit,Write,NotebookEdit,Bash,Agent",
 	}
-	cmd := exec.CommandContext(ctx, claudeBinary, args...)
+	cmd := exec.CommandContext(ctx, claudeBin(), args...)
 	cmd.Dir = worktreePath
 	setPgid(cmd)
 

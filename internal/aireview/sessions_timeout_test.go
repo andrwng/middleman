@@ -16,9 +16,8 @@ func TestHungTurnTimesOutAndFreesSession(t *testing.T) {
 	tmp := t.TempDir()
 	fake := filepath.Join(tmp, "claude.sh")
 	require.NoError(os.WriteFile(fake, []byte("#!/bin/sh\nsleep 30\n"), 0o755))
-	orig := claudeBinary
-	claudeBinary = fake
-	t.Cleanup(func() { claudeBinary = orig })
+	orig := SetBinaryForTest(fake)
+	t.Cleanup(func() { SetBinaryForTest(orig) })
 
 	database := openTestDB(t)
 	ctx := context.Background()

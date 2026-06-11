@@ -30,9 +30,8 @@ func setupRecordingSessionTest(t *testing.T) (*db.DB, *SessionRunner, string, db
 	fakeClaude := filepath.Join(tmp, "claude.sh")
 	fakeClaudeRecordingArgs(t, fakeClaude, argsFile)
 
-	orig := claudeBinary
-	claudeBinary = fakeClaude
-	t.Cleanup(func() { claudeBinary = orig })
+	orig := SetBinaryForTest(fakeClaude)
+	t.Cleanup(func() { SetBinaryForTest(orig) })
 
 	database := openTestDB(t)
 	ctx := context.Background()

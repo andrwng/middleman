@@ -361,7 +361,7 @@ func (r *SessionRunner) runTurn(
 		args = append(args, "--resume", sess.ClaudeSessionID)
 	}
 
-	cmd := exec.CommandContext(ctx, claudeBinary, args...)
+	cmd := exec.CommandContext(ctx, claudeBin(), args...)
 	cmd.Dir = in.WorktreePath
 	setPgid(cmd)
 	// CommandContext's default Cancel kills only the leader; with setPgid

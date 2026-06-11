@@ -283,9 +283,8 @@ func TestRunQuestion_HappyPath(t *testing.T) {
 	fakeClaude := filepath.Join(tmp, "claude.sh")
 	writeFakeClaude(t, fakeClaude, `{"type":"result","subtype":"success","is_error":false,"result":"the answer","session_id":"sess-xyz"}`)
 
-	orig := claudeBinary
-	claudeBinary = fakeClaude
-	t.Cleanup(func() { claudeBinary = orig })
+	orig := SetBinaryForTest(fakeClaude)
+	t.Cleanup(func() { SetBinaryForTest(orig) })
 
 	database := openTestDB(t)
 	mrID := seedMR(t, database)
@@ -332,9 +331,8 @@ func TestRunQuestion_SubprocessFails(t *testing.T) {
 	script := "#!/bin/sh\necho 'nope' >&2\nexit 2\n"
 	require.NoError(os.WriteFile(fakeClaude, []byte(script), 0o755))
 
-	orig := claudeBinary
-	claudeBinary = fakeClaude
-	t.Cleanup(func() { claudeBinary = orig })
+	orig := SetBinaryForTest(fakeClaude)
+	t.Cleanup(func() { SetBinaryForTest(orig) })
 
 	database := openTestDB(t)
 	mrID := seedMR(t, database)
@@ -373,9 +371,8 @@ func TestCancelQuestion(t *testing.T) {
 	script := "#!/bin/sh\nsleep 10\necho '{}'\n"
 	require.NoError(os.WriteFile(fakeClaude, []byte(script), 0o755))
 
-	orig := claudeBinary
-	claudeBinary = fakeClaude
-	t.Cleanup(func() { claudeBinary = orig })
+	orig := SetBinaryForTest(fakeClaude)
+	t.Cleanup(func() { SetBinaryForTest(orig) })
 
 	database := openTestDB(t)
 	mrID := seedMR(t, database)
