@@ -158,7 +158,7 @@ func TestStartThreadWithExplicitCommitSHA(t *testing.T) {
 			_, _ = w.Write([]byte(`{"threads":[{"id":42,"path":"a.go","line":3,"status":"open","comments":[]}]}`))
 			return
 		}
-		t.Errorf("unexpected method %s %s", r.Method, r.URL.Path)
+		assert.Failf(t, "unexpected request", "method=%s path=%s", r.Method, r.URL.Path)
 	}))
 	defer srv.Close()
 
@@ -192,7 +192,7 @@ func TestStartThreadResolvesHeadWhenCommitOmitted(t *testing.T) {
 			postBody = string(b)
 			_, _ = w.Write([]byte(`{"threads":[{"id":1,"path":"x.go","line":1,"status":"open","comments":[]}]}`))
 		default:
-			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			assert.Failf(t, "unexpected request", "method=%s path=%s", r.Method, r.URL.Path)
 		}
 	}))
 	defer srv.Close()
@@ -249,7 +249,7 @@ func TestStartThreadFailsWhenHeadShaIsEmpty(t *testing.T) {
 			_, _ = w.Write([]byte(`{"head":{"sha":""}}`))
 			return
 		}
-		t.Errorf("unexpected POST when HEAD resolution should have failed")
+		assert.Fail(t, "unexpected POST when HEAD resolution should have failed")
 	}))
 	defer srv.Close()
 	s := New(Config{ServerName: "middleman", BaseURL: srv.URL, ReviewOwner: "local", ReviewName: "demo", ReviewNumber: 7})
