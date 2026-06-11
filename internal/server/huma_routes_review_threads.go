@@ -273,11 +273,11 @@ func (s *Server) createReviewThreads(ctx context.Context, input *createReviewThr
 	}
 	switch input.Body.Mode {
 	case "discuss-first":
-		if err := s.kickoffReviewTurn(ctx, input.Owner, input.Name, input.Number, "discuss", created, ""); err != nil {
+		if err := s.kickoffReviewTurn(ctx, input.Owner, input.Name, input.Number, "discuss", created); err != nil {
 			return nil, err
 		}
 	case "act-immediately":
-		if err := s.kickoffReviewTurn(ctx, input.Owner, input.Name, input.Number, "apply", created, ""); err != nil {
+		if err := s.kickoffReviewTurn(ctx, input.Owner, input.Name, input.Number, "apply", created); err != nil {
 			return nil, err
 		}
 	}
@@ -351,16 +351,12 @@ func (s *Server) askReviewThread(ctx context.Context, input *askReviewThreadInpu
 	if err != nil {
 		return nil, huma.Error500InternalServerError("get thread: " + err.Error())
 	}
-	comment, err := s.db.AddReviewThreadComment(ctx, input.ThreadID, "user", input.Body.Body, nil)
-	if err != nil {
+	if _, err := s.db.AddReviewThreadComment(ctx, input.ThreadID, "user", input.Body.Body, nil); err != nil {
 		return nil, huma.Error500InternalServerError("add comment: " + err.Error())
 	}
-	if err := s.kickoffReviewTurn(ctx, input.Owner, input.Name, input.Number, "steer", []db.ReviewThread{th}, input.Body.Body); err != nil {
+	if err := s.kickoffReviewTurn(ctx, input.Owner, input.Name, input.Number, "steer", []db.ReviewThread{th}); err != nil {
 		// Comment is persisted as a plain note; surface the error (e.g. 409 busy).
 		return nil, err
-	}
-	if err := s.db.MarkReviewThreadCommentSentToAgent(ctx, comment.ID); err != nil {
-		return nil, huma.Error500InternalServerError("mark comment: " + err.Error())
 	}
 	return s.oneReviewThreadOutput(ctx, input.ThreadID)
 }
@@ -479,7 +475,7 @@ func (s *Server) oneReviewThreadOutput(ctx context.Context, threadID int64) (*re
 // tool — a failed turn surfaces in the session activity log.
 func (s *Server) kickoffReviewTurn(
 	ctx context.Context, owner, name string, number int,
-	action string, threads []db.ReviewThread, message string,
+	action string, threads []db.ReviewThread,
 ) error {
 	if s.sessionRunner == nil {
 		return huma.Error503ServiceUnavailable("sessions not available")
@@ -494,15 +490,45 @@ func (s *Server) kickoffReviewTurn(
 	}
 	tcs := make([]aireview.ThreadContext, 0, len(threads))
 	allApplied := len(threads) > 0
+	type flushEntry struct {
+		threadID   int64
+		commentIDs []int64
+	}
+	var toMark []flushEntry
 	for _, t := range threads {
 		writesAllowed := t.Status == "applied"
 		if !writesAllowed {
 			allApplied = false
 		}
+
+		comments, _ := s.db.ListReviewThreadComments(ctx, t.ID)
+		var rootID int64
+		if len(comments) > 0 {
+			rootID = comments[0].ID
+		}
+
+		unsent, err := s.db.ListUnsentUserComments(ctx, t.ID)
+		if err != nil {
+			return huma.Error500InternalServerError("list unsent comments: " + err.Error())
+		}
+		stacked := make([]string, 0, len(unsent))
+		ids := make([]int64, 0, len(unsent))
+		for _, c := range unsent {
+			ids = append(ids, c.ID)
+			if c.ID == rootID {
+				continue // root is the thread headline; don't duplicate it in the stacked block
+			}
+			stacked = append(stacked, c.Body)
+		}
+		if len(ids) > 0 {
+			toMark = append(toMark, flushEntry{threadID: t.ID, commentIDs: ids})
+		}
+
 		tcs = append(tcs, aireview.ThreadContext{
 			ID: t.ID, Path: t.Path, Line: t.Line, Side: t.Side,
-			RootComment:   s.firstThreadCommentBody(ctx, t.ID),
-			WritesAllowed: writesAllowed,
+			RootComment:     s.firstThreadCommentBody(ctx, t.ID),
+			WritesAllowed:   writesAllowed,
+			StackedComments: stacked,
 		})
 	}
 	allowWrites := action == "steer" && allApplied
@@ -513,15 +539,13 @@ func (s *Server) kickoffReviewTurn(
 		return huma.Error500InternalServerError("cannot resolve middleman executable for the MCP server")
 	}
 	// discuss = read-only review_feedback; apply = user_message (may edit);
-	// steer = read-only user_message continuation carrying the reviewer's message.
+	// steer = read-only user_message continuation carrying the reviewer's message
+	// (the message arrives via StackedComments, not UserTurnContent).
 	verb := "review_feedback"
 	if action == "apply" || action == "steer" {
 		verb = "user_message"
 	}
 	content := actionMessage(action, tcs)
-	if action == "steer" {
-		content = message
-	}
 	if _, err := s.sessionRunner.SubmitTurn(ctx, aireview.SubmitTurnInput{
 		SessionID: sess.ID, WorktreePath: w.Path, Branch: w.Branch,
 		BaseRef: base.Ref, BaseSHA: base.SHA, HeadSHA: w.HeadSHA,
@@ -530,6 +554,13 @@ func (s *Server) kickoffReviewTurn(
 		MCP: &aireview.MCPConfig{Binary: exe, BaseURL: s.selfBaseURL(), Owner: owner, Name: name, Number: number},
 	}); err != nil {
 		return huma.Error500InternalServerError("submit turn: " + err.Error())
+	}
+	// Item 5: mark every flushed comment sent now that the turn is enqueued.
+	// Mark is at engage time, not dispatch time — "I sent it" semantics.
+	for _, fe := range toMark {
+		for _, cid := range fe.commentIDs {
+			_ = s.db.MarkReviewThreadCommentSentToAgent(ctx, cid)
+		}
 	}
 	// steer continues an existing discussion — leave thread status unchanged.
 	if action != "steer" {
@@ -586,7 +617,7 @@ func (s *Server) applyReviewThread(ctx context.Context, input *reviewThreadActio
 	if err != nil {
 		return nil, huma.Error500InternalServerError("get thread: " + err.Error())
 	}
-	if err := s.kickoffReviewTurn(ctx, input.Owner, input.Name, input.Number, "apply", []db.ReviewThread{th}, ""); err != nil {
+	if err := s.kickoffReviewTurn(ctx, input.Owner, input.Name, input.Number, "apply", []db.ReviewThread{th}); err != nil {
 		return nil, err
 	}
 	threads, err := s.loadReviewThreadsResponse(ctx, mrID, s.currentWorktreeBranch(ctx, w))
@@ -618,7 +649,7 @@ func (s *Server) discussReviewThread(ctx context.Context, input *reviewThreadAct
 	if err != nil {
 		return nil, huma.Error500InternalServerError("get thread: " + err.Error())
 	}
-	if err := s.kickoffReviewTurn(ctx, input.Owner, input.Name, input.Number, "discuss", []db.ReviewThread{th}, ""); err != nil {
+	if err := s.kickoffReviewTurn(ctx, input.Owner, input.Name, input.Number, "discuss", []db.ReviewThread{th}); err != nil {
 		return nil, err
 	}
 	threads, err := s.loadReviewThreadsResponse(ctx, mrID, s.currentWorktreeBranch(ctx, w))
@@ -660,7 +691,7 @@ func (s *Server) applyAllReviewThreads(ctx context.Context, input *listReviewThr
 		}
 	}
 	if len(eligible) > 0 {
-		if err := s.kickoffReviewTurn(ctx, input.Owner, input.Name, input.Number, "apply", eligible, ""); err != nil {
+		if err := s.kickoffReviewTurn(ctx, input.Owner, input.Name, input.Number, "apply", eligible); err != nil {
 			return nil, err
 		}
 	}

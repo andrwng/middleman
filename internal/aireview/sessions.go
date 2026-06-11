@@ -114,6 +114,11 @@ type ThreadContext struct {
 	// server sets it at kickoff time; sessions use it to gate edit tools
 	// on steer turns.
 	WritesAllowed bool
+	// StackedComments holds unsent user comments to flush into the engage
+	// prompt. The root comment is excluded (it's already in RootComment);
+	// these are follow-up "Send-only" notes the reviewer added between
+	// engage turns.
+	StackedComments []string
 }
 
 // MCPConfig tells the runner how to wire the middleman MCP server for a
@@ -702,6 +707,12 @@ func formatThreads(ts []ThreadContext) string {
 			side = "before"
 		}
 		fmt.Fprintf(&b, "- thread %d - %s:%d (%s): %s\n", t.ID, t.Path, t.Line, side, t.RootComment)
+		if len(t.StackedComments) > 0 {
+			b.WriteString("  Reviewer's notes since the last engage:\n")
+			for i, body := range t.StackedComments {
+				fmt.Fprintf(&b, "  %d) %s\n", i+1, body)
+			}
+		}
 	}
 	return b.String()
 }
@@ -750,8 +761,6 @@ func buildSessionPrompt(in SubmitTurnInput) string {
 				"with your reply. Do not change any files — this is discussion only.\n\n")
 		}
 		b.WriteString(formatThreads(in.Threads))
-		b.WriteString("\nThe reviewer's message:\n")
-		b.WriteString(in.UserTurnContent)
 		return b.String()
 	}
 

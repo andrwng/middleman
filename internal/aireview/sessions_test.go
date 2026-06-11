@@ -297,6 +297,34 @@ func TestBuildSessionPromptSteerWithoutAllowWritesStaysReadOnly(t *testing.T) {
 	assert.NotContains(prompt, "You may edit files")
 }
 
+func TestBuildSessionPromptIncludesStackedComments(t *testing.T) {
+	in := SubmitTurnInput{
+		WorktreePath: "/tmp/wt", Branch: "main",
+		Action: "apply",
+		Threads: []ThreadContext{{
+			ID: 1, Path: "a.go", Line: 12, Side: "RIGHT",
+			RootComment:     "consider extracting",
+			StackedComments: []string{"sounds good", "but also rename Foo"},
+		}},
+	}
+	prompt := buildSessionPrompt(in)
+	assert := assert.New(t)
+	assert.Contains(prompt, "consider extracting")
+	assert.Contains(prompt, "Reviewer's notes since the last engage")
+	assert.Contains(prompt, "sounds good")
+	assert.Contains(prompt, "but also rename Foo")
+}
+
+func TestBuildSessionPromptSkipsStackedBlockWhenEmpty(t *testing.T) {
+	in := SubmitTurnInput{
+		WorktreePath: "/tmp/wt", Branch: "main",
+		Action: "discuss",
+		Threads: []ThreadContext{{ID: 1, Path: "a.go", Line: 12, Side: "RIGHT", RootComment: "look at this"}},
+	}
+	prompt := buildSessionPrompt(in)
+	assert.NotContains(t, prompt, "Reviewer's notes since the last engage")
+}
+
 // Suppress unused import vet failures when the test file is the only
 // consumer of the symbol below.
 var _ = fmt.Sprintf

@@ -523,3 +523,138 @@ func TestSteerOnUnappliedThreadStaysReadOnly(t *testing.T) {
 	require.NoError(err)
 	require.NotContains(string(b), "Edit,Write,MultiEdit,Bash")
 }
+
+// TestPureCommentsAreFlushedOnNextDiscuss verifies that Send-only (pure)
+// user comments stacked between engage turns are included in the prompt of
+// the next /discuss and then marked sent_to_agent.
+func TestPureCommentsAreFlushedOnNextDiscuss(t *testing.T) {
+	require := require.New(t)
+	srv, database := setupTestServer(t)
+	srv.sessionRunner = aireview.NewSessionRunner(database)
+
+	argsPath := filepath.Join(t.TempDir(), "args.log")
+	aireview.SetBinaryForTest(recordingFakeClaude(t, argsPath))
+	t.Cleanup(func() { aireview.SetBinaryForTest("claude") })
+
+	client := setupTestClient(t, srv)
+	ctx := context.Background()
+	num := seedReviewWorktree(t, database)
+
+	// Create a thread (persist-only — no engage at creation).
+	mode := "persist-only"
+	threads := []generated.ReviewThreadDraft{
+		{Path: "a.go", Side: "RIGHT", Line: 12, CommitSha: "deadbeef", Body: "root concern"},
+	}
+	createResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(
+		ctx, "local", "demo", num,
+		generated.CreateReviewThreadsInputBody{
+			Mode:    &mode,
+			Threads: &threads,
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, createResp.StatusCode())
+	require.NotNil(createResp.JSON200)
+	require.NotNil(createResp.JSON200.Threads)
+	thID := (*createResp.JSON200.Threads)[0].Id
+
+	// Stack two pure "Send-only" comments.
+	for _, body := range []string{"follow-up 1", "follow-up 2"} {
+		_, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsByThreadIdCommentsWithResponse(
+			ctx, "local", "demo", num, thID,
+			generated.AddReviewThreadCommentInputBody{Body: body},
+		)
+		require.NoError(err)
+	}
+
+	// Kick a discuss; the prompt should carry the stacked block.
+	discussResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsByThreadIdDiscussWithResponse(
+		ctx, "local", "demo", num, thID,
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, discussResp.StatusCode())
+
+	waitForFile(t, argsPath, 3*time.Second)
+	args, err := os.ReadFile(argsPath)
+	require.NoError(err)
+	joined := string(args)
+	assert := Assert.New(t)
+	assert.Contains(joined, "Reviewer's notes since the last engage")
+	assert.Contains(joined, "follow-up 1")
+	assert.Contains(joined, "follow-up 2")
+
+	// All three comments (root + two follow-ups) are now sent_to_agent=true.
+	getResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(
+		ctx, "local", "demo", num,
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, getResp.StatusCode())
+	require.NotNil(getResp.JSON200)
+	require.NotNil(getResp.JSON200.Threads)
+	thread := (*getResp.JSON200.Threads)[0]
+	require.NotNil(thread.Comments)
+	for _, c := range *thread.Comments {
+		if c.Author == "user" {
+			assert.True(c.SentToAgent, "user comment %d (%q) should be marked sent", c.Id, c.Body)
+		}
+	}
+}
+
+// TestAskFlushesStackedPureCommentsTogether verifies that when /ask is called,
+// it flushes all prior unsent pure comments plus the ask body together in the
+// steer prompt.
+func TestAskFlushesStackedPureCommentsTogether(t *testing.T) {
+	require := require.New(t)
+	srv, database := setupTestServer(t)
+	srv.sessionRunner = aireview.NewSessionRunner(database)
+
+	argsPath := filepath.Join(t.TempDir(), "args.log")
+	aireview.SetBinaryForTest(recordingFakeClaude(t, argsPath))
+	t.Cleanup(func() { aireview.SetBinaryForTest("claude") })
+
+	client := setupTestClient(t, srv)
+	ctx := context.Background()
+	num := seedReviewWorktree(t, database)
+
+	mode := "persist-only"
+	threads := []generated.ReviewThreadDraft{
+		{Path: "a.go", Side: "RIGHT", Line: 12, CommitSha: "deadbeef", Body: "root concern"},
+	}
+	createResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(
+		ctx, "local", "demo", num,
+		generated.CreateReviewThreadsInputBody{
+			Mode:    &mode,
+			Threads: &threads,
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, createResp.StatusCode())
+	require.NotNil(createResp.JSON200)
+	require.NotNil(createResp.JSON200.Threads)
+	thID := (*createResp.JSON200.Threads)[0].Id
+
+	// Two pure comments + one Ask.
+	for _, body := range []string{"pure-1", "pure-2"} {
+		_, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsByThreadIdCommentsWithResponse(
+			ctx, "local", "demo", num, thID,
+			generated.AddReviewThreadCommentInputBody{Body: body},
+		)
+		require.NoError(err)
+	}
+
+	askResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsByThreadIdAskWithResponse(
+		ctx, "local", "demo", num, thID,
+		generated.AskReviewThreadInputBody{Body: "and one more thing"},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, askResp.StatusCode())
+
+	waitForFile(t, argsPath, 3*time.Second)
+	args, err := os.ReadFile(argsPath)
+	require.NoError(err)
+	joined := string(args)
+	assert := Assert.New(t)
+	assert.Contains(joined, "pure-1")
+	assert.Contains(joined, "pure-2")
+	assert.Contains(joined, "and one more thing")
+}
