@@ -67,21 +67,31 @@ func CurrentBranch(ctx context.Context, worktreePath string) (string, error) {
 	return branch, nil
 }
 
-// CurrentHeadSHA returns the worktree's live HEAD commit SHA via
-// `git rev-parse HEAD`. Used at thread-create time so a commit_sha
-// defaulted by an agent reflects the worktree's actual state (the
-// scanned MR row may be stale).
-func CurrentHeadSHA(ctx context.Context, worktreePath string) (string, error) {
+// ResolveCommitSHA canonicalizes a commit-ish ref to a full 40-char
+// commit SHA via `git rev-parse --verify <ref>^{commit}`. An empty ref
+// resolves to HEAD. Used at thread-create time so stored commit_sha
+// values are always canonical regardless of what the caller supplied:
+// the UI passes full SHAs, but an agent calling start_thread may pass a
+// short SHA (the worktree prompt shows an abbreviated HEAD) or omit it
+// entirely. Storing a non-canonical SHA would make the thread compare
+// unequal to the full SHAs in the commit list and render as a spurious
+// "orphan". The ^{commit} peel rejects refs that don't name a commit;
+// callers decide whether an unresolvable ref is fatal (HEAD) or should
+// fall back to the supplied value (a possibly-bogus caller SHA).
+func ResolveCommitSHA(ctx context.Context, worktreePath, ref string) (string, error) {
 	if worktreePath == "" {
 		return "", fmt.Errorf("worktreePath is required")
 	}
-	out, err := gitCmd(ctx, worktreePath, "rev-parse", "HEAD")
+	if ref == "" {
+		ref = "HEAD"
+	}
+	out, err := gitCmd(ctx, worktreePath, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
 	if err != nil {
-		return "", fmt.Errorf("rev-parse HEAD: %w", err)
+		return "", fmt.Errorf("rev-parse %s: %w", ref, err)
 	}
 	sha := strings.TrimSpace(string(out))
 	if sha == "" {
-		return "", fmt.Errorf("rev-parse HEAD returned empty")
+		return "", fmt.Errorf("rev-parse %s returned empty", ref)
 	}
 	return sha, nil
 }

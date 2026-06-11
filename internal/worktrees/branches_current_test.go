@@ -46,7 +46,7 @@ func TestCurrentBranchErrorsOnNonRepo(t *testing.T) {
 	require.Error(err)
 }
 
-func TestCurrentHeadSHA(t *testing.T) {
+func TestResolveCommitSHA(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available on PATH")
 	}
@@ -60,24 +60,50 @@ func TestCurrentHeadSHA(t *testing.T) {
 	runGitT(t, dir, "config", "user.name", "Test")
 	runGitT(t, dir, "commit", "--allow-empty", "-m", "c1")
 
-	sha, err := CurrentHeadSHA(ctx, dir)
-	require.NoError(err)
-	assert.Len(sha, 40, "SHA should be a full 40-char hex string")
-
-	// The SHA should match what git reports directly.
 	want := gitHeadT(t, dir)
-	assert.Equal(want, sha)
-}
+	require.Len(want, 40)
 
-func TestCurrentHeadSHAErrorsOnNonRepo(t *testing.T) {
-	require := require.New(t)
-	_, err := CurrentHeadSHA(context.Background(), t.TempDir())
+	// Empty ref resolves to HEAD.
+	got, err := ResolveCommitSHA(ctx, dir, "")
+	require.NoError(err)
+	assert.Equal(want, got, "empty ref → HEAD")
+
+	// "HEAD" resolves to the same full SHA.
+	got, err = ResolveCommitSHA(ctx, dir, "HEAD")
+	require.NoError(err)
+	assert.Equal(want, got)
+
+	// A full SHA passes through unchanged.
+	got, err = ResolveCommitSHA(ctx, dir, want)
+	require.NoError(err)
+	assert.Equal(want, got)
+
+	// A short SHA canonicalizes to the full SHA — the case that was
+	// rendering agent-created threads as spurious orphans.
+	short := want[:7]
+	got, err = ResolveCommitSHA(ctx, dir, short)
+	require.NoError(err)
+	assert.Equal(want, got, "short SHA → full SHA")
+
+	// The branch name resolves to its tip commit.
+	got, err = ResolveCommitSHA(ctx, dir, "main")
+	require.NoError(err)
+	assert.Equal(want, got)
+
+	// An unknown ref errors (callers decide fatal vs. verbatim fallback).
+	_, err = ResolveCommitSHA(ctx, dir, "0000000000000000000000000000000000000000")
 	require.Error(err)
 }
 
-func TestCurrentHeadSHAErrorsOnEmptyPath(t *testing.T) {
+func TestResolveCommitSHAErrorsOnNonRepo(t *testing.T) {
 	require := require.New(t)
-	_, err := CurrentHeadSHA(context.Background(), "")
+	_, err := ResolveCommitSHA(context.Background(), t.TempDir(), "HEAD")
+	require.Error(err)
+}
+
+func TestResolveCommitSHAErrorsOnEmptyPath(t *testing.T) {
+	require := require.New(t)
+	_, err := ResolveCommitSHA(context.Background(), "", "HEAD")
 	require.Error(err)
 	require.Contains(err.Error(), "worktreePath is required")
 }

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -730,7 +731,7 @@ func TestAskFlushesStackedPureCommentsTogether(t *testing.T) {
 // POSTing a thread with commit_sha="" causes the server to fill in the
 // worktree's live HEAD SHA via git rev-parse (not the stale scanned value).
 //
-// Uses seedReviewWorktreeGit (a real git repo) so CurrentHeadSHA succeeds.
+// Uses seedReviewWorktreeGit (a real git repo) so ResolveCommitSHA succeeds.
 // The worktree's DB HeadSHA is set to the stale value "deadbeef"; the test
 // asserts the response commit_sha is a full 40-char SHA (the real git HEAD),
 // not "deadbeef".
@@ -765,4 +766,46 @@ func TestAPICreateReviewThreadEmptyCommitSHAResolvesToLiveHead(t *testing.T) {
 	assert.NotEmpty(sha, "commit_sha should be filled in by server")
 	assert.NotEqual("deadbeef", sha, "should not be stale DB value")
 	assert.Len(sha, 40, "should be a full 40-char git SHA")
+}
+
+// TestAPICreateReviewThreadShortCommitSHACanonicalizes verifies that a
+// caller-supplied short SHA (as an agent calling start_thread would send,
+// having seen an abbreviated HEAD in its worktree prompt) is canonicalized
+// to the full 40-char SHA server-side. Without this, the thread would
+// compare unequal to the full SHAs in the commit list and render as a
+// spurious "orphan" in the picker.
+func TestAPICreateReviewThreadShortCommitSHACanonicalizes(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on PATH")
+	}
+	require := require.New(t)
+	assert := Assert.New(t)
+	srv, database := setupTestServer(t)
+	client := setupTestClient(t, srv)
+	ctx := context.Background()
+
+	num, dir := seedReviewWorktreeGit(t, database)
+
+	headOut, err := exec.Command("git", "-C", dir, "rev-parse", "HEAD").Output()
+	require.NoError(err)
+	fullSHA := strings.TrimSpace(string(headOut))
+	require.Len(fullSHA, 40)
+	shortSHA := fullSHA[:7]
+
+	drafts := []generated.ReviewThreadDraft{
+		{Path: "main.go", Side: "RIGHT", Line: 1, Body: "check this", CommitSha: shortSHA},
+	}
+	resp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(
+		ctx, "local", "demo", num,
+		generated.CreateReviewThreadsInputBody{
+			Threads: &drafts,
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, resp.StatusCode())
+	require.NotNil(resp.JSON200)
+	threads := *resp.JSON200.Threads
+	require.Len(threads, 1)
+
+	assert.Equal(fullSHA, threads[0].CommitSha, "short SHA should be canonicalized to the full SHA")
 }

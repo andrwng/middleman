@@ -231,21 +231,31 @@ func (s *Server) createReviewThreads(ctx context.Context, input *createReviewThr
 	}
 	branch := s.currentWorktreeBranch(ctx, w)
 
-	// Resolve any empty commit_sha to the worktree's live HEAD. An agent
-	// caller (e.g. start_thread MCP without an explicit SHA) sends "" so
-	// the server can fill in a current SHA from git rather than a possibly
-	// stale scanned one.
+	// Canonicalize every commit_sha to a full SHA. An empty value (an
+	// agent calling start_thread without one) resolves to live HEAD; a
+	// non-empty value (a short SHA from the agent's worktree prompt, or a
+	// full SHA from the UI) is peeled to its canonical form so stored
+	// threads compare equal to the full SHAs in the commit list and never
+	// render as spurious orphans. An empty value that won't resolve means
+	// the worktree's HEAD is broken (fatal); a non-empty value that won't
+	// resolve is kept verbatim — a genuinely bogus SHA legitimately reads
+	// as orphan rather than failing the whole create.
 	var headSHA string
 	for i := range input.Body.Threads {
-		if input.Body.Threads[i].CommitSHA == "" {
+		raw := input.Body.Threads[i].CommitSHA
+		if raw == "" {
 			if headSHA == "" {
-				sha, err := worktrees.CurrentHeadSHA(ctx, w.Path)
+				sha, err := worktrees.ResolveCommitSHA(ctx, w.Path, "HEAD")
 				if err != nil {
 					return nil, huma.Error500InternalServerError("resolve HEAD: " + err.Error())
 				}
 				headSHA = sha
 			}
 			input.Body.Threads[i].CommitSHA = headSHA
+			continue
+		}
+		if sha, err := worktrees.ResolveCommitSHA(ctx, w.Path, raw); err == nil {
+			input.Body.Threads[i].CommitSHA = sha
 		}
 	}
 
