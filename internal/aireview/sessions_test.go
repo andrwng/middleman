@@ -404,3 +404,55 @@ func TestSessionRunnerSerializesConcurrentSubmits(t *testing.T) {
 	bStart := readUnixNano(t, filepath.Join(gate, "B-start"))
 	assert.Greater(t, bStart, aEnd, "B started before A ended — turns overlapped")
 }
+
+func TestSessionRunnerCancelQueuedTurnSkipsDispatch(t *testing.T) {
+	tmp := t.TempDir()
+	fakeClaude := filepath.Join(tmp, "claude.sh")
+	gate := writeGateClaude(t, fakeClaude)
+
+	orig := claudeBinary
+	claudeBinary = fakeClaude
+	t.Cleanup(func() { claudeBinary = orig })
+
+	database := openTestDB(t)
+	ctx := context.Background()
+	repoID, err := database.UpsertLocalRepo(ctx, "demo")
+	require.NoError(t, err)
+	w, err := database.UpsertWorktree(ctx, repoID, db.ScannedWorktree{
+		Path: tmp, Branch: "main", HeadSHA: "deadbeef",
+	})
+	require.NoError(t, err)
+	sess, err := database.CreateWorktreeSession(ctx, w.ID, "")
+	require.NoError(t, err)
+	runner := NewSessionRunner(database)
+
+	_, err = runner.SubmitTurn(ctx, SubmitTurnInput{
+		SessionID: sess.ID, WorktreePath: tmp, Branch: "main",
+		UserTurnType: "user_message", UserTurnContent: "TURN-A",
+	})
+	require.NoError(t, err)
+	resB, err := runner.SubmitTurn(ctx, SubmitTurnInput{
+		SessionID: sess.ID, WorktreePath: tmp, Branch: "main",
+		UserTurnType: "user_message", UserTurnContent: "TURN-B",
+	})
+	require.NoError(t, err)
+
+	// Wait for A to start, then cancel B while A is still gated.
+	waitForFile(t, filepath.Join(gate, "A-start"), 2*time.Second)
+	require.NoError(t, runner.CancelTurn(ctx, resB.ResponseTurn.ID))
+
+	// Release A and wait for it to finish.
+	require.NoError(t, os.WriteFile(filepath.Join(gate, "A-release"), nil, 0o644))
+	waitForFile(t, filepath.Join(gate, "A-end"), 2*time.Second)
+
+	// Give the dispatcher time to (wrongly) start B if cancel-queue is broken.
+	time.Sleep(100 * time.Millisecond)
+	_, errBStart := os.Stat(filepath.Join(gate, "B-start"))
+	assert := assert.New(t)
+	assert.True(os.IsNotExist(errBStart), "B should not have started after being cancelled while queued")
+
+	// B's row is "cancelled".
+	row, err := database.GetWorktreeSessionTurn(ctx, resB.ResponseTurn.ID)
+	require.NoError(t, err)
+	assert.Equal("cancelled", row.Status)
+}

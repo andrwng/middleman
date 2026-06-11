@@ -221,12 +221,28 @@ func (r *SessionRunner) SubmitTurn(
 // CancelTurn kills any in-flight subprocess for the response turn
 // and marks the row cancelled.
 func (r *SessionRunner) CancelTurn(ctx context.Context, turnID int64) error {
+	// Drop from per-session queue if not yet dispatched. Walk all
+	// queues since CancelTurn isn't given a sessionID; the turn id is
+	// unique across sessions in our DB so at most one match exists.
+	r.qmu.Lock()
+	for _, q := range r.queues {
+		for i, qt := range q.items {
+			if qt.respTurn.ID == turnID {
+				q.items = append(q.items[:i], q.items[i+1:]...)
+				break
+			}
+		}
+	}
+	r.qmu.Unlock()
+
+	// Cancel an in-flight subprocess if there is one.
 	r.mu.Lock()
 	cancel, ok := r.running[turnID]
 	r.mu.Unlock()
 	if ok {
 		cancel()
 	}
+
 	cancelled := "cancelled"
 	return r.db.UpdateWorktreeSessionTurnFields(ctx, turnID, db.UpdateWorktreeSessionTurn{
 		Status:   &cancelled,
