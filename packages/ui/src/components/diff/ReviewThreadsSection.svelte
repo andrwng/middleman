@@ -83,7 +83,6 @@
   }
 
   async function onApplyAll(): Promise<void> {
-    if (busy) return;
     await reviewThreads.applyAll();
   }
 
@@ -116,8 +115,7 @@
         <button
           type="button"
           class="threads-section__apply-all"
-          disabled={busy}
-          title={busy ? "The review agent is busy" : `Apply ${applicable.length} thread(s)`}
+          title={busy ? `Queue Apply for ${applicable.length} thread(s)` : `Apply ${applicable.length} thread(s)`}
           onclick={() => void onApplyAll()}
         >Apply all</button>
       {/if}

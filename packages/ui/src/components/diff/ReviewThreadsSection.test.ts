@@ -93,14 +93,15 @@ describe("ReviewThreadsSection", () => {
     expect(deleteThread).toHaveBeenCalledWith(7);
   });
 
-  it("Apply all calls the store and is disabled while a turn runs", async () => {
+  it("Apply all stays enabled while a turn runs and shows a queue tooltip", async () => {
     threadsRef.value = [thread({ status: "discussed" })];
     running = true;
     const { getByText } = render(ReviewThreadsSection);
     const btn = getByText("Apply all") as HTMLButtonElement;
-    expect(btn.disabled).toBe(true);
+    expect(btn.disabled).toBe(false);
+    expect(btn.getAttribute("title") ?? "").toMatch(/queue/i);
     await fireEvent.click(btn);
-    expect(applyAll).not.toHaveBeenCalled();
+    expect(applyAll).toHaveBeenCalled();
   });
 
   it("Apply all triggers when idle", async () => {
