@@ -36,11 +36,24 @@ import (
 // Like the Runner, every Claude invocation is one-shot: the runner
 // doesn't keep a long-lived subprocess. State continuity is the
 // CLI's `--resume <session_id>` feature, fed by the session row.
+type queuedTurn struct {
+	in       SubmitTurnInput
+	respTurn db.WorktreeSessionTurn
+}
+
+type sessionQueue struct {
+	items   []queuedTurn
+	running bool
+}
+
 type SessionRunner struct {
 	db SessionDB
 
 	mu      sync.Mutex
 	running map[int64]context.CancelFunc // by turn id
+
+	qmu    sync.Mutex
+	queues map[int64]*sessionQueue // by session id
 
 	// turnTimeout caps a single claude turn so a hung subprocess can't
 	// wedge the session forever (a hung turn stays "running" and the
@@ -63,6 +76,7 @@ func NewSessionRunner(database SessionDB) *SessionRunner {
 	return &SessionRunner{
 		db:          database,
 		running:     make(map[int64]context.CancelFunc),
+		queues:      make(map[int64]*sessionQueue),
 		turnTimeout: 10 * time.Minute,
 	}
 }
@@ -149,9 +163,9 @@ type SubmitResult struct {
 }
 
 // SubmitTurn inserts the user turn + a queued claude_response turn,
-// then spawns Claude in the background. Returns immediately with
-// both rows hydrated. Callers poll/subscribe to the response turn
-// for status transitions.
+// then enqueues the turn for per-session serialized dispatch. Returns
+// immediately with both rows hydrated. Callers poll/subscribe to the
+// response turn for status transitions.
 func (r *SessionRunner) SubmitTurn(
 	ctx context.Context, in SubmitTurnInput,
 ) (SubmitResult, error) {
@@ -185,7 +199,22 @@ func (r *SessionRunner) SubmitTurn(
 		return SubmitResult{}, fmt.Errorf("insert response turn: %w", err)
 	}
 
-	r.spawnTurn(in, respTurn)
+	r.qmu.Lock()
+	q := r.queues[in.SessionID]
+	if q == nil {
+		q = &sessionQueue{}
+		r.queues[in.SessionID] = q
+	}
+	q.items = append(q.items, queuedTurn{in: in, respTurn: respTurn})
+	shouldDispatch := !q.running
+	if shouldDispatch {
+		q.running = true
+	}
+	r.qmu.Unlock()
+
+	if shouldDispatch {
+		go r.dispatchNext(in.SessionID)
+	}
 	return SubmitResult{UserTurn: userTurn, ResponseTurn: respTurn}, nil
 }
 
@@ -205,21 +234,53 @@ func (r *SessionRunner) CancelTurn(ctx context.Context, turnID int64) error {
 	})
 }
 
-func (r *SessionRunner) spawnTurn(in SubmitTurnInput, respTurn db.WorktreeSessionTurn) {
-	ctx, cancel := context.WithTimeout(context.Background(), r.turnTimeout)
-	r.mu.Lock()
-	r.running[respTurn.ID] = cancel
-	r.mu.Unlock()
+// dispatchNext pops the head of the per-session queue and runs the turn
+// synchronously (from this goroutine); on completion it pops the next,
+// or clears the running flag if the queue is empty.
+func (r *SessionRunner) dispatchNext(sessionID int64) {
+	for {
+		r.qmu.Lock()
+		q := r.queues[sessionID]
+		if q == nil || len(q.items) == 0 {
+			if q != nil {
+				q.running = false
+			}
+			r.qmu.Unlock()
+			return
+		}
+		next := q.items[0]
+		q.items = q.items[1:]
+		r.qmu.Unlock()
 
-	go func() {
-		defer func() {
-			r.mu.Lock()
-			delete(r.running, respTurn.ID)
-			r.mu.Unlock()
-			cancel()
-		}()
-		r.runTurn(ctx, in, respTurn)
+		r.dispatchOne(sessionID, next)
+	}
+}
+
+// dispatchOne re-resolves time-sensitive bits of the input (IsFirstTurn
+// reflects whether claude_session_id is still empty at dispatch time),
+// then runs the turn inline. Errors during DB ops are logged + the turn
+// is failed so the queue keeps moving.
+func (r *SessionRunner) dispatchOne(sessionID int64, qt queuedTurn) {
+	ctx, cancel := context.WithTimeout(context.Background(), r.turnTimeout)
+	defer cancel()
+
+	// Refresh IsFirstTurn against current session state.
+	sess, err := r.db.GetWorktreeSession(ctx, sessionID)
+	if err == nil {
+		qt.in.IsFirstTurn = sess.ClaudeSessionID == ""
+	} // else: leave as-submitted; runTurn will fail loudly if session truly gone.
+
+	// Register cancel so CancelTurn(running) still works.
+	r.mu.Lock()
+	r.running[qt.respTurn.ID] = cancel
+	r.mu.Unlock()
+	defer func() {
+		r.mu.Lock()
+		delete(r.running, qt.respTurn.ID)
+		r.mu.Unlock()
 	}()
+
+	r.runTurn(ctx, qt.in, qt.respTurn)
 }
 
 func (r *SessionRunner) runTurn(

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -299,3 +300,107 @@ func TestBuildSessionPromptSteerWithoutAllowWritesStaysReadOnly(t *testing.T) {
 // Suppress unused import vet failures when the test file is the only
 // consumer of the symbol below.
 var _ = fmt.Sprintf
+var _ = strings.TrimSpace
+
+// writeGateClaude installs a fake claude that:
+//   - identifies itself as turn "A" or "B" by grepping for those tokens in
+//     its args (the test sets UserTurnContent to "TURN-A"/"TURN-B")
+//   - records start in $GATE_DIR/<name>-start
+//   - polls for $GATE_DIR/<name>-release (created by the test to unblock)
+//   - emits a valid result JSON, then records end in $GATE_DIR/<name>-end
+//
+// Returns the gate directory.
+func writeGateClaude(t *testing.T, path string) string {
+	t.Helper()
+	gate := t.TempDir()
+	script := fmt.Sprintf(`#!/bin/sh
+NAME="X"
+case "$*" in
+  *TURN-A*) NAME="A" ;;
+  *TURN-B*) NAME="B" ;;
+esac
+date +%%s.%%N > "%s/$NAME-start"
+while [ ! -f "%s/$NAME-release" ]; do sleep 0.02; done
+cat <<EOF
+{"type":"result","subtype":"success","is_error":false,"result":"ok-$NAME","session_id":"sess-$NAME"}
+EOF
+date +%%s.%%N > "%s/$NAME-end"
+`, gate, gate, gate)
+	require.NoError(t, os.WriteFile(path, []byte(script), 0o755))
+	return gate
+}
+
+func waitForFile(t *testing.T, path string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	require.FailNow(t, "timed out waiting for "+path)
+}
+
+func readUnixNano(t *testing.T, path string) float64 {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var f float64
+	_, err = fmt.Sscanf(strings.TrimSpace(string(b)), "%f", &f)
+	require.NoError(t, err)
+	return f
+}
+
+func TestSessionRunnerSerializesConcurrentSubmits(t *testing.T) {
+	// Bypass setupSessionTest because we need the gate-aware claude.
+	tmp := t.TempDir()
+	fakeClaude := filepath.Join(tmp, "claude.sh")
+	gate := writeGateClaude(t, fakeClaude)
+
+	orig := claudeBinary
+	claudeBinary = fakeClaude
+	t.Cleanup(func() { claudeBinary = orig })
+
+	database := openTestDB(t)
+	ctx := context.Background()
+	repoID, err := database.UpsertLocalRepo(ctx, "demo")
+	require.NoError(t, err)
+	w, err := database.UpsertWorktree(ctx, repoID, db.ScannedWorktree{
+		Path: tmp, Branch: "main", HeadSHA: "deadbeef",
+	})
+	require.NoError(t, err)
+	sess, err := database.CreateWorktreeSession(ctx, w.ID, "")
+	require.NoError(t, err)
+	runner := NewSessionRunner(database)
+
+	_, err = runner.SubmitTurn(ctx, SubmitTurnInput{
+		SessionID: sess.ID, WorktreePath: tmp, Branch: "main",
+		UserTurnType: "user_message", UserTurnContent: "TURN-A",
+	})
+	require.NoError(t, err)
+	_, err = runner.SubmitTurn(ctx, SubmitTurnInput{
+		SessionID: sess.ID, WorktreePath: tmp, Branch: "main",
+		UserTurnType: "user_message", UserTurnContent: "TURN-B",
+	})
+	require.NoError(t, err)
+
+	// A starts; B must NOT have started while A is gated.
+	waitForFile(t, filepath.Join(gate, "A-start"), 2*time.Second)
+	// Give B a moment to (wrongly) start if the queue is broken.
+	time.Sleep(100 * time.Millisecond)
+	_, errB := os.Stat(filepath.Join(gate, "B-start"))
+	require.True(t, os.IsNotExist(errB), "B started while A was still running — queue is not serializing")
+
+	// Release A, then B.
+	require.NoError(t, os.WriteFile(filepath.Join(gate, "A-release"), nil, 0o644))
+	waitForFile(t, filepath.Join(gate, "A-end"), 2*time.Second)
+	waitForFile(t, filepath.Join(gate, "B-start"), 2*time.Second)
+	require.NoError(t, os.WriteFile(filepath.Join(gate, "B-release"), nil, 0o644))
+	waitForFile(t, filepath.Join(gate, "B-end"), 2*time.Second)
+
+	// Ordering: A ended before B started.
+	aEnd := readUnixNano(t, filepath.Join(gate, "A-end"))
+	bStart := readUnixNano(t, filepath.Join(gate, "B-start"))
+	assert.Greater(t, bStart, aEnd, "B started before A ended — turns overlapped")
+}
