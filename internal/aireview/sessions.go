@@ -236,7 +236,7 @@ func (r *SessionRunner) runTurn(
 	// These tool names must stay in sync with internal/mcp/tools.go. The
 	// "mcp__<server>__<tool>" prefix uses the --mcp-config server key
 	// "middleman" written by writeMCPConfig (not mcp.Config.ServerName).
-	mcpToolNames := "mcp__middleman__list_threads,mcp__middleman__get_thread,mcp__middleman__reply_to_thread"
+	mcpToolNames := "mcp__middleman__list_threads,mcp__middleman__get_thread,mcp__middleman__reply_to_thread,mcp__middleman__start_thread"
 	if in.MCP != nil {
 		allowed += "," + mcpToolNames
 	}
