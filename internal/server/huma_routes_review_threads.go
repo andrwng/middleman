@@ -34,8 +34,9 @@ type reviewThreadResponse struct {
 	Line      int                           `json:"line"`
 	StartLine *int                          `json:"start_line,omitempty"`
 	CommitSHA string                        `json:"commit_sha"`
-	Status    string                        `json:"status" doc:"open | discussed | applied | resolved"`
-	Hidden    bool                          `json:"hidden"`
+	Status        string                        `json:"status" doc:"open | discussed | applied | resolved"`
+	WritesAllowed bool                          `json:"writes_allowed" doc:"true when the agent may edit files in steer turns scoped to this thread (equivalent to status=='applied' today)"`
+	Hidden        bool                          `json:"hidden"`
 	CreatedAt string                        `json:"created_at" doc:"UTC RFC3339 timestamp"`
 	UpdatedAt string                        `json:"updated_at" doc:"UTC RFC3339 timestamp"`
 	Comments  []reviewThreadCommentResponse `json:"comments"`
@@ -177,8 +178,9 @@ func toReviewThreadResponse(t db.ReviewThread, comments []reviewThreadCommentRes
 		Line:      t.Line,
 		StartLine: t.StartLine,
 		CommitSHA: t.CommitSHA,
-		Status:    t.Status,
-		Hidden:    t.HiddenAt != nil,
+		Status:        t.Status,
+		WritesAllowed: t.Status == "applied",
+		Hidden:        t.HiddenAt != nil,
 		CreatedAt: t.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt: t.UpdatedAt.UTC().Format(time.RFC3339),
 		Comments:  comments,

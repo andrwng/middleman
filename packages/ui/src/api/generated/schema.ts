@@ -2343,6 +2343,8 @@ export interface components {
             status: string;
             /** @description UTC RFC3339 timestamp */
             updated_at: string;
+            /** @description true when the agent may edit files in steer turns scoped to this thread (equivalent to status=='applied' today) */
+            writes_allowed: boolean;
         };
         RunningTurnsResponse: {
             /**

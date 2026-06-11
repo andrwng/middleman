@@ -965,6 +965,9 @@ type ReviewThreadResponse struct {
 
 	// UpdatedAt UTC RFC3339 timestamp
 	UpdatedAt string `json:"updated_at"`
+
+	// WritesAllowed true when the agent may edit files in steer turns scoped to this thread (equivalent to status=='applied' today)
+	WritesAllowed bool `json:"writes_allowed"`
 }
 
 // RunningTurnsResponse defines model for RunningTurnsResponse.
