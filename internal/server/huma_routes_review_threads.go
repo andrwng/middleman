@@ -492,9 +492,6 @@ func (s *Server) kickoffReviewTurn(
 	if err != nil {
 		return huma.Error500InternalServerError("ensure session: " + err.Error())
 	}
-	if s.sessionHasRunningTurn(ctx, sess.ID) {
-		return huma.Error409Conflict("the review agent is busy; wait for the current turn to finish")
-	}
 	tcs := make([]aireview.ThreadContext, 0, len(threads))
 	allApplied := len(threads) > 0
 	for _, t := range threads {

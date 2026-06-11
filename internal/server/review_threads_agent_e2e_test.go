@@ -185,9 +185,10 @@ func TestAPIReviewThreadDiscussMarksDiscussed(t *testing.T) {
 
 // TestAPIReviewThreadsBusyConflict starts a discuss turn with a blocking
 // fake claude (so the response turn stays queued/running), then asserts
-// apply-all is rejected 409 while the agent is busy.
+// apply-all is accepted and enqueues a second turn rather than 409ing.
 func TestAPIReviewThreadsBusyConflict(t *testing.T) {
 	require := require.New(t)
+	assert := Assert.New(t)
 	srv, database := setupTestServer(t)
 	srv.sessionRunner = aireview.NewSessionRunner(database)
 	aireview.SetBinaryForTest(blockingFakeClaude(t))
@@ -210,13 +211,27 @@ func TestAPIReviewThreadsBusyConflict(t *testing.T) {
 	require.NoError(err)
 	require.Equal(http.StatusOK, createResp.StatusCode())
 
-	// The queued response turn was inserted synchronously, so the
-	// session is busy; apply-all must 409.
+	// The first discuss turn is running (blocking fake claude), so the
+	// second engage (apply-all) should join the queue and return 2xx.
 	applyAllResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsApplyAllWithResponse(
 		ctx, "local", "demo", num,
 	)
 	require.NoError(err)
-	require.Equal(http.StatusConflict, applyAllResp.StatusCode())
+	require.Equal(http.StatusOK, applyAllResp.StatusCode())
+
+	// The session must have at least one queued claude_response turn
+	// waiting behind the running discuss turn.
+	sess, err := database.GetActiveWorktreeSession(ctx, num, "feat/x")
+	require.NoError(err)
+	turns, err := database.ListWorktreeSessionTurns(ctx, sess.ID)
+	require.NoError(err)
+	var queuedCount int
+	for _, tn := range turns {
+		if tn.TurnType == "claude_response" && tn.Status == "queued" {
+			queuedCount++
+		}
+	}
+	assert.GreaterOrEqual(queuedCount, 1, "second apply-all should have enqueued a response turn")
 
 	// Kill the session so the suite doesn't linger on the blocking
 	// fake claude's sleep; a late DB write after cleanup only warns.
@@ -225,14 +240,15 @@ func TestAPIReviewThreadsBusyConflict(t *testing.T) {
 	)
 }
 
-// TestAPIReviewThreadAskWhileBusyPersistsNoteAndReturns409 verifies the
+// TestAPIReviewThreadAskWhileBusyQueuesTheTurn verifies the
 // persist-before-kickoff invariant of /ask: a reviewer's message is never
 // lost while the agent is busy. The first ask kicks a steer turn that
-// blocks (blocking fake claude), so a second ask hits the busy gate. That
-// second call returns 409 but the comment must still persist as a plain
-// note that is NOT marked sent_to_agent (no turn was kicked for it).
-func TestAPIReviewThreadAskWhileBusyPersistsNoteAndReturns409(t *testing.T) {
+// blocks (blocking fake claude). A second ask while busy must return 2xx
+// and the comment must persist and be marked sent_to_agent (a queued turn
+// was kicked for it).
+func TestAPIReviewThreadAskWhileBusyQueuesTheTurn(t *testing.T) {
 	require := require.New(t)
+	assert := Assert.New(t)
 	srv, database := setupTestServer(t)
 	srv.sessionRunner = aireview.NewSessionRunner(database)
 	aireview.SetBinaryForTest(blockingFakeClaude(t))
@@ -265,16 +281,16 @@ func TestAPIReviewThreadAskWhileBusyPersistsNoteAndReturns409(t *testing.T) {
 	require.NoError(err)
 	require.Equal(http.StatusOK, first.StatusCode())
 
-	// Second ask WHILE BUSY: 409, but the comment must persist as a plain note.
+	// Second ask WHILE BUSY: queue accepts it, returns 2xx.
 	second, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsByThreadIdAskWithResponse(
 		ctx, "local", "demo", num, threadID,
 		generated.AskReviewThreadInputBody{Body: "second ask while busy"},
 	)
 	require.NoError(err)
-	require.Equal(http.StatusConflict, second.StatusCode())
+	require.Equal(http.StatusOK, second.StatusCode())
 
-	// The reviewer's message was NOT lost: it's persisted, and NOT marked
-	// sent_to_agent (no turn was kicked for it).
+	// The reviewer's message was persisted and marked sent_to_agent
+	// (a queued turn was kicked for it).
 	listResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(
 		ctx, "local", "demo", num,
 	)
@@ -295,8 +311,8 @@ func TestAPIReviewThreadAskWhileBusyPersistsNoteAndReturns409(t *testing.T) {
 			}
 		}
 	}
-	require.True(found, "the busy ask's comment must persist as a plain note")
-	require.False(marked, "a busy ask must NOT be marked sent_to_agent (no turn was kicked)")
+	assert.True(found, "the busy ask's comment must persist")
+	assert.True(marked, "a queued ask must be marked sent_to_agent")
 
 	// Kill the session so the suite doesn't linger on the blocking
 	// fake claude's sleep; a late DB write after cleanup only warns.

@@ -273,21 +273,6 @@ func (s *Server) ensureWorktreeSession(ctx context.Context, worktreeID int64, br
 	return sess, false, nil
 }
 
-// sessionHasRunningTurn reports whether the session has a claude_response
-// turn that is queued or running — i.e. the agent is busy.
-func (s *Server) sessionHasRunningTurn(ctx context.Context, sessID int64) bool {
-	turns, err := s.db.ListWorktreeSessionTurns(ctx, sessID)
-	if err != nil {
-		return false
-	}
-	for _, t := range turns {
-		if t.TurnType == "claude_response" && (t.Status == "queued" || t.Status == "running") {
-			return true
-		}
-	}
-	return false
-}
-
 // selfBaseURL is the loopback base URL the spawned MCP server uses to
 // call back into this server's REST API.
 func (s *Server) selfBaseURL() string {
