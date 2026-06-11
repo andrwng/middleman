@@ -501,10 +501,15 @@ func (s *Server) kickoffReviewTurn(
 			allApplied = false
 		}
 
-		comments, _ := s.db.ListReviewThreadComments(ctx, t.ID)
+		comments, err := s.db.ListReviewThreadComments(ctx, t.ID)
+		if err != nil {
+			return huma.Error500InternalServerError("list thread comments: " + err.Error())
+		}
 		var rootID int64
+		var rootBody string
 		if len(comments) > 0 {
 			rootID = comments[0].ID
+			rootBody = comments[0].Body
 		}
 
 		unsent, err := s.db.ListUnsentUserComments(ctx, t.ID)
@@ -526,7 +531,7 @@ func (s *Server) kickoffReviewTurn(
 
 		tcs = append(tcs, aireview.ThreadContext{
 			ID: t.ID, Path: t.Path, Line: t.Line, Side: t.Side,
-			RootComment:     s.firstThreadCommentBody(ctx, t.ID),
+			RootComment:     rootBody,
 			WritesAllowed:   writesAllowed,
 			StackedComments: stacked,
 		})
@@ -588,16 +593,6 @@ func actionMessage(action string, tcs []aireview.ThreadContext) string {
 		return fmt.Sprintf("Apply %d review thread(s).", len(tcs))
 	}
 	return fmt.Sprintf("Discuss %d review thread(s).", len(tcs))
-}
-
-// firstThreadCommentBody returns the root comment body for a thread, or
-// "" if it has none (comments are ordered id ASC, so [0] is the root).
-func (s *Server) firstThreadCommentBody(ctx context.Context, threadID int64) string {
-	comments, err := s.db.ListReviewThreadComments(ctx, threadID)
-	if err != nil || len(comments) == 0 {
-		return ""
-	}
-	return comments[0].Body
 }
 
 // applyReviewThread kicks off an apply turn for a single thread.
