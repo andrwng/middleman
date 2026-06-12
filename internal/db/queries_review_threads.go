@@ -362,6 +362,37 @@ func (d *DB) UnhideReviewThread(ctx context.Context, id int64) error {
 	return err
 }
 
+// ListUnsentUserComments returns user-authored comments on a thread
+// that have not yet been sent to the agent, ordered by id ASC. Used at
+// engage time to stack pending pure-Send comments into the prompt.
+func (d *DB) ListUnsentUserComments(
+	ctx context.Context, threadID int64,
+) ([]ReviewThreadComment, error) {
+	rows, err := d.ReadDB().QueryContext(ctx, `
+		SELECT id, thread_id, author, body, turn_id, created_at, sent_to_agent
+		  FROM middleman_review_thread_comments
+		 WHERE thread_id = ?
+		   AND author = 'user'
+		   AND sent_to_agent = 0
+		 ORDER BY id ASC`, threadID)
+	if err != nil {
+		return nil, fmt.Errorf("list unsent user comments: %w", err)
+	}
+	defer rows.Close()
+	var out []ReviewThreadComment
+	for rows.Next() {
+		c, err := scanReviewThreadComment(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows: %w", err)
+	}
+	return out, nil
+}
+
 func scanReviewThreadComment(row scanner) (ReviewThreadComment, error) {
 	var c ReviewThreadComment
 	var turnID sql.NullInt64

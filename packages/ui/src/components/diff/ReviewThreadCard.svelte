@@ -59,7 +59,7 @@
 
   async function askClaude(): Promise<void> {
     const text = reply.trim();
-    if (!text || sending || busy) return;
+    if (!text || sending) return;
     sending = true;
     try {
       const ok = await reviewThreads.ask(thread.id, text);
@@ -72,7 +72,7 @@
   // Empty-composer "Discuss": kick a read-only discuss turn on this
   // thread without a typed message (the agent responds to the thread).
   async function discussThread(): Promise<void> {
-    if (sending || busy) return;
+    if (sending) return;
     askingBaseline = agentReplies;
     asking = true;
     sending = true;
@@ -122,8 +122,7 @@
         <button
           type="button"
           class="review-thread__action"
-          title="Apply this thread's change"
-          disabled={busy}
+          title={busy ? "Queue an apply turn for this thread" : "Apply this thread's change"}
           onclick={() => void reviewThreads.apply(thread.id)}
         >Apply</button>
       {/if}
@@ -188,12 +187,10 @@
         <button
           type="button"
           class="review-thread__send review-thread__ask"
-          disabled={sending || busy}
+          disabled={sending}
           title={busy
-            ? "The review agent is busy"
-            : reply.trim()
-              ? "Reply and ask Claude to respond"
-              : "Ask Claude to discuss this thread"}
+            ? (reply.trim() ? "Queue an Ask turn — the agent is busy" : "Queue a discuss turn — the agent is busy")
+            : (reply.trim() ? "Reply and ask Claude to respond" : "Ask Claude to discuss this thread")}
           onclick={() => void (reply.trim() ? askClaude() : discussThread())}
         >{reply.trim() ? "Ask Claude" : "Discuss"}</button>
       </div>

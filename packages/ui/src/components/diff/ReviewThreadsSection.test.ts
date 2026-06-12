@@ -3,13 +3,29 @@ import { cleanup, render, fireEvent } from "@testing-library/svelte";
 
 const applyAll = vi.fn(async () => true);
 const deleteThread = vi.fn(async () => true);
+const selectCommit = vi.fn(async () => undefined);
+const resetToHead = vi.fn(async () => undefined);
+const getCurrentPR = vi.fn(() => null);
+const isFileCollapsed = vi.fn(() => false);
+const toggleFileCollapsed = vi.fn();
 let running = false;
 const threadsRef: { value: unknown[] } = { value: [] };
+const commitsRef: { value: unknown } = { value: [] };
+const scopeRef: { value: unknown } = { value: { kind: "head" } };
 
 vi.mock("../../context.js", () => ({
   getStores: () => ({
     reviewThreads: { getThreads: () => threadsRef.value, applyAll, deleteThread },
     worktreeSession: { hasRunningTurn: () => running },
+    diff: {
+      getCommits: () => commitsRef.value,
+      getScope: () => scopeRef.value,
+      selectCommit,
+      resetToHead,
+      getCurrentPR,
+      isFileCollapsed,
+      toggleFileCollapsed,
+    },
   }),
 }));
 
@@ -24,7 +40,14 @@ function thread(over: Record<string, unknown> = {}) {
   };
 }
 
-afterEach(() => { cleanup(); vi.clearAllMocks(); running = false; threadsRef.value = []; });
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+  running = false;
+  threadsRef.value = [];
+  commitsRef.value = [];
+  scopeRef.value = { kind: "head" };
+});
 
 describe("ReviewThreadsSection", () => {
   it("renders nothing when there are no threads", () => {
@@ -70,14 +93,15 @@ describe("ReviewThreadsSection", () => {
     expect(deleteThread).toHaveBeenCalledWith(7);
   });
 
-  it("Apply all calls the store and is disabled while a turn runs", async () => {
+  it("Apply all stays enabled while a turn runs and shows a queue tooltip", async () => {
     threadsRef.value = [thread({ status: "discussed" })];
     running = true;
     const { getByText } = render(ReviewThreadsSection);
     const btn = getByText("Apply all") as HTMLButtonElement;
-    expect(btn.disabled).toBe(true);
+    expect(btn.disabled).toBe(false);
+    expect(btn.getAttribute("title") ?? "").toMatch(/queue/i);
     await fireEvent.click(btn);
-    expect(applyAll).not.toHaveBeenCalled();
+    expect(applyAll).toHaveBeenCalled();
   });
 
   it("Apply all triggers when idle", async () => {
@@ -86,5 +110,85 @@ describe("ReviewThreadsSection", () => {
     const { getByText } = render(ReviewThreadsSection);
     await fireEvent.click(getByText("Apply all"));
     expect(applyAll).toHaveBeenCalled();
+  });
+});
+
+describe("ReviewThreadsSection — click-to-navigate", () => {
+  function commit(over: Record<string, unknown> = {}) {
+    return { sha: "abc", subject: "x", parents: [], author: "x", date: "", ...over };
+  }
+
+  it("clicks a thread anchored to the PR head → resetToHead", async () => {
+    const t = thread({ id: 1, commit_sha: "headsha" });
+    threadsRef.value = [t];
+    commitsRef.value = [commit({ sha: "headsha" })];
+    scopeRef.value = { kind: "commit", sha: "headsha" };
+
+    const { getByTitle } = render(ReviewThreadsSection);
+    await fireEvent.click(getByTitle(t.path));
+
+    expect(resetToHead).toHaveBeenCalledOnce();
+    expect(selectCommit).not.toHaveBeenCalled();
+  });
+
+  it("clicks a thread anchored to a mid-stack commit → resetToHead (not selectCommit)", async () => {
+    const t = thread({ id: 1, commit_sha: "midsha" });
+    threadsRef.value = [t];
+    commitsRef.value = [commit({ sha: "headsha" }), commit({ sha: "midsha" })];
+    scopeRef.value = { kind: "commit", sha: "midsha" };
+
+    const { getByTitle } = render(ReviewThreadsSection);
+    await fireEvent.click(getByTitle(t.path));
+
+    expect(resetToHead).toHaveBeenCalledOnce();
+    expect(selectCommit).not.toHaveBeenCalled();
+  });
+
+  it("clicks any thread when already at HEAD scope → no extra resetToHead call (no-op)", async () => {
+    const t = thread({ id: 1, commit_sha: "midsha" });
+    threadsRef.value = [t];
+    commitsRef.value = [commit({ sha: "headsha" }), commit({ sha: "midsha" })];
+    scopeRef.value = { kind: "head" };
+
+    const { getByTitle } = render(ReviewThreadsSection);
+    await fireEvent.click(getByTitle(t.path));
+
+    expect(resetToHead).not.toHaveBeenCalled();
+    expect(selectCommit).not.toHaveBeenCalled();
+  });
+
+  it("clicks a thread whose commit_sha is not in the commit list → resetToHead AND row flagged orphan", async () => {
+    const t = thread({ id: 1, commit_sha: "rebased-away-sha" });
+    threadsRef.value = [t];
+    commitsRef.value = [commit({ sha: "headsha" })];
+    // Start in commit scope so navigation fires; the orphan dot should always appear.
+    scopeRef.value = { kind: "commit", sha: "headsha" };
+
+    const { container, getByTitle } = render(ReviewThreadsSection);
+    await fireEvent.click(getByTitle(t.path));
+
+    expect(resetToHead).toHaveBeenCalledOnce();
+    expect(selectCommit).not.toHaveBeenCalled();
+    expect(container.querySelector(".thread-item__dot--orphan")).toBeTruthy();
+  });
+
+  it("does not flag orphan while commits are still loading", () => {
+    const t = thread({ id: 1, commit_sha: "anything" });
+    threadsRef.value = [t];
+    commitsRef.value = null; // loading
+    scopeRef.value = { kind: "head" };
+
+    const { container } = render(ReviewThreadsSection);
+    expect(container.querySelector(".thread-item__dot--orphan")).toBeNull();
+  });
+
+  it("attaches an orphan aria-label to the button for orphan threads", async () => {
+    const t = thread({ id: 1, commit_sha: "rebased-away-sha" });
+    threadsRef.value = [t];
+    commitsRef.value = [commit({ sha: "headsha" })];
+    scopeRef.value = { kind: "head" };
+    const { getByTitle } = render(ReviewThreadsSection);
+    const btn = getByTitle(t.path) as HTMLButtonElement;
+    expect(btn.getAttribute("aria-label") ?? "").toMatch(/anchored to a commit no longer in this branch/);
   });
 });

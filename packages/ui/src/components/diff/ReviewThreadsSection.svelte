@@ -1,8 +1,9 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import { getStores } from "../../context.js";
   import type { ReviewThread } from "../../stores/reviewThreads.svelte.js";
 
-  const { reviewThreads, worktreeSession } = getStores();
+  const { reviewThreads, worktreeSession, diff } = getStores();
 
   const threads = $derived(reviewThreads.getThreads().filter((t) => !t.hidden));
   const applicable = $derived(
@@ -29,23 +30,54 @@
     }
     return `${sign}${t.line}`;
   }
-  function scrollToThread(t: ReviewThread): void {
-    const path =
-      typeof CSS !== "undefined" && CSS.escape ? CSS.escape(t.path) : t.path;
+  function isOrphan(t: ReviewThread): boolean {
+    const commits = diff.getCommits();
+    if (!commits || commits.length === 0) return false; // loading — don't flag
+    return !commits.some((c) => c.sha === t.commit_sha);
+  }
+
+  async function scrollToThread(t: ReviewThread): Promise<void> {
+    // Always navigate to HEAD scope so the thread's file is visible.
+    // (A mid-stack commit's diff only shows files modified in that commit,
+    // which can hide threads whose anchored file wasn't touched there.)
+    const scope = diff.getScope();
+    if (scope.kind !== "head") {
+      await diff.resetToHead();
+      await tick();
+    }
+
+    const pr = diff.getCurrentPR();
+    if (
+      pr &&
+      diff.isFileCollapsed(pr.owner, pr.name, pr.number, t.path)
+    ) {
+      diff.toggleFileCollapsed(pr.owner, pr.name, pr.number, t.path);
+      await tick();
+    }
+
+    const path = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(t.path) : t.path;
     const selector =
       `.diff-file[data-file-path="${path}"] ` +
       `.line-wrap[data-anchor-line="${t.line}"]` +
       `[data-anchor-side="${t.side}"]`;
     const el = document.querySelector<HTMLElement>(selector);
-    if (el) el.scrollIntoView({ block: "center", behavior: "smooth" });
+    if (el) {
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      el.classList.add("line-wrap--flash");
+      window.setTimeout(() => el.classList.remove("line-wrap--flash"), 1500);
+      return;
+    }
+    const fileEl = document.querySelector<HTMLElement>(`.diff-file[data-file-path="${path}"]`);
+    if (fileEl) fileEl.scrollIntoView({ block: "start", behavior: "smooth" });
   }
+
   async function onApplyAll(): Promise<void> {
-    if (busy) return;
     await reviewThreads.applyAll();
   }
-  function selectThread(t: ReviewThread): void {
+
+  async function selectThread(t: ReviewThread): Promise<void> {
     activeId = t.id;
-    scrollToThread(t);
+    await scrollToThread(t);
   }
   // Two-step delete so a stale/unreachable thread (whose anchor moved off
   // the current diff, leaving no inline card) can be cleared from here:
@@ -72,8 +104,7 @@
         <button
           type="button"
           class="threads-section__apply-all"
-          disabled={busy}
-          title={busy ? "The review agent is busy" : `Apply ${applicable.length} thread(s)`}
+          title={busy ? `Queue Apply for ${applicable.length} thread(s)` : `Apply ${applicable.length} thread(s)`}
           onclick={() => void onApplyAll()}
         >Apply all</button>
       {/if}
@@ -82,16 +113,18 @@
     {#if expanded}
       <div class="threads-section__body">
         {#each threads as t (t.id)}
+          {@const orphan = isOrphan(t)}
           <div class="thread-item-row" class:thread-item-row--active={activeId === t.id}>
             <button
               type="button"
               class="thread-item"
               title={t.path}
-              onclick={() => selectThread(t)}
+              aria-label={orphan ? `${t.path} — anchored to a commit no longer in this branch` : undefined}
+              onclick={() => void selectThread(t)}
             >
               <span
-                class="thread-item__dot thread-item__dot--{t.status}"
-                title={t.status}
+                class="thread-item__dot thread-item__dot--{orphan ? 'orphan' : t.status}"
+                title={orphan ? "anchored to a commit no longer in this branch" : t.status}
               ></span>
               <span class="thread-item__anchor">{anchorLabel(t)}</span>
               <span class="thread-item__path">{t.path}</span>
@@ -218,6 +251,11 @@
   .thread-item__dot--discussed { background: var(--accent-blue); }
   .thread-item__dot--applied { background: var(--accent-green); }
   .thread-item__dot--resolved { background: var(--text-muted); opacity: 0.4; }
+  .thread-item__dot--orphan {
+    background: var(--text-muted);
+    opacity: 0.3;
+    box-shadow: inset 0 0 0 1px var(--text-muted);
+  }
   .thread-item__anchor {
     font-family: var(--font-mono);
     font-size: 10px;

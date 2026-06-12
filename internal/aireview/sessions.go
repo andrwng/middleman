@@ -36,15 +36,28 @@ import (
 // Like the Runner, every Claude invocation is one-shot: the runner
 // doesn't keep a long-lived subprocess. State continuity is the
 // CLI's `--resume <session_id>` feature, fed by the session row.
+type queuedTurn struct {
+	in       SubmitTurnInput
+	respTurn db.WorktreeSessionTurn
+}
+
+type sessionQueue struct {
+	items   []queuedTurn
+	running bool
+}
+
 type SessionRunner struct {
 	db SessionDB
 
 	mu      sync.Mutex
 	running map[int64]context.CancelFunc // by turn id
 
+	qmu    sync.Mutex
+	queues map[int64]*sessionQueue // by session id
+
 	// turnTimeout caps a single claude turn so a hung subprocess can't
 	// wedge the session forever (a hung turn stays "running" and the
-	// one-turn-at-a-time busy gate then 409s every later turn).
+	// per-session FIFO would back up indefinitely without a timeout).
 	turnTimeout time.Duration
 }
 
@@ -63,6 +76,7 @@ func NewSessionRunner(database SessionDB) *SessionRunner {
 	return &SessionRunner{
 		db:          database,
 		running:     make(map[int64]context.CancelFunc),
+		queues:      make(map[int64]*sessionQueue),
 		turnTimeout: 10 * time.Minute,
 	}
 }
@@ -96,6 +110,15 @@ type ThreadContext struct {
 	Line        int
 	Side        string
 	RootComment string
+	// WritesAllowed is true when this thread's status == "applied". The
+	// server sets it at kickoff time; sessions use it to gate edit tools
+	// on steer turns.
+	WritesAllowed bool
+	// StackedComments holds unsent user comments to flush into the engage
+	// prompt. The root comment is excluded (it's already in RootComment);
+	// these are follow-up "Send-only" notes the reviewer added between
+	// engage turns.
+	StackedComments []string
 }
 
 // MCPConfig tells the runner how to wire the middleman MCP server for a
@@ -129,7 +152,13 @@ type SubmitTurnInput struct {
 	// Action is "discuss" | "apply" | "steer" | "" (legacy review_feedback/user_message free-text follow-ups).
 	Action  string
 	Threads []ThreadContext
-	MCP     *MCPConfig
+	// AllowWrites grants edit tools (Edit/Write/MultiEdit/Bash) to steer
+	// turns on threads that the reviewer has already applied. Server sets
+	// this when every engaged thread has WritesAllowed==true. Apply turns
+	// always get write tools regardless of this field; this flag exists to
+	// let steer turns inherit them.
+	AllowWrites bool
+	MCP         *MCPConfig
 }
 
 // SubmitResult bundles the two new turn rows created by SubmitTurn.
@@ -139,9 +168,9 @@ type SubmitResult struct {
 }
 
 // SubmitTurn inserts the user turn + a queued claude_response turn,
-// then spawns Claude in the background. Returns immediately with
-// both rows hydrated. Callers poll/subscribe to the response turn
-// for status transitions.
+// then enqueues the turn for per-session serialized dispatch. Returns
+// immediately with both rows hydrated. Callers poll/subscribe to the
+// response turn for status transitions.
 func (r *SessionRunner) SubmitTurn(
 	ctx context.Context, in SubmitTurnInput,
 ) (SubmitResult, error) {
@@ -175,19 +204,50 @@ func (r *SessionRunner) SubmitTurn(
 		return SubmitResult{}, fmt.Errorf("insert response turn: %w", err)
 	}
 
-	r.spawnTurn(in, respTurn)
+	r.qmu.Lock()
+	q := r.queues[in.SessionID]
+	if q == nil {
+		q = &sessionQueue{}
+		r.queues[in.SessionID] = q
+	}
+	q.items = append(q.items, queuedTurn{in: in, respTurn: respTurn})
+	shouldDispatch := !q.running
+	if shouldDispatch {
+		q.running = true
+	}
+	r.qmu.Unlock()
+
+	if shouldDispatch {
+		go r.dispatchNext(in.SessionID)
+	}
 	return SubmitResult{UserTurn: userTurn, ResponseTurn: respTurn}, nil
 }
 
 // CancelTurn kills any in-flight subprocess for the response turn
 // and marks the row cancelled.
 func (r *SessionRunner) CancelTurn(ctx context.Context, turnID int64) error {
+	// Drop from per-session queue if not yet dispatched. Walk all
+	// queues since CancelTurn isn't given a sessionID; the turn id is
+	// unique across sessions in our DB so at most one match exists.
+	r.qmu.Lock()
+	for _, q := range r.queues {
+		for i, qt := range q.items {
+			if qt.respTurn.ID == turnID {
+				q.items = append(q.items[:i], q.items[i+1:]...)
+				break
+			}
+		}
+	}
+	r.qmu.Unlock()
+
+	// Cancel an in-flight subprocess if there is one.
 	r.mu.Lock()
 	cancel, ok := r.running[turnID]
 	r.mu.Unlock()
 	if ok {
 		cancel()
 	}
+
 	cancelled := "cancelled"
 	return r.db.UpdateWorktreeSessionTurnFields(ctx, turnID, db.UpdateWorktreeSessionTurn{
 		Status:   &cancelled,
@@ -195,21 +255,53 @@ func (r *SessionRunner) CancelTurn(ctx context.Context, turnID int64) error {
 	})
 }
 
-func (r *SessionRunner) spawnTurn(in SubmitTurnInput, respTurn db.WorktreeSessionTurn) {
-	ctx, cancel := context.WithTimeout(context.Background(), r.turnTimeout)
-	r.mu.Lock()
-	r.running[respTurn.ID] = cancel
-	r.mu.Unlock()
+// dispatchNext pops the head of the per-session queue and runs the turn
+// synchronously (from this goroutine); on completion it pops the next,
+// or clears the running flag if the queue is empty.
+func (r *SessionRunner) dispatchNext(sessionID int64) {
+	for {
+		r.qmu.Lock()
+		q := r.queues[sessionID]
+		if q == nil || len(q.items) == 0 {
+			if q != nil {
+				q.running = false
+			}
+			r.qmu.Unlock()
+			return
+		}
+		next := q.items[0]
+		q.items = q.items[1:]
+		r.qmu.Unlock()
 
-	go func() {
-		defer func() {
-			r.mu.Lock()
-			delete(r.running, respTurn.ID)
-			r.mu.Unlock()
-			cancel()
-		}()
-		r.runTurn(ctx, in, respTurn)
+		r.dispatchOne(sessionID, next)
+	}
+}
+
+// dispatchOne re-resolves time-sensitive bits of the input (IsFirstTurn
+// reflects whether claude_session_id is still empty at dispatch time),
+// then runs the turn inline. Errors during DB ops are logged + the turn
+// is failed so the queue keeps moving.
+func (r *SessionRunner) dispatchOne(sessionID int64, qt queuedTurn) {
+	ctx, cancel := context.WithTimeout(context.Background(), r.turnTimeout)
+	defer cancel()
+
+	// Refresh IsFirstTurn against current session state.
+	sess, err := r.db.GetWorktreeSession(ctx, sessionID)
+	if err == nil {
+		qt.in.IsFirstTurn = sess.ClaudeSessionID == ""
+	} // else: leave as-submitted; runTurn will fail loudly if session truly gone.
+
+	// Register cancel so CancelTurn(running) still works.
+	r.mu.Lock()
+	r.running[qt.respTurn.ID] = cancel
+	r.mu.Unlock()
+	defer func() {
+		r.mu.Lock()
+		delete(r.running, qt.respTurn.ID)
+		r.mu.Unlock()
 	}()
+
+	r.runTurn(ctx, qt.in, qt.respTurn)
 }
 
 func (r *SessionRunner) runTurn(
@@ -236,12 +328,13 @@ func (r *SessionRunner) runTurn(
 	// These tool names must stay in sync with internal/mcp/tools.go. The
 	// "mcp__<server>__<tool>" prefix uses the --mcp-config server key
 	// "middleman" written by writeMCPConfig (not mcp.Config.ServerName).
-	mcpToolNames := "mcp__middleman__list_threads,mcp__middleman__get_thread,mcp__middleman__reply_to_thread"
+	mcpToolNames := "mcp__middleman__list_threads,mcp__middleman__get_thread,mcp__middleman__reply_to_thread,mcp__middleman__start_thread"
 	if in.MCP != nil {
 		allowed += "," + mcpToolNames
 	}
-	if in.Action == "apply" || in.Action == "" {
+	if in.Action == "apply" || in.Action == "" || in.AllowWrites {
 		// apply (and legacy review_feedback / user_message) may edit the worktree.
+		// AllowWrites also unlocks edits for steer turns on already-applied threads.
 		allowed += ",Edit,Write,MultiEdit,Bash"
 	}
 
@@ -268,7 +361,7 @@ func (r *SessionRunner) runTurn(
 		args = append(args, "--resume", sess.ClaudeSessionID)
 	}
 
-	cmd := exec.CommandContext(ctx, claudeBinary, args...)
+	cmd := exec.CommandContext(ctx, claudeBin(), args...)
 	cmd.Dir = in.WorktreePath
 	setPgid(cmd)
 	// CommandContext's default Cancel kills only the leader; with setPgid
@@ -327,8 +420,8 @@ func (r *SessionRunner) runTurn(
 	if ctx.Err() != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			// Hung turn: CommandContext killed claude on the deadline.
-			// Mark it failed so the session frees (the busy gate no longer
-			// 409s). Use a fresh context — the turn ctx is already Done, so
+			// Mark it failed so the queue can advance. Use a fresh context —
+			// the turn ctx is already Done, so
 			// DB writes on it would fail.
 			bg := context.Background()
 			r.flushStreamState(bg, respTurn.ID, state)
@@ -614,6 +707,12 @@ func formatThreads(ts []ThreadContext) string {
 			side = "before"
 		}
 		fmt.Fprintf(&b, "- thread %d - %s:%d (%s): %s\n", t.ID, t.Path, t.Line, side, t.RootComment)
+		if len(t.StackedComments) > 0 {
+			b.WriteString("  Reviewer's notes since the last engage:\n")
+			for i, body := range t.StackedComments {
+				fmt.Fprintf(&b, "  %d) %s\n", i+1, body)
+			}
+		}
 	}
 	return b.String()
 }
@@ -651,12 +750,17 @@ func buildSessionPrompt(in SubmitTurnInput) string {
 		var b strings.Builder
 		writeWorktreeContext(&b, in)
 		b.WriteString("\n")
-		b.WriteString("The reviewer replied in a review thread. Read the relevant code, " +
-			"respond to continue the discussion, and call the reply_to_thread tool (thread_id + body) " +
-			"with your reply. Do not change any files — this is discussion only.\n\n")
+		if in.AllowWrites {
+			b.WriteString("The reviewer replied in a review thread. Read the relevant code, " +
+				"respond to continue the discussion, and call the reply_to_thread tool (thread_id + body) " +
+				"with your reply. You may edit files in the worktree if the reviewer's message asks for a change; " +
+				"if you do, include a one-line summary of what you changed in your reply_to_thread call.\n\n")
+		} else {
+			b.WriteString("The reviewer replied in a review thread. Read the relevant code, " +
+				"respond to continue the discussion, and call the reply_to_thread tool (thread_id + body) " +
+				"with your reply. Do not change any files — this is discussion only.\n\n")
+		}
 		b.WriteString(formatThreads(in.Threads))
-		b.WriteString("\nThe reviewer's message:\n")
-		b.WriteString(in.UserTurnContent)
 		return b.String()
 	}
 

@@ -94,12 +94,12 @@ describe("ReviewThreadCard", () => {
     expect(ask).not.toHaveBeenCalled();
   });
 
-  it("the agent button and Apply are disabled while a turn runs", () => {
+  it("the agent button and Apply stay enabled while a turn runs", () => {
     running = true;
     const { getByText, getByTitle } = render(ReviewThreadCard, { props: { thread: thread({ status: "discussed" }) } });
-    // Empty composer => the button reads "Discuss"; still disabled while busy.
-    expect((getByText("Discuss") as HTMLButtonElement).disabled).toBe(true);
-    expect((getByTitle("Apply this thread's change") as HTMLButtonElement).disabled).toBe(true);
+    // Empty composer => the button reads "Discuss"; stays enabled while busy (queue semantics).
+    expect((getByText("Discuss") as HTMLButtonElement).disabled).toBe(false);
+    expect((getByTitle(/Apply/i) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("the agent button is Discuss when the composer is empty and calls discuss", async () => {
@@ -142,5 +142,24 @@ describe("ReviewThreadCard", () => {
       },
     });
     expect(container.querySelector(".review-thread__sent-badge")).toBeNull();
+  });
+});
+
+describe("ReviewThreadCard — clicks are not blocked while session is busy", () => {
+  it("Apply stays enabled when worktreeSession.hasRunningTurn() is true", async () => {
+    running = true;
+    const { getByTitle } = render(ReviewThreadCard, { props: { thread: thread({ status: "open" }) } });
+    const btn = getByTitle(/Apply/i) as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
+    await fireEvent.click(btn);
+    expect(apply).toHaveBeenCalledWith(5);
+  });
+
+  it("Discuss button (empty composer) stays enabled while busy with a queue tooltip", () => {
+    running = true;
+    const { container } = render(ReviewThreadCard, { props: { thread: thread() } });
+    const btn = container.querySelector(".review-thread__ask") as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
+    expect(btn.getAttribute("title") ?? "").toMatch(/queue/i);
   });
 });

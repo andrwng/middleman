@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,9 +21,8 @@ func setupSessionTest(t *testing.T) (*db.DB, *SessionRunner, string, int64) {
 	writeFakeClaude(t, fakeClaude,
 		`{"type":"result","subtype":"success","is_error":false,"result":"made the changes","session_id":"sess-abc"}`)
 
-	orig := claudeBinary
-	claudeBinary = fakeClaude
-	t.Cleanup(func() { claudeBinary = orig })
+	orig := SetBinaryForTest(fakeClaude)
+	t.Cleanup(func() { SetBinaryForTest(orig) })
 
 	database := openTestDB(t)
 
@@ -94,9 +94,8 @@ func TestSessionRunnerSubprocessFails(t *testing.T) {
 	fakeClaude := filepath.Join(tmp, "claude.sh")
 	script := "#!/bin/sh\necho 'nope' >&2\nexit 2\n"
 	require.NoError(os.WriteFile(fakeClaude, []byte(script), 0o755))
-	orig := claudeBinary
-	claudeBinary = fakeClaude
-	t.Cleanup(func() { claudeBinary = orig })
+	orig := SetBinaryForTest(fakeClaude)
+	t.Cleanup(func() { SetBinaryForTest(orig) })
 
 	database := openTestDB(t)
 	ctx := context.Background()
@@ -176,9 +175,8 @@ func TestSessionRunnerCancelTurn(t *testing.T) {
 	// A subprocess that sleeps so cancellation has time to fire.
 	script := "#!/bin/sh\nsleep 60\n"
 	require.NoError(os.WriteFile(fakeClaude, []byte(script), 0o755))
-	orig := claudeBinary
-	claudeBinary = fakeClaude
-	t.Cleanup(func() { claudeBinary = orig })
+	orig := SetBinaryForTest(fakeClaude)
+	t.Cleanup(func() { SetBinaryForTest(orig) })
 
 	database := openTestDB(t)
 	ctx := context.Background()
@@ -270,6 +268,214 @@ func TestSessionRunnerReconcileOnStartup(t *testing.T) {
 	assert.Equal("all good", d.Content)
 }
 
+func TestBuildSessionPromptSteerWithAllowWritesSwapsReadOnlySentence(t *testing.T) {
+	in := SubmitTurnInput{
+		WorktreePath: "/tmp/wt", Branch: "main",
+		Action: "steer", AllowWrites: true,
+		UserTurnContent: "go ahead",
+		Threads: []ThreadContext{{ID: 1, Path: "a.go", Line: 12, Side: "RIGHT", RootComment: "fix", WritesAllowed: true}},
+	}
+	prompt := buildSessionPrompt(in)
+	assert := assert.New(t)
+	assert.NotContains(prompt, "Do not change any files")
+	assert.Contains(prompt, "You may edit files in the worktree")
+}
+
+func TestBuildSessionPromptSteerWithoutAllowWritesStaysReadOnly(t *testing.T) {
+	in := SubmitTurnInput{
+		WorktreePath: "/tmp/wt", Branch: "main",
+		Action: "steer", AllowWrites: false,
+		UserTurnContent: "what about",
+		Threads: []ThreadContext{{ID: 1, Path: "a.go", Line: 12, Side: "RIGHT", RootComment: "fix"}},
+	}
+	prompt := buildSessionPrompt(in)
+	assert := assert.New(t)
+	assert.Contains(prompt, "Do not change any files")
+	assert.NotContains(prompt, "You may edit files")
+}
+
+func TestBuildSessionPromptIncludesStackedComments(t *testing.T) {
+	in := SubmitTurnInput{
+		WorktreePath: "/tmp/wt", Branch: "main",
+		Action: "apply",
+		Threads: []ThreadContext{{
+			ID: 1, Path: "a.go", Line: 12, Side: "RIGHT",
+			RootComment:     "consider extracting",
+			StackedComments: []string{"sounds good", "but also rename Foo"},
+		}},
+	}
+	prompt := buildSessionPrompt(in)
+	assert := assert.New(t)
+	assert.Contains(prompt, "consider extracting")
+	assert.Contains(prompt, "Reviewer's notes since the last engage")
+	assert.Contains(prompt, "sounds good")
+	assert.Contains(prompt, "but also rename Foo")
+}
+
+func TestBuildSessionPromptSkipsStackedBlockWhenEmpty(t *testing.T) {
+	in := SubmitTurnInput{
+		WorktreePath: "/tmp/wt", Branch: "main",
+		Action: "discuss",
+		Threads: []ThreadContext{{ID: 1, Path: "a.go", Line: 12, Side: "RIGHT", RootComment: "look at this"}},
+	}
+	prompt := buildSessionPrompt(in)
+	assert.NotContains(t, prompt, "Reviewer's notes since the last engage")
+}
+
 // Suppress unused import vet failures when the test file is the only
 // consumer of the symbol below.
 var _ = fmt.Sprintf
+var _ = strings.TrimSpace
+
+// writeGateClaude installs a fake claude that:
+//   - identifies itself as turn "A" or "B" by grepping for those tokens in
+//     its args (the test sets UserTurnContent to "TURN-A"/"TURN-B")
+//   - records start in $GATE_DIR/<name>-start
+//   - polls for $GATE_DIR/<name>-release (created by the test to unblock)
+//   - emits a valid result JSON, then records end in $GATE_DIR/<name>-end
+//
+// Returns the gate directory.
+func writeGateClaude(t *testing.T, path string) string {
+	t.Helper()
+	gate := t.TempDir()
+	script := fmt.Sprintf(`#!/bin/sh
+NAME="X"
+case "$*" in
+  *TURN-A*) NAME="A" ;;
+  *TURN-B*) NAME="B" ;;
+esac
+date +%%s.%%N > "%s/$NAME-start"
+while [ ! -f "%s/$NAME-release" ]; do sleep 0.02; done
+cat <<EOF
+{"type":"result","subtype":"success","is_error":false,"result":"ok-$NAME","session_id":"sess-$NAME"}
+EOF
+date +%%s.%%N > "%s/$NAME-end"
+`, gate, gate, gate)
+	require.NoError(t, os.WriteFile(path, []byte(script), 0o755))
+	return gate
+}
+
+func waitForFile(t *testing.T, path string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	require.FailNow(t, "timed out waiting for "+path)
+}
+
+func readUnixNano(t *testing.T, path string) float64 {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var f float64
+	_, err = fmt.Sscanf(strings.TrimSpace(string(b)), "%f", &f)
+	require.NoError(t, err)
+	return f
+}
+
+func TestSessionRunnerSerializesConcurrentSubmits(t *testing.T) {
+	// Bypass setupSessionTest because we need the gate-aware claude.
+	tmp := t.TempDir()
+	fakeClaude := filepath.Join(tmp, "claude.sh")
+	gate := writeGateClaude(t, fakeClaude)
+
+	orig := SetBinaryForTest(fakeClaude)
+	t.Cleanup(func() { SetBinaryForTest(orig) })
+
+	database := openTestDB(t)
+	ctx := context.Background()
+	repoID, err := database.UpsertLocalRepo(ctx, "demo")
+	require.NoError(t, err)
+	w, err := database.UpsertWorktree(ctx, repoID, db.ScannedWorktree{
+		Path: tmp, Branch: "main", HeadSHA: "deadbeef",
+	})
+	require.NoError(t, err)
+	sess, err := database.CreateWorktreeSession(ctx, w.ID, "")
+	require.NoError(t, err)
+	runner := NewSessionRunner(database)
+
+	_, err = runner.SubmitTurn(ctx, SubmitTurnInput{
+		SessionID: sess.ID, WorktreePath: tmp, Branch: "main",
+		UserTurnType: "user_message", UserTurnContent: "TURN-A",
+	})
+	require.NoError(t, err)
+	_, err = runner.SubmitTurn(ctx, SubmitTurnInput{
+		SessionID: sess.ID, WorktreePath: tmp, Branch: "main",
+		UserTurnType: "user_message", UserTurnContent: "TURN-B",
+	})
+	require.NoError(t, err)
+
+	// A starts; B must NOT have started while A is gated.
+	waitForFile(t, filepath.Join(gate, "A-start"), 2*time.Second)
+	// Give B a moment to (wrongly) start if the queue is broken.
+	time.Sleep(100 * time.Millisecond)
+	_, errB := os.Stat(filepath.Join(gate, "B-start"))
+	require.True(t, os.IsNotExist(errB), "B started while A was still running — queue is not serializing")
+
+	// Release A, then B.
+	require.NoError(t, os.WriteFile(filepath.Join(gate, "A-release"), nil, 0o644))
+	waitForFile(t, filepath.Join(gate, "A-end"), 2*time.Second)
+	waitForFile(t, filepath.Join(gate, "B-start"), 2*time.Second)
+	require.NoError(t, os.WriteFile(filepath.Join(gate, "B-release"), nil, 0o644))
+	waitForFile(t, filepath.Join(gate, "B-end"), 2*time.Second)
+
+	// Ordering: A ended before B started.
+	aEnd := readUnixNano(t, filepath.Join(gate, "A-end"))
+	bStart := readUnixNano(t, filepath.Join(gate, "B-start"))
+	assert.Greater(t, bStart, aEnd, "B started before A ended — turns overlapped")
+}
+
+func TestSessionRunnerCancelQueuedTurnSkipsDispatch(t *testing.T) {
+	tmp := t.TempDir()
+	fakeClaude := filepath.Join(tmp, "claude.sh")
+	gate := writeGateClaude(t, fakeClaude)
+
+	orig := SetBinaryForTest(fakeClaude)
+	t.Cleanup(func() { SetBinaryForTest(orig) })
+
+	database := openTestDB(t)
+	ctx := context.Background()
+	repoID, err := database.UpsertLocalRepo(ctx, "demo")
+	require.NoError(t, err)
+	w, err := database.UpsertWorktree(ctx, repoID, db.ScannedWorktree{
+		Path: tmp, Branch: "main", HeadSHA: "deadbeef",
+	})
+	require.NoError(t, err)
+	sess, err := database.CreateWorktreeSession(ctx, w.ID, "")
+	require.NoError(t, err)
+	runner := NewSessionRunner(database)
+
+	_, err = runner.SubmitTurn(ctx, SubmitTurnInput{
+		SessionID: sess.ID, WorktreePath: tmp, Branch: "main",
+		UserTurnType: "user_message", UserTurnContent: "TURN-A",
+	})
+	require.NoError(t, err)
+	resB, err := runner.SubmitTurn(ctx, SubmitTurnInput{
+		SessionID: sess.ID, WorktreePath: tmp, Branch: "main",
+		UserTurnType: "user_message", UserTurnContent: "TURN-B",
+	})
+	require.NoError(t, err)
+
+	// Wait for A to start, then cancel B while A is still gated.
+	waitForFile(t, filepath.Join(gate, "A-start"), 2*time.Second)
+	require.NoError(t, runner.CancelTurn(ctx, resB.ResponseTurn.ID))
+
+	// Release A and wait for it to finish.
+	require.NoError(t, os.WriteFile(filepath.Join(gate, "A-release"), nil, 0o644))
+	waitForFile(t, filepath.Join(gate, "A-end"), 2*time.Second)
+
+	// Give the dispatcher time to (wrongly) start B if cancel-queue is broken.
+	time.Sleep(100 * time.Millisecond)
+	_, errBStart := os.Stat(filepath.Join(gate, "B-start"))
+	assert := assert.New(t)
+	assert.True(os.IsNotExist(errBStart), "B should not have started after being cancelled while queued")
+
+	// B's row is "cancelled".
+	row, err := database.GetWorktreeSessionTurn(ctx, resB.ResponseTurn.ID)
+	require.NoError(t, err)
+	assert.Equal("cancelled", row.Status)
+}

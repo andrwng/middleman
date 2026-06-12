@@ -30,9 +30,8 @@ func setupRecordingSessionTest(t *testing.T) (*db.DB, *SessionRunner, string, db
 	fakeClaude := filepath.Join(tmp, "claude.sh")
 	fakeClaudeRecordingArgs(t, fakeClaude, argsFile)
 
-	orig := claudeBinary
-	claudeBinary = fakeClaude
-	t.Cleanup(func() { claudeBinary = orig })
+	orig := SetBinaryForTest(fakeClaude)
+	t.Cleanup(func() { SetBinaryForTest(orig) })
 
 	database := openTestDB(t)
 	ctx := context.Background()
@@ -116,7 +115,7 @@ func TestDiscussTurnIsReadOnlyAndConfiguresMCP(t *testing.T) {
 	require.Contains(args, "--mcp-config")
 	// discuss is read-only: exact gating, no Edit/Write/Bash.
 	require.Equal(
-		"Read,Glob,Grep,mcp__middleman__list_threads,mcp__middleman__get_thread,mcp__middleman__reply_to_thread",
+		"Read,Glob,Grep,mcp__middleman__list_threads,mcp__middleman__get_thread,mcp__middleman__reply_to_thread,mcp__middleman__start_thread",
 		allowedToolsArg(t, argsFile),
 	)
 }
@@ -155,7 +154,7 @@ func TestApplyTurnGetsEditTools(t *testing.T) {
 	require.Contains(args, "--mcp-config")
 	// apply gets the edit tools appended after the read-only + mcp set.
 	require.Equal(
-		"Read,Glob,Grep,mcp__middleman__list_threads,mcp__middleman__get_thread,mcp__middleman__reply_to_thread,Edit,Write,MultiEdit,Bash",
+		"Read,Glob,Grep,mcp__middleman__list_threads,mcp__middleman__get_thread,mcp__middleman__reply_to_thread,mcp__middleman__start_thread,Edit,Write,MultiEdit,Bash",
 		allowedToolsArg(t, argsFile),
 	)
 }
@@ -166,14 +165,16 @@ func TestSteerTurnIsReadOnlyAndCarriesTheMessage(t *testing.T) {
 	ctx := context.Background()
 
 	res, err := runner.SubmitTurn(ctx, SubmitTurnInput{
-		SessionID:       sess.ID,
-		WorktreePath:    tmp,
-		IsFirstTurn:     false,
-		Action:          "steer",
-		UserTurnType:    "user_message",
-		UserTurnContent: "Can you clarify why this needs a mutex?",
+		SessionID:    sess.ID,
+		WorktreePath: tmp,
+		IsFirstTurn:  false,
+		Action:       "steer",
+		UserTurnType: "user_message",
 		Threads: []ThreadContext{
-			{ID: 1, Path: "a.go", Line: 12, Side: "RIGHT", RootComment: "rename this"},
+			{
+				ID: 1, Path: "a.go", Line: 12, Side: "RIGHT", RootComment: "rename this",
+				StackedComments: []string{"Can you clarify why this needs a mutex?"},
+			},
 		},
 		MCP: &MCPConfig{Binary: "/bin/true", BaseURL: "http://127.0.0.1:8091", Owner: "local", Name: "demo", Number: int(sess.ID)},
 	})
@@ -187,10 +188,10 @@ func TestSteerTurnIsReadOnlyAndCarriesTheMessage(t *testing.T) {
 	require.Contains(a, "--mcp-config")
 	// steer is read-only: exact gating, no Edit/Write/Bash.
 	require.Equal(
-		"Read,Glob,Grep,mcp__middleman__list_threads,mcp__middleman__get_thread,mcp__middleman__reply_to_thread",
+		"Read,Glob,Grep,mcp__middleman__list_threads,mcp__middleman__get_thread,mcp__middleman__reply_to_thread,mcp__middleman__start_thread",
 		allowedToolsArg(t, argsFile),
 	)
-	// The steer prompt carries the reviewer's message AND instructs the reply tool.
+	// The steer prompt carries the reviewer's message (via StackedComments) AND instructs the reply tool.
 	require.Contains(a, "Can you clarify why this needs a mutex?")
 	require.Contains(a, "continue the discussion")
 }
