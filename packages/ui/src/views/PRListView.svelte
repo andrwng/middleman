@@ -9,6 +9,7 @@
   import WorktreeConversation
     from "../components/detail/WorktreeConversation.svelte";
   import ReviewSurface from "../components/detail/ReviewSurface.svelte";
+  import DocReviewSurface from "../components/detail/DocReviewSurface.svelte";
   import { isLocalSource } from "../utils/sources.js";
   import StackSidebar
     from "../components/detail/StackSidebar.svelte";
@@ -24,6 +25,8 @@
       number: number;
     } | null;
     detailTab?: "conversation" | "files";
+    docPath?: string | undefined;
+    basePath?: string;
     isSidebarCollapsed?: boolean;
     hideSidebar?: boolean;
     sidebarWidth?: number;
@@ -33,6 +36,8 @@
   let {
     selectedPR = null,
     detailTab = "files",
+    docPath,
+    basePath = "/",
     isSidebarCollapsed = false,
     hideSidebar = false,
     sidebarWidth = 340,
@@ -106,14 +111,26 @@
       </button>
     </div>
     {#if detailTab === "files"}
-      {#key `${selectedPR.owner}/${selectedPR.name}/${selectedPR.number}`}
-        <ReviewSurface
-          owner={selectedPR.owner}
-          name={selectedPR.name}
-          number={selectedPR.number}
-          pr={selectedPRDetail?.merge_request ?? null}
-        />
-      {/key}
+      {#if docPath}
+        {#key `${selectedPR.owner}/${selectedPR.name}/${selectedPR.number}/${docPath}`}
+          <DocReviewSurface
+            owner={selectedPR.owner}
+            name={selectedPR.name}
+            number={selectedPR.number}
+            path={docPath}
+            {basePath}
+          />
+        {/key}
+      {:else}
+        {#key `${selectedPR.owner}/${selectedPR.name}/${selectedPR.number}`}
+          <ReviewSurface
+            owner={selectedPR.owner}
+            name={selectedPR.name}
+            number={selectedPR.number}
+            pr={selectedPRDetail?.merge_request ?? null}
+          />
+        {/key}
+      {/if}
     {:else if isLocalPR}
       <WorktreeConversation
         owner={selectedPR.owner}
