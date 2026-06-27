@@ -727,6 +727,12 @@ func TestGetWorktreeMarkdownFiles(t *testing.T) {
 	notFoundResp, err := client.HTTP.GetWorktreesByIdMarkdownFilesWithResponse(ctx, 9999999)
 	require.NoError(err)
 	assert.Equal(http.StatusNotFound, notFoundResp.StatusCode())
+
+	// 404 for a worktree that exists in the DB but is marked removed.
+	require.NoError(database.MarkWorktreesNotInSet(ctx, repoID, []string{}))
+	removedResp, err := client.HTTP.GetWorktreesByIdMarkdownFilesWithResponse(ctx, w.ID)
+	require.NoError(err)
+	assert.Equal(http.StatusNotFound, removedResp.StatusCode())
 }
 
 func runGitWT(t *testing.T, dir string, args ...string) {
