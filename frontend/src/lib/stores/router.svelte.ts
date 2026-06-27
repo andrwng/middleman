@@ -12,7 +12,7 @@ export type Route =
       pin?: "soft" | "hard";
     }
   | { page: "workspaces-panel"; view: "empty"; emptyReason: string }
-  | { page: "pulls"; view: "list" | "board"; selected?: { owner: string; name: string; number: number }; tab?: "files" }
+  | { page: "pulls"; view: "list" | "board"; selected?: { owner: string; name: string; number: number }; tab?: "files"; docPath?: string }
   | { page: "issues"; selected?: { owner: string; name: string; number: number } }
   | { page: "settings" }
   | { page: "focus"; itemType: "pr" | "issue"; owner: string; name: string; number: number }
@@ -144,6 +144,21 @@ function parseRoute(fullPath: string): Route {
           number: parseInt(filesMatch[3]!, 10),
         },
         tab: "files",
+      };
+    }
+    const docMatch = rest.match(/^\/([^/]+)\/([^/]+)\/(\d+)\/doc$/);
+    if (docMatch) {
+      const sp = new URLSearchParams(search);
+      return {
+        page: "pulls",
+        view: "list",
+        selected: {
+          owner: docMatch[1]!,
+          name: docMatch[2]!,
+          number: parseInt(docMatch[3]!, 10),
+        },
+        tab: "files",
+        docPath: sp.get("path") ?? "",
       };
     }
     const match = rest.match(/^\/([^/]+)\/([^/]+)\/(\d+)$/);
