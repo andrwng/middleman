@@ -39,15 +39,6 @@ const localWorktreePull = {
   worktree_links: [],
 };
 
-const localWorktreeDetail = {
-  merge_request: localWorktreePull,
-  repo_owner: "local",
-  repo_name: LOCAL_REPO_NAME,
-  detail_loaded: true,
-  detail_fetched_at: "2026-06-01T00:00:00Z",
-  worktree_links: [],
-};
-
 const localWorktrees = {
   worktrees: [
     {
