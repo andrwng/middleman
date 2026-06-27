@@ -681,6 +681,54 @@ func TestAPILocalCommitsIncludeBranchHeads(t *testing.T) {
 	assert.Nil(headHeads) // 'feature' (current branch) is excluded
 }
 
+func TestGetWorktreeMarkdownFiles(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on PATH")
+	}
+	require := require.New(t)
+	assert := Assert.New(t)
+	srv, database := setupTestServer(t)
+	client := setupTestClient(t, srv)
+	ctx := context.Background()
+
+	dir := t.TempDir()
+	runGitWT(t, "", "init", "--initial-branch=main", dir)
+	runGitWT(t, dir, "config", "user.email", "test@example.com")
+	runGitWT(t, dir, "config", "user.name", "Test")
+
+	// Tracked markdown files: README.md at root and notes/x.md nested.
+	require.NoError(os.MkdirAll(filepath.Join(dir, "notes"), 0o755))
+	require.NoError(os.WriteFile(filepath.Join(dir, "README.md"), []byte("# Root\n"), 0o644))
+	require.NoError(os.WriteFile(filepath.Join(dir, "notes", "x.md"), []byte("# X\n"), 0o644))
+	// Non-markdown file — must not appear in results.
+	require.NoError(os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0o644))
+	runGitWT(t, dir, "add", "README.md", "notes/x.md", "main.go")
+	runGitWT(t, dir, "commit", "-m", "initial")
+
+	repoID, err := database.UpsertLocalRepo(ctx, "demo")
+	require.NoError(err)
+	canonDir, err := filepath.EvalSymlinks(dir)
+	require.NoError(err)
+	w, err := database.UpsertWorktree(ctx, repoID, db.ScannedWorktree{
+		Path:   canonDir,
+		Branch: "main",
+	})
+	require.NoError(err)
+
+	// Happy path: two tracked markdown files, sorted.
+	resp, err := client.HTTP.GetWorktreesByIdMarkdownFilesWithResponse(ctx, w.ID)
+	require.NoError(err)
+	require.Equal(http.StatusOK, resp.StatusCode())
+	require.NotNil(resp.JSON200)
+	require.NotNil(resp.JSON200.Files)
+	assert.Equal([]string{"README.md", "notes/x.md"}, *resp.JSON200.Files)
+
+	// 404 for a worktree that was never inserted.
+	notFoundResp, err := client.HTTP.GetWorktreesByIdMarkdownFilesWithResponse(ctx, 9999999)
+	require.NoError(err)
+	assert.Equal(http.StatusNotFound, notFoundResp.StatusCode())
+}
+
 func runGitWT(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)

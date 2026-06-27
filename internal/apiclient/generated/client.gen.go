@@ -644,6 +644,15 @@ type MREvent struct {
 	Summary        string    `json:"Summary"`
 }
 
+// MarkdownFilesResponse defines model for MarkdownFilesResponse.
+type MarkdownFilesResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+
+	// Files Repo-relative markdown file paths in the worktree (tracked + untracked, sorted).
+	Files *[]string `json:"files"`
+}
+
 // MergePRBody defines model for MergePRBody.
 type MergePRBody struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -1807,6 +1816,9 @@ type ClientInterface interface {
 
 	// GetWorktreesByIdDiff request
 	GetWorktreesByIdDiff(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetWorktreesByIdMarkdownFiles request
+	GetWorktreesByIdMarkdownFiles(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 func (c *Client) GetActivity(ctx context.Context, params *GetActivityParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -3107,6 +3119,18 @@ func (c *Client) GetWorktreesByIdChangedFiles(ctx context.Context, id int64, req
 
 func (c *Client) GetWorktreesByIdDiff(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetWorktreesByIdDiffRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetWorktreesByIdMarkdownFiles(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetWorktreesByIdMarkdownFilesRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -7789,6 +7813,40 @@ func NewGetWorktreesByIdDiffRequest(server string, id int64) (*http.Request, err
 	return req, nil
 }
 
+// NewGetWorktreesByIdMarkdownFilesRequest generates requests for GetWorktreesByIdMarkdownFiles
+func NewGetWorktreesByIdMarkdownFilesRequest(server string, id int64) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/worktrees/%s/markdown-files", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
 	for _, r := range c.RequestEditors {
 		if err := r(ctx, req); err != nil {
@@ -8134,6 +8192,9 @@ type ClientWithResponsesInterface interface {
 
 	// GetWorktreesByIdDiffWithResponse request
 	GetWorktreesByIdDiffWithResponse(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*GetWorktreesByIdDiffResponse, error)
+
+	// GetWorktreesByIdMarkdownFilesWithResponse request
+	GetWorktreesByIdMarkdownFilesWithResponse(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*GetWorktreesByIdMarkdownFilesResponse, error)
 }
 
 type GetActivityResponse struct {
@@ -10076,6 +10137,29 @@ func (r GetWorktreesByIdDiffResponse) StatusCode() int {
 	return 0
 }
 
+type GetWorktreesByIdMarkdownFilesResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *MarkdownFilesResponse
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r GetWorktreesByIdMarkdownFilesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetWorktreesByIdMarkdownFilesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 // GetActivityWithResponse request returning *GetActivityResponse
 func (c *ClientWithResponses) GetActivityWithResponse(ctx context.Context, params *GetActivityParams, reqEditors ...RequestEditorFn) (*GetActivityResponse, error) {
 	rsp, err := c.GetActivity(ctx, params, reqEditors...)
@@ -11031,6 +11115,15 @@ func (c *ClientWithResponses) GetWorktreesByIdDiffWithResponse(ctx context.Conte
 		return nil, err
 	}
 	return ParseGetWorktreesByIdDiffResponse(rsp)
+}
+
+// GetWorktreesByIdMarkdownFilesWithResponse request returning *GetWorktreesByIdMarkdownFilesResponse
+func (c *ClientWithResponses) GetWorktreesByIdMarkdownFilesWithResponse(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*GetWorktreesByIdMarkdownFilesResponse, error) {
+	rsp, err := c.GetWorktreesByIdMarkdownFiles(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetWorktreesByIdMarkdownFilesResponse(rsp)
 }
 
 // ParseGetActivityResponse parses an HTTP response from a GetActivityWithResponse call
@@ -13716,6 +13809,39 @@ func ParseGetWorktreesByIdDiffResponse(rsp *http.Response) (*GetWorktreesByIdDif
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest WorktreeDiffResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetWorktreesByIdMarkdownFilesResponse parses an HTTP response from a GetWorktreesByIdMarkdownFilesWithResponse call
+func ParseGetWorktreesByIdMarkdownFilesResponse(rsp *http.Response) (*GetWorktreesByIdMarkdownFilesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetWorktreesByIdMarkdownFilesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest MarkdownFilesResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

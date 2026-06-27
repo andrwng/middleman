@@ -1206,6 +1206,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/worktrees/{id}/markdown-files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get worktrees by ID markdown files */
+        get: operations["get-worktrees-by-id-markdown-files"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1959,6 +1976,16 @@ export interface components {
             /** Format: int64 */
             PlatformID: number | null;
             Summary: string;
+        };
+        MarkdownFilesResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/MarkdownFilesResponse.json
+             */
+            readonly $schema?: string;
+            /** @description Repo-relative markdown file paths in the worktree (tracked + untracked, sorted). */
+            files: string[] | null;
         };
         MergePRBody: {
             /**
@@ -5503,6 +5530,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorktreeDiffResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-worktrees-by-id-markdown-files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MarkdownFilesResponse"];
                 };
             };
             /** @description Error */

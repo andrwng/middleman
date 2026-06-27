@@ -397,3 +397,8 @@ type localResolveResponse struct {
 type localResolveOutput struct {
 	Body localResolveResponse
 }
+
+// markdownFilesResponse is the response for listing a worktree's markdown files.
+type markdownFilesResponse struct {
+	Files []string `json:"files" doc:"Repo-relative markdown file paths in the worktree (tracked + untracked, sorted)."`
+}

@@ -388,6 +388,7 @@ func (s *Server) registerAPI(api huma.API) {
 	huma.Get(api, "/worktrees/running-turns", s.listWorktreesRunningTurns)
 	huma.Get(api, "/worktrees/{id}/changed-files", s.getWorktreeChangedFiles)
 	huma.Get(api, "/worktrees/{id}/diff", s.getWorktreeDiff)
+	huma.Get(api, "/worktrees/{id}/markdown-files", s.getWorktreeMarkdownFiles)
 	huma.Get(api, "/local/resolve", s.resolveLocalWorktreeByPath)
 	huma.Get(api, "/repos/{owner}/{name}", s.getRepo)
 	huma.Get(api, "/repos/{owner}/{name}/comment-autocomplete", s.getCommentAutocomplete)
@@ -1815,6 +1816,34 @@ func (s *Server) getWorktreeChangedFiles(
 		})
 	}
 	return &getWorktreeChangedFilesOutput{Body: out}, nil
+}
+
+type getWorktreeMarkdownFilesInput struct {
+	ID int64 `path:"id"`
+}
+
+type getWorktreeMarkdownFilesOutput struct {
+	Body markdownFilesResponse
+}
+
+func (s *Server) getWorktreeMarkdownFiles(
+	ctx context.Context, in *getWorktreeMarkdownFilesInput,
+) (*getWorktreeMarkdownFilesOutput, error) {
+	w, err := s.db.GetWorktreeByID(ctx, in.ID)
+	if err != nil {
+		return nil, huma.Error404NotFound("worktree not found")
+	}
+	if w.RemovedAt != nil {
+		return nil, huma.Error404NotFound("worktree no longer exists on disk")
+	}
+	files, err := worktrees.MarkdownFiles(ctx, w.Path)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("listing markdown files failed: " + err.Error())
+	}
+	if files == nil {
+		files = []string{}
+	}
+	return &getWorktreeMarkdownFilesOutput{Body: markdownFilesResponse{Files: files}}, nil
 }
 
 // lookupBaseRefForWorktree finds the config.Repo entry that owns
