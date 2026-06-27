@@ -88,9 +88,11 @@
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === "ArrowDown") {
       e.preventDefault();
+      if (filtered.length === 0) return;
       highlightIndex = Math.min(highlightIndex + 1, filtered.length - 1);
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
+      if (filtered.length === 0) return;
       highlightIndex = Math.max(highlightIndex - 1, 0);
     } else if (e.key === "Enter") {
       e.preventDefault();

@@ -88,7 +88,7 @@ describe("DocPalette", () => {
     expect(href).toContain(encodeURIComponent("api/spec.md"));
   });
 
-  it("each row has an <a> href ending with /pulls/local/redpanda/8/doc?path=<encoded>", async () => {
+  it("each row has an <a> href with basePath-prefixed /pulls/local/redpanda/8/doc?path=<encoded>", async () => {
     renderPalette();
     await new Promise((r) => setTimeout(r, 0));
     const rows = screen.getAllByRole("option");
@@ -97,8 +97,11 @@ describe("DocPalette", () => {
       const anchors = row.querySelectorAll("a");
       for (const link of anchors) {
         const href = link.getAttribute("href") ?? "";
-        // Each href should include base-path-prefixed /pulls/.../doc?path=
-        expect(href).toMatch(/\/pulls\/local\/redpanda\/8\/doc\?path=/);
+        // Verify the basePath prefix ("/app") is present — a regression dropping
+        // the prefix would produce "/pulls/..." which would NOT match this anchor.
+        expect(href).toMatch(/^\/app\/pulls\/local\/redpanda\/8\/doc\?path=/);
+        // Also verify the encoded path query param is present.
+        expect(href).toContain("path=");
       }
     }
   });
