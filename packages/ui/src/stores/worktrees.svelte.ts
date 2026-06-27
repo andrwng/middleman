@@ -176,6 +176,18 @@ export function createWorktreesStore(opts: WorktreesStoreOptions) {
     }
   }
 
+  async function loadMarkdownFiles(id: number): Promise<string[]> {
+    try {
+      const { data, error } = await apiClient.GET("/worktrees/{id}/markdown-files", {
+        params: { path: { id } },
+      });
+      if (error) return [];
+      return data?.files ?? [];
+    } catch {
+      return [];
+    }
+  }
+
   async function loadWorktreeDiff(id: number): Promise<void> {
     const prev = diffById[id] ?? {
       base: null,
@@ -228,6 +240,7 @@ export function createWorktreesStore(opts: WorktreesStoreOptions) {
     worktreesByRepo,
     loadWorktrees,
     pollRunningTurns,
+    loadMarkdownFiles,
     getChangedFiles,
     loadChangedFiles,
     getDiff,
