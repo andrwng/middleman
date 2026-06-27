@@ -10,6 +10,7 @@
     from "../components/detail/WorktreeConversation.svelte";
   import ReviewSurface from "../components/detail/ReviewSurface.svelte";
   import DocReviewSurface from "../components/detail/DocReviewSurface.svelte";
+  import DocPalette from "../components/detail/DocPalette.svelte";
   import { isLocalSource } from "../utils/sources.js";
   import StackSidebar
     from "../components/detail/StackSidebar.svelte";
@@ -17,6 +18,8 @@
   const { isSidebarToggleEnabled, toggleSidebar } = getSidebar();
   const { detail: detailStore } = getStores();
   const navigate = getNavigate();
+
+  let docPaletteOpen = $state(false);
 
   interface Props {
     selectedPR?: {
@@ -109,6 +112,15 @@
       >
         Activity
       </button>
+      {#if isLocalPR}
+        <button
+          class="detail-tab doc-open"
+          onclick={() => (docPaletteOpen = true)}
+          title="Open a doc (rendered)"
+        >
+          Docs
+        </button>
+      {/if}
     </div>
     {#if detailTab === "files"}
       {#if docPath}
@@ -143,6 +155,16 @@
         name={selectedPR.name}
         number={selectedPR.number}
         hideTabs={true}
+      />
+    {/if}
+    {#if isLocalPR}
+      <DocPalette
+        owner={selectedPR.owner}
+        name={selectedPR.name}
+        number={selectedPR.number}
+        {basePath}
+        open={docPaletteOpen}
+        onClose={() => (docPaletteOpen = false)}
       />
     {/if}
   {:else}
