@@ -66,15 +66,30 @@
 
   let rangeSnapshot = $state<AnchorRange | null>(null);
   let openComposerKey = $state<string | null>(null);
+  // Tracks which block index (into bodyEl.children) is the active target for
+  // the composer so we can position the overlay next to it.
+  let activeBlockIdx = $state<number | null>(null);
+  // CSS top offset (px) for the positioned composer overlay, relative to
+  // .rmd-body. Updated by the positioning effect below.
+  let composerTop = $state<number | null>(null);
+
+  function findBlockIdx(start: number, end: number): number | null {
+    for (const [idx, range] of doc.blockRangeByIdx) {
+      if (range[0] === start && range[1] === end) return idx;
+    }
+    return null;
+  }
 
   function openComposerForBlock(start: number, end: number): void {
     rangeSnapshot = { startLine: start, endLine: end, side: renderedSide };
     openComposerKey = `${end}:${renderedSide}`;
+    activeBlockIdx = findBlockIdx(start, end);
   }
 
   function closeComposer(): void {
     openComposerKey = null;
     rangeSnapshot = null;
+    activeBlockIdx = null;
   }
 
   function saveDraft(body: string): void {
@@ -99,6 +114,7 @@
     rangeSnapshot = { startLine: start, endLine: end, side: renderedSide };
     openAskKey = `${end}:${renderedSide}`;
     askError = null;
+    activeBlockIdx = findBlockIdx(start, end);
   }
 
   function closeAsk(): void {
@@ -106,6 +122,7 @@
     rangeSnapshot = null;
     askError = null;
     askSubmitting = false;
+    activeBlockIdx = null;
   }
 
   async function submitAsk(question: string): Promise<void> {
@@ -489,6 +506,47 @@
       mountedInstances.clear();
     };
   });
+
+  // Computes the vertical offset (relative to .rmd-body) at which the
+  // composer overlay should appear — the bottom edge of the active block
+  // element plus the body element's own offsetTop within .rmd-view.
+  // Runs after the card-injection effect so injected .rmd-thread-wrap nodes
+  // are already present; the walk above uses a snapshot of children taken
+  // BEFORE any insertions so this read is safe.
+  $effect(() => {
+    const idx = activeBlockIdx;
+    if (idx === null || !bodyEl) {
+      composerTop = null;
+      return;
+    }
+    // The original block elements are the direct children of bodyEl that
+    // are NOT injected wraps. The card-injection $effect inserts
+    // .rmd-thread-wrap elements via el.after(wrap), so they appear in
+    // bodyEl.children interleaved with original blocks. We must skip them
+    // to find the Nth original block (same index the card-injection walk
+    // uses, which took its snapshot before any insertions).
+    const allChildren = Array.from(bodyEl.children) as HTMLElement[];
+    let original = 0;
+    let target: HTMLElement | null = null;
+    for (const child of allChildren) {
+      if (child.classList.contains("rmd-thread-wrap")) continue;
+      if (original === idx) {
+        target = child;
+        break;
+      }
+      original++;
+    }
+    if (!target) {
+      composerTop = null;
+      return;
+    }
+    // offsetTop is relative to the nearest positioned ancestor.
+    // bodyEl has no position set (static), so offsetTop is relative to
+    // the nearest positioned ancestor above it — typically .rmd-view.
+    // We want the composer to appear just below the block, so we use
+    // bodyEl.offsetTop + target.offsetTop + target.offsetHeight.
+    composerTop = bodyEl.offsetTop + target.offsetTop + target.offsetHeight;
+  });
 </script>
 
 <div class="rmd-view">
@@ -510,7 +568,12 @@
   {/if}
 
   {#if openComposerKey && rangeSnapshot}
-    <div class="rmd-composer-wrap">
+    <div
+      class="rmd-composer-wrap"
+      class:rmd-composer-wrap--positioned={composerTop !== null}
+      style={composerTop !== null ? `top: ${composerTop}px` : undefined}
+      data-rmd-block-idx={activeBlockIdx !== null ? String(activeBlockIdx) : undefined}
+    >
       <DiffComposer
         anchor={{ line: rangeSnapshot.endLine, side: rangeSnapshot.side, startLine: rangeSnapshot.startLine }}
         onsave={saveDraft}
@@ -520,7 +583,12 @@
   {/if}
 
   {#if openAskKey && rangeSnapshot}
-    <div class="rmd-composer-wrap">
+    <div
+      class="rmd-composer-wrap"
+      class:rmd-composer-wrap--positioned={composerTop !== null}
+      style={composerTop !== null ? `top: ${composerTop}px` : undefined}
+      data-rmd-block-idx={activeBlockIdx !== null ? String(activeBlockIdx) : undefined}
+    >
       <AIAskComposer
         anchor={{ line: rangeSnapshot.endLine, side: rangeSnapshot.side, startLine: rangeSnapshot.startLine }}
         error={askError}
@@ -534,6 +602,7 @@
 
 <style>
   .rmd-view {
+    position: relative;
     padding: 16px 24px;
     background: var(--diff-bg);
   }
@@ -784,5 +853,16 @@
   .rmd-composer-wrap {
     position: relative;
     margin-top: 12px;
+  }
+  /* When we have a computed block offset, switch to absolute positioning
+     so the composer appears at the active block's bottom edge rather than
+     at the document's bottom. The z-index keeps it above thread cards.
+     margin-top is cleared because the top property drives placement. */
+  .rmd-composer-wrap--positioned {
+    position: absolute;
+    left: 24px;
+    right: 24px;
+    margin-top: 0;
+    z-index: 10;
   }
 </style>
