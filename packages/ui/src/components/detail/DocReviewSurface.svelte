@@ -14,7 +14,7 @@
   const { owner, name, number, path, basePath }: Props = $props();
 
   const navigate = getNavigate();
-  const { ai: aiStore, reviewThreads: reviewThreadsStore } = getStores();
+  const { ai: aiStore, diff: diffStore, reviewThreads: reviewThreadsStore } = getStores();
 
   // In-app navigation uses an unprefixed path; navigate() applies the base
   // prefix internally.
@@ -39,11 +39,13 @@
   // normally makes on mount won't happen. Trigger them here so that
   // RenderedMarkdownView can display existing AI threads and review threads.
   onMount(() => {
+    diffStore.setActivePR(owner, name, number);
     aiStore.start(owner, name, number);
     void reviewThreadsStore.load(owner, name, number);
     return () => {
       aiStore.stop();
       reviewThreadsStore.clear();
+      diffStore.setActivePR("", "", 0);
     };
   });
 </script>

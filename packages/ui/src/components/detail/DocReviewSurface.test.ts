@@ -25,8 +25,9 @@ function stubClient(): MiddlemanClient {
 
 function makeStores() {
   const client = stubClient();
+  const diff = createDiffStore({ client });
   return {
-    diff: createDiffStore({ client }),
+    diff,
     ai: createAIStore(),
     detail: createDetailStore({ client: null as unknown as MiddlemanClient }),
     reviewThreads: createReviewThreadsStore({ client }),
@@ -35,6 +36,7 @@ function makeStores() {
 
 function renderSurface(docPath = "docs/README.md") {
   const navigateFn = vi.fn();
+  const stores = makeStores();
   const result = render(DocReviewSurface, {
     props: {
       owner: "local",
@@ -44,11 +46,11 @@ function renderSurface(docPath = "docs/README.md") {
       basePath: "/",
     },
     context: new Map<symbol, unknown>([
-      [STORES_KEY, makeStores()],
+      [STORES_KEY, stores],
       [NAVIGATE_KEY, navigateFn],
     ]),
   });
-  return { ...result, navigateFn };
+  return { ...result, navigateFn, stores };
 }
 
 afterEach(() => {
@@ -104,5 +106,38 @@ describe("DocReviewSurface", () => {
     const href = link.getAttribute("href") ?? "";
     expect(href).toContain("/myapp/pulls/");
     expect(href).toContain(encodeURIComponent("docs/guide.md"));
+  });
+
+  it("sets the diff store active PR on mount and resets it on unmount", () => {
+    const { stores } = renderSurface();
+    vi.spyOn(stores.diff, "setActivePR");
+
+    // At this point the component has already mounted; spy was attached after.
+    // Re-render with the spy in place so we can verify mount calls.
+    cleanup();
+
+    const navigateFn = vi.fn();
+    const stores2 = makeStores();
+    vi.spyOn(stores2.diff, "setActivePR");
+
+    render(DocReviewSurface, {
+      props: {
+        owner: "local",
+        name: "demo",
+        number: 42,
+        path: "docs/README.md",
+        basePath: "/",
+      },
+      context: new Map<symbol, unknown>([
+        [STORES_KEY, stores2],
+        [NAVIGATE_KEY, navigateFn],
+      ]),
+    });
+
+    expect(stores2.diff.setActivePR).toHaveBeenCalledWith("local", "demo", 42);
+
+    cleanup();
+
+    expect(stores2.diff.setActivePR).toHaveBeenLastCalledWith("", "", 0);
   });
 });
