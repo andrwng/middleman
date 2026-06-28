@@ -80,10 +80,38 @@
     return null;
   }
 
+  // Computes the CSS top offset (px) for the composer overlay relative to
+  // .rmd-view, given a block index. Shared by the open-composer functions
+  // (called synchronously so composerTop is set before the first render of
+  // the composer, preventing a flash to the document bottom) and by the
+  // positioning $effect below (which re-runs whenever activeBlockIdx or the
+  // DOM changes, keeping the position correct after card injection or
+  // scroll).
+  function computeBlockBottom(idx: number | null): number | null {
+    if (idx === null || !bodyEl) return null;
+    const allChildren = Array.from(bodyEl.children) as HTMLElement[];
+    let original = 0;
+    let target: HTMLElement | null = null;
+    for (const child of allChildren) {
+      if (child.classList.contains("rmd-thread-wrap")) continue;
+      if (original === idx) {
+        target = child;
+        break;
+      }
+      original++;
+    }
+    if (!target) return null;
+    return bodyEl.offsetTop + target.offsetTop + target.offsetHeight;
+  }
+
   function openComposerForBlock(start: number, end: number): void {
     rangeSnapshot = { startLine: start, endLine: end, side: renderedSide };
     openComposerKey = `${end}:${renderedSide}`;
     activeBlockIdx = findBlockIdx(start, end);
+    // Compute composerTop synchronously so the composer renders already
+    // positioned on its first frame, avoiding a flash to the document bottom
+    // followed by DiffComposer's scrollIntoView jumping the page.
+    composerTop = computeBlockBottom(activeBlockIdx);
   }
 
   function closeComposer(): void {
@@ -115,6 +143,8 @@
     openAskKey = `${end}:${renderedSide}`;
     askError = null;
     activeBlockIdx = findBlockIdx(start, end);
+    // Same synchronous positioning as openComposerForBlock.
+    composerTop = computeBlockBottom(activeBlockIdx);
   }
 
   function closeAsk(): void {
@@ -507,45 +537,16 @@
     };
   });
 
-  // Computes the vertical offset (relative to .rmd-body) at which the
-  // composer overlay should appear — the bottom edge of the active block
-  // element plus the body element's own offsetTop within .rmd-view.
-  // Runs after the card-injection effect so injected .rmd-thread-wrap nodes
-  // are already present; the walk above uses a snapshot of children taken
-  // BEFORE any insertions so this read is safe.
+  // Re-runs whenever activeBlockIdx changes or the DOM layout changes
+  // (e.g., after the card-injection $effect inserts .rmd-thread-wrap
+  // nodes that shift block offsets). The open-composer functions above
+  // already call computeBlockBottom synchronously on open, so this
+  // effect is a correctness fallback — it keeps composerTop accurate
+  // after any post-open DOM mutations rather than the primary
+  // positioning source.
   $effect(() => {
     const idx = activeBlockIdx;
-    if (idx === null || !bodyEl) {
-      composerTop = null;
-      return;
-    }
-    // The original block elements are the direct children of bodyEl that
-    // are NOT injected wraps. The card-injection $effect inserts
-    // .rmd-thread-wrap elements via el.after(wrap), so they appear in
-    // bodyEl.children interleaved with original blocks. We must skip them
-    // to find the Nth original block (same index the card-injection walk
-    // uses, which took its snapshot before any insertions).
-    const allChildren = Array.from(bodyEl.children) as HTMLElement[];
-    let original = 0;
-    let target: HTMLElement | null = null;
-    for (const child of allChildren) {
-      if (child.classList.contains("rmd-thread-wrap")) continue;
-      if (original === idx) {
-        target = child;
-        break;
-      }
-      original++;
-    }
-    if (!target) {
-      composerTop = null;
-      return;
-    }
-    // offsetTop is relative to the nearest positioned ancestor.
-    // bodyEl has no position set (static), so offsetTop is relative to
-    // the nearest positioned ancestor above it — typically .rmd-view.
-    // We want the composer to appear just below the block, so we use
-    // bodyEl.offsetTop + target.offsetTop + target.offsetHeight.
-    composerTop = bodyEl.offsetTop + target.offsetTop + target.offsetHeight;
+    composerTop = computeBlockBottom(idx);
   });
 </script>
 
