@@ -383,7 +383,11 @@
       currentBlockStart = startLineByTokenIdx.get(i) ?? 1;
       const tok = tokens[i]!;
       const rawText = (tok as { raw?: string }).raw ?? "";
-      const endLine = currentBlockStart + countNewlines(rawText);
+      // Trailing blank lines belong to the separator, not the block. Excluding
+      // them keeps a block's [start, end) range from abutting the next block,
+      // which previously caused a boundary comment to match two blocks.
+      const contentRaw = rawText.replace(/\n+$/, "");
+      const endLine = currentBlockStart + countNewlines(contentRaw) + 1;
       if (tok.type !== "space") {
         if (blockOverlapsChanged(currentBlockStart, endLine, changedLines)) {
           changedIndexes.add(renderIdx);

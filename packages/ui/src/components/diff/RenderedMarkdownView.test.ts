@@ -273,4 +273,144 @@ describe("RenderedMarkdownView", () => {
     expect(wrap).toBeTruthy();
     expect(wrap?.classList.contains("rmd-composer-wrap--positioned")).toBe(true);
   });
+
+  // Block range boundary tests: a comment anchored to a block at a boundary
+  // must render exactly one inline card, not two.
+  //
+  // Root cause (pre-fix): marked v17 includes a token's trailing blank line(s)
+  // in token.raw. The block endLine was computed as
+  //   currentBlockStart + countNewlines(rawText)
+  // so a heading "# Hello\n\n" got endLine=3 — its half-open range [1,3) abutted
+  // the paragraph's [3,4), and a comment saved via the heading's + button
+  // (which uses endLine=3 as anchor) matched BOTH blocks through
+  // anchorOverlapsBlock's >= boundary, injecting two .rmd-thread-wrap elements.
+  //
+  // The fix strips trailing blank lines from rawText before computing endLine,
+  // so the heading ends at 2 (not 3) and its range no longer abuts the next block.
+
+  it("a comment on a heading renders exactly one inline card (no boundary double-injection)", async () => {
+    const stores = makeStores();
+    stores.diff.setActivePR("local", "demo", 1);
+
+    // doc: "# Hello\n\nsome text here\n" → heading on line 1, paragraph on line 3.
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ content: "# Hello\n\nsome text here\n", truncated: false }),
+    }) as unknown as Response);
+
+    const { container } = renderViewWithStores(stores);
+    await settle();
+
+    expect(container.querySelectorAll(".rmd-thread-wrap").length).toBe(0);
+
+    // Click the + button on the heading block (index 0) to open the composer.
+    const addBtns = container.querySelectorAll(".rmd-add-comment-btn");
+    expect(addBtns.length).toBeGreaterThanOrEqual(1);
+    await fireEvent.click(addBtns[0] as HTMLElement);
+    await settle();
+
+    // Type something into the composer's textarea.
+    const textarea = container.querySelector<HTMLTextAreaElement>(".composer__textarea");
+    expect(textarea).toBeTruthy();
+    await fireEvent.input(textarea!, { target: { value: "heading comment" } });
+    await settle();
+
+    // Click "Save draft" to call saveDraft, which uses the block's endLine as anchor.
+    const saveBtn = container.querySelector<HTMLButtonElement>(".composer__btn--primary");
+    expect(saveBtn).toBeTruthy();
+    await fireEvent.click(saveBtn!);
+    await settle();
+
+    // The draft is now in the store; the card-injection $effect re-runs.
+    // With the boundary double-injection bug, the heading's endLine is inflated
+    // to include the trailing blank line separator, making the saved anchor
+    // match BOTH the heading block and the paragraph — rendering 2 cards.
+    // After the fix the heading's endLine is trimmed, so only 1 card appears.
+    expect(container.querySelectorAll(".rmd-thread-wrap").length).toBe(1);
+  });
+
+  it("a comment on the paragraph renders exactly one inline card", async () => {
+    const stores = makeStores();
+    stores.diff.setActivePR("local", "demo", 1);
+
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ content: "# Hello\n\nsome text here\n", truncated: false }),
+    }) as unknown as Response);
+
+    const { container } = renderViewWithStores(stores);
+    await settle();
+
+    expect(container.querySelectorAll(".rmd-thread-wrap").length).toBe(0);
+
+    // Comment anchored to line 3 (the paragraph's own source line).
+    stores.diff.addDraftComment({
+      path: "doc.md",
+      line: 3,
+      side: "RIGHT",
+      commitSha: "abc",
+      body: "para comment",
+    });
+    await settle();
+
+    expect(container.querySelectorAll(".rmd-thread-wrap").length).toBe(1);
+  });
+
+  it("a comment on a single-line doc renders exactly one inline card", async () => {
+    const stores = makeStores();
+    stores.diff.setActivePR("local", "demo", 1);
+
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ content: "only line\n", truncated: false }),
+    }) as unknown as Response);
+
+    const { container } = renderViewWithStores(stores);
+    await settle();
+
+    expect(container.querySelectorAll(".rmd-thread-wrap").length).toBe(0);
+
+    stores.diff.addDraftComment({
+      path: "doc.md",
+      line: 1,
+      side: "RIGHT",
+      commitSha: "abc",
+      body: "single line comment",
+    });
+    await settle();
+
+    expect(container.querySelectorAll(".rmd-thread-wrap").length).toBe(1);
+  });
+
+  it("a comment on the last block (no trailing newline) renders exactly one inline card", async () => {
+    const stores = makeStores();
+    stores.diff.setActivePR("local", "demo", 1);
+
+    // No trailing newline on the last block.
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ content: "first para\n\nlast para", truncated: false }),
+    }) as unknown as Response);
+
+    const { container } = renderViewWithStores(stores);
+    await settle();
+
+    expect(container.querySelectorAll(".rmd-thread-wrap").length).toBe(0);
+
+    // Comment on line 3 (start of the last paragraph, no trailing newline).
+    stores.diff.addDraftComment({
+      path: "doc.md",
+      line: 3,
+      side: "RIGHT",
+      commitSha: "abc",
+      body: "last block comment",
+    });
+    await settle();
+
+    expect(container.querySelectorAll(".rmd-thread-wrap").length).toBe(1);
+  });
 });
