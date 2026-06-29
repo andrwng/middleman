@@ -1,5 +1,63 @@
 import type { Page, Route } from "@playwright/test";
 
+// Local worktree fixture — owner "local", repo "myproject", worktree ID 7.
+// The worktree ID is used as the PR number in the local-pulls URL pattern
+// /pulls/local/<repo_name>/<id> and in worktree API calls /worktrees/<id>/...
+const LOCAL_WORKTREE_ID = 7;
+const LOCAL_REPO_NAME = "myproject";
+const LOCAL_DOC_CONTENT = "# Hello\n\nsome text here\n";
+const LOCAL_DIAGRAM_CONTENT = "# Diagram\n\n```mermaid\ngraph TD;\n  A-->B;\n```\n";
+
+const localWorktreePull = {
+  ID: LOCAL_WORKTREE_ID,
+  RepoID: 99,
+  GitHubID: 0,
+  Number: LOCAL_WORKTREE_ID,
+  URL: "",
+  Title: "Local worktree: myproject",
+  Author: "",
+  State: "open",
+  IsDraft: false,
+  Body: "",
+  HeadBranch: "main",
+  BaseBranch: "main",
+  Additions: 0,
+  Deletions: 0,
+  CommentCount: 0,
+  ReviewDecision: "",
+  CIStatus: "",
+  CIChecksJSON: "[]",
+  CreatedAt: "2026-06-01T00:00:00Z",
+  UpdatedAt: "2026-06-01T00:00:00Z",
+  LastActivityAt: "2026-06-01T00:00:00Z",
+  MergedAt: null,
+  ClosedAt: null,
+  KanbanStatus: "new",
+  Starred: false,
+  repo_owner: "local",
+  repo_name: LOCAL_REPO_NAME,
+  platform_host: "",
+  worktree_links: [],
+};
+
+const localWorktrees = {
+  worktrees: [
+    {
+      id: LOCAL_WORKTREE_ID,
+      repo_owner: "local",
+      repo_name: LOCAL_REPO_NAME,
+      path: "/home/dev/myproject",
+      branch: "main",
+      head_sha: "abc123",
+      is_detached: false,
+      is_locked: false,
+      is_prunable: false,
+      discovered_at: "2026-06-01T00:00:00Z",
+      last_seen_at: "2026-06-01T00:00:00Z",
+    },
+  ],
+};
+
 const pulls = [
   {
     ID: 1,
@@ -181,7 +239,12 @@ async function fulfillJson(route: Route, body: unknown, status = 200): Promise<v
 
 export async function mockApi(page: Page): Promise<void> {
   // Deep-clone so mutations (e.g. PATCH) don't leak between tests.
-  const localPulls: typeof pulls = JSON.parse(JSON.stringify(pulls));
+  // Append the local-worktree pull so it appears in the sidebar list and
+  // the singlePrMatch handler can find it by owner/name/number.
+  const localPulls: (typeof pulls[number] | typeof localWorktreePull)[] = [
+    ...JSON.parse(JSON.stringify(pulls)),
+    JSON.parse(JSON.stringify(localWorktreePull)),
+  ];
 
   await page.route("**/api/v1/**", async (route) => {
     const url = new URL(route.request().url());
@@ -280,6 +343,92 @@ export async function mockApi(page: Page): Promise<void> {
         detail_fetched_at: "2026-03-30T14:00:00Z",
         worktree_links: pr.worktree_links,
       });
+      return;
+    }
+
+    // --- Local worktree endpoints ---
+
+    if (method === "GET" && pathname === "/api/v1/worktrees") {
+      await fulfillJson(route, localWorktrees);
+      return;
+    }
+
+    if (method === "GET" && pathname === "/api/v1/worktrees/running-turns") {
+      await fulfillJson(route, { worktree_ids: [] });
+      return;
+    }
+
+    const markdownFilesMatch = pathname.match(
+      /^\/api\/v1\/worktrees\/(\d+)\/markdown-files$/,
+    );
+    if (method === "GET" && markdownFilesMatch) {
+      await fulfillJson(route, { files: ["README.md", "diagram.md"] });
+      return;
+    }
+
+    // Blob endpoint — serves live working-tree content for the doc review.
+    // Pattern: /api/v1/repos/<owner>/<name>/pulls/<number>/blob?path=...&sha=WORKING-TREE
+    const blobMatch = pathname.match(
+      /^\/api\/v1\/repos\/([^/]+)\/([^/]+)\/pulls\/(\d+)\/blob$/,
+    );
+    if (method === "GET" && blobMatch) {
+      const blobOwner = blobMatch[1];
+      const blobPath = url.searchParams.get("path") ?? "";
+      if (blobOwner === "local" && blobPath === "README.md") {
+        await fulfillJson(route, { content: LOCAL_DOC_CONTENT, truncated: false });
+      } else if (blobOwner === "local" && blobPath === "diagram.md") {
+        await fulfillJson(route, { content: LOCAL_DIAGRAM_CONTENT, truncated: false });
+      } else {
+        await fulfillJson(route, { error: "Not found" }, 404);
+      }
+      return;
+    }
+
+    // Review threads for local worktree (empty list — no pre-existing threads).
+    const reviewThreadsMatch = pathname.match(
+      /^\/api\/v1\/repos\/local\/[^/]+\/pulls\/\d+\/review-threads$/,
+    );
+    if (method === "GET" && reviewThreadsMatch) {
+      await fulfillJson(route, { threads: [] });
+      return;
+    }
+
+    // AI threads for local worktree (empty list).
+    const aiThreadsMatch = pathname.match(
+      /^\/api\/v1\/repos\/local\/[^/]+\/pulls\/\d+\/ai-threads$/,
+    );
+    if (method === "GET" && aiThreadsMatch) {
+      await fulfillJson(route, { threads: [] });
+      return;
+    }
+
+    // AI sessions endpoint (used by aiStore.start).
+    if (method === "GET" && pathname === "/api/v1/ai/sessions") {
+      await fulfillJson(route, { sessions: [] });
+      return;
+    }
+
+    // Patchsets, notes, commits — used by ReviewSurface / DiffView for
+    // GitHub-sourced PRs; return empty stubs so no proxy errors surface.
+    const patchsetsMatch = pathname.match(
+      /^\/api\/v1\/repos\/[^/]+\/[^/]+\/pulls\/\d+\/patchsets$/,
+    );
+    if (method === "GET" && patchsetsMatch) {
+      await fulfillJson(route, { patchsets: [] });
+      return;
+    }
+    const notesMatch = pathname.match(
+      /^\/api\/v1\/repos\/[^/]+\/[^/]+\/pulls\/\d+\/notes$/,
+    );
+    if (method === "GET" && notesMatch) {
+      await fulfillJson(route, { notes: [] });
+      return;
+    }
+    const commitsMatch = pathname.match(
+      /^\/api\/v1\/repos\/[^/]+\/[^/]+\/pulls\/\d+\/commits$/,
+    );
+    if (method === "GET" && commitsMatch) {
+      await fulfillJson(route, { commits: [] });
       return;
     }
 

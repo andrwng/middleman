@@ -599,6 +599,8 @@
           <PRListView
             {selectedPR}
             {detailTab}
+            docPath={route.page === "pulls" && "docPath" in route ? route.docPath : undefined}
+            basePath={getBasePath()}
             isSidebarCollapsed={isSidebarCollapsed()}
             sidebarWidth={getSidebarWidth()}
             onSidebarResize={handleSidebarResize}

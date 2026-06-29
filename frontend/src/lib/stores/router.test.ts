@@ -79,6 +79,24 @@ describe("router /pulls/.../files route", () => {
   });
 });
 
+describe("router /pulls/.../doc route", () => {
+  beforeEach(() => {
+    navigate("/pulls");
+  });
+
+  it("parses a worktree doc route", () => {
+    navigate("/pulls/local/redpanda/8/doc?path=docs%2Fa.md");
+    const route = getRoute();
+    expect(route).toMatchObject({
+      page: "pulls",
+      view: "list",
+      tab: "files",
+      selected: { owner: "local", name: "redpanda", number: 8 },
+      docPath: "docs/a.md",
+    });
+  });
+});
+
 describe("router basic routes", () => {
   it("parses /pulls as list view", () => {
     navigate("/pulls");

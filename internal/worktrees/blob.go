@@ -25,6 +25,10 @@ func Blob(
 ) ([]byte, error) {
 	if sha == WorkingTreeSentinel {
 		full := filepath.Join(worktreePath, path)
+		if rel, err := filepath.Rel(worktreePath, full); err != nil ||
+			rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+			return nil, fmt.Errorf("%w: %s", ErrNotFound, path)
+		}
 		raw, err := os.ReadFile(full)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
