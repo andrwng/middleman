@@ -109,3 +109,68 @@ test("back button on DocReviewSurface navigates to /files", async ({ page }) => 
   await page.locator("button.doc-back").click();
   await expect(page).toHaveURL(new RegExp(`${filesRoute}$`));
 });
+
+test("comment gutter: gutter container present and composer opens in gutter on heading block", async ({ page }) => {
+  // Clear any leftover draft state from prior runs.
+  await page.addInitScript(() => {
+    for (const k of Object.keys(localStorage)) {
+      if (k.startsWith("diff-draft")) localStorage.removeItem(k);
+    }
+  });
+
+  await page.goto(docRoute);
+
+  // Wait for the rendered markdown to appear.
+  await expect(page.locator(".rmd-body")).toContainText("Hello");
+
+  // Assertion 1: gutter layout mode — the rmd-gutter-col column is present.
+  const gutterCol = page.locator(".rmd-gutter-col");
+  await expect(gutterCol).toBeVisible();
+
+  // The view root carries the gutter grid class.
+  await expect(page.locator(".rmd-view--gutter")).toBeVisible();
+
+  // Assertion 2: clicking the add-comment button on the heading block opens
+  // the composer IN THE GUTTER (a data-gutter-key entry), not at the bottom
+  // of the document and not inline in the prose.
+  //
+  // The heading block ("# Hello") is the first .rmd-block child of .rmd-body.
+  // The .rmd-add-comment-btn inside it is opacity:0 until hover.
+  const headingBlock = page.locator(".rmd-body > h1.rmd-block").first();
+  await expect(headingBlock).toBeVisible();
+
+  // Hover to reveal the affordance buttons.
+  await headingBlock.hover();
+
+  // The add-comment button becomes clickable after hover.
+  const addBtn = headingBlock.locator(".rmd-add-comment-btn");
+  await expect(addBtn).toBeVisible();
+  await addBtn.click();
+
+  // Composer must appear as a gutter entry (data-gutter-key starting with "composer:").
+  const composerEntry = page.locator('[data-gutter-key^="composer:"]');
+  await expect(composerEntry).toBeVisible();
+
+  // The composer must NOT be rendered in the prose body (no .rmd-composer-wrap in body).
+  await expect(page.locator(".rmd-body .rmd-composer-wrap")).toHaveCount(0);
+
+  // Assertion 3: fill the composer and save; exactly ONE card appears in the gutter.
+  const textarea = composerEntry.locator("textarea");
+  await expect(textarea).toBeVisible();
+  await textarea.fill("Test gutter comment");
+
+  const saveBtn = composerEntry.locator("button", { hasText: "Save draft" });
+  await expect(saveBtn).toBeEnabled();
+  await saveBtn.click();
+
+  // After save, the composer entry should be gone.
+  await expect(composerEntry).toHaveCount(0);
+
+  // Exactly one cards entry should be present in the gutter for the heading block.
+  // Cards entries have data-gutter-key starting with "block:".
+  const cardEntries = page.locator('[data-gutter-key^="block:"]');
+  await expect(cardEntries).toHaveCount(1);
+
+  // Assertion 4: the heading block carries the .rmd-block--commented marker.
+  await expect(headingBlock).toHaveClass(/rmd-block--commented/);
+});
