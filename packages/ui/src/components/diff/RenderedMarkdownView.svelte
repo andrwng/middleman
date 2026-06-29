@@ -568,9 +568,14 @@
       const cards = cardsForRange(blockStart, blockEnd);
 
       if (useGutter) {
-        // Gutter mode: add marker class to blocks with cards, build GutterEntry.
+        // Gutter mode: mark blocks that have cards (colored by kind — blue for
+        // review comments, amber for Ask-Claude threads) and build a GutterEntry.
         if (cards.length > 0) {
+          const hasAsk = cards.some((c) => c.kind === "ai");
+          const hasComment = cards.some((c) => c.kind !== "ai");
           el.classList.add("rmd-block--commented");
+          el.classList.toggle("rmd-block--commented-comment", hasComment);
+          el.classList.toggle("rmd-block--commented-ask", hasAsk);
           const top = computeBlockBottom(i) ?? 0;
           newGutterEntries.push({
             kind: "cards",
@@ -579,11 +584,19 @@
             cards: cards as unknown as GutterCardSpec[],
           });
         } else {
-          el.classList.remove("rmd-block--commented");
+          el.classList.remove(
+            "rmd-block--commented",
+            "rmd-block--commented-comment",
+            "rmd-block--commented-ask",
+          );
         }
       } else {
         // Inline mode: inject .rmd-thread-wrap after the block.
-        el.classList.remove("rmd-block--commented");
+        el.classList.remove(
+          "rmd-block--commented",
+          "rmd-block--commented-comment",
+          "rmd-block--commented-ask",
+        );
         if (cards.length === 0) continue;
 
         const wrap = document.createElement("div");
@@ -989,6 +1002,25 @@
     border-left: 3px solid color-mix(in srgb, var(--accent-blue) 50%, transparent);
     padding-left: 10px;
     margin-left: -13px;
+  }
+  /* Marker color by card kind: blue for review comments, amber for Ask-Claude. */
+  .rmd-body :global(.rmd-block--commented-comment) {
+    border-left-color: color-mix(in srgb, var(--accent-blue) 50%, transparent);
+  }
+  .rmd-body :global(.rmd-block--commented-ask) {
+    border-left-color: color-mix(in srgb, var(--accent-amber) 60%, transparent);
+  }
+  /* A block carrying both kinds gets a split blue (top) → amber (bottom) bar. */
+  .rmd-body :global(.rmd-block--commented-comment.rmd-block--commented-ask) {
+    border-left-color: transparent;
+    border-image: linear-gradient(
+        to bottom,
+        color-mix(in srgb, var(--accent-blue) 50%, transparent),
+        color-mix(in srgb, var(--accent-blue) 50%, transparent) 50%,
+        color-mix(in srgb, var(--accent-amber) 60%, transparent) 50%,
+        color-mix(in srgb, var(--accent-amber) 60%, transparent)
+      )
+      1;
   }
 
   .outdated-banner {

@@ -509,7 +509,68 @@ describe("RenderedMarkdownView", () => {
     await settle();
 
     // At least one block should now carry .rmd-block--commented.
-    expect(container.querySelector(".rmd-block--commented")).toBeTruthy();
+    const marked = container.querySelector(".rmd-block--commented");
+    expect(marked).toBeTruthy();
+    // A draft is a review comment → blue (comment) marker, not the ask marker.
+    expect(marked!.classList.contains("rmd-block--commented-comment")).toBe(true);
+    expect(marked!.classList.contains("rmd-block--commented-ask")).toBe(false);
+  });
+
+  it("(gutter) a block with an Ask-Claude thread carries the amber .rmd-block--commented-ask marker", async () => {
+    const stores = makeStores();
+    stores.diff.setActivePR("local", "demo", 1);
+
+    // Serve the blob on mount, then a thread on createThread.
+    let blobFetched = false;
+    globalThis.fetch = vi.fn(async (input: unknown) => {
+      const url = typeof input === "string" ? input : (input as Request).url ?? "";
+      if (!blobFetched && url.includes("/blob")) {
+        blobFetched = true;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ content: SAMPLE_MD, truncated: false }),
+        } as Response;
+      }
+      const thread: AIThread = {
+        id: 77,
+        mr_id: 1,
+        path: "doc.md",
+        anchor_line: 1,
+        anchor_side: "RIGHT",
+        commit_sha: "abc",
+        status: "open",
+        created_at: new Date().toISOString(),
+      };
+      const question: AIQuestion = {
+        id: 1,
+        thread_id: 77,
+        question: "what?",
+        answer: "",
+        citations_json: "[]",
+        status: "queued",
+        created_at: new Date().toISOString(),
+      };
+      return { ok: true, status: 200, json: async () => ({ thread, question }) } as Response;
+    });
+
+    const { container } = renderViewGutter(stores);
+    await settle();
+
+    await stores.ai.createThread({
+      path: "doc.md",
+      anchor_side: "RIGHT",
+      anchor_line: 1,
+      commit_sha: "abc",
+      question: "what?",
+    });
+    await settle();
+
+    const marked = container.querySelector(".rmd-block--commented");
+    expect(marked).toBeTruthy();
+    // An AI thread → amber (ask) marker, not the comment marker.
+    expect(marked!.classList.contains("rmd-block--commented-ask")).toBe(true);
+    expect(marked!.classList.contains("rmd-block--commented-comment")).toBe(false);
   });
 
   it("(inline, default) commentLayout omitted — draft still renders as .rmd-thread-wrap", async () => {
