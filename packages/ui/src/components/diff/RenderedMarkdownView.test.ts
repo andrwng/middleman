@@ -419,6 +419,40 @@ describe("RenderedMarkdownView", () => {
     expect(container.querySelectorAll(".rmd-thread-wrap").length).toBe(1);
   });
 
+  it("adjacent blocks (no blank line between) render exactly one inline card", async () => {
+    const stores = makeStores();
+    stores.diff.setActivePR("local", "demo", 1);
+
+    // A heading immediately followed by a paragraph with NO blank line between
+    // them parses as two adjacent block tokens (heading on line 1, paragraph on
+    // line 2). The boundary range math must give them non-overlapping half-open
+    // ranges so a comment on the heading matches only the heading, not the
+    // adjacent paragraph. This is the "adjacent blocks" shape the spec called
+    // out; the trailing-blank tests above don't exercise zero-gap adjacency.
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ content: "# Heading\nadjacent paragraph\n", truncated: false }),
+    }) as unknown as Response);
+
+    const { container } = renderViewWithStores(stores);
+    await settle();
+
+    expect(container.querySelectorAll(".rmd-thread-wrap").length).toBe(0);
+
+    // Anchored to line 1 (the heading); must not also match the paragraph on line 2.
+    stores.diff.addDraftComment({
+      path: "doc.md",
+      line: 1,
+      side: "RIGHT",
+      commitSha: "abc",
+      body: "adjacent heading comment",
+    });
+    await settle();
+
+    expect(container.querySelectorAll(".rmd-thread-wrap").length).toBe(1);
+  });
+
   // Gutter mode tests (commentLayout="gutter")
   //
   // In gutter mode the card-injection $effect must NOT inject inline
