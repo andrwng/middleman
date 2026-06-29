@@ -15,6 +15,7 @@
   import PendingCommentCard from "./PendingCommentCard.svelte";
   import AIThreadCard from "./AIThreadCard.svelte";
   import CommentGutter, { type GutterEntry, type CardSpec as GutterCardSpec } from "./CommentGutter.svelte";
+  import { clampGutterWidth } from "./gutterStack";
   import { getStores } from "../../context.js";
 
   // Renders a markdown file at a given SHA inside the diff surface,
@@ -89,6 +90,48 @@
 
   // GutterEntry[] for gutter mode — rebuilt whenever cards or the doc changes.
   let gutterEntries = $state<GutterEntry[]>([]);
+
+  // Horizontally-resizable gutter width. Persisted across reloads; the divider
+  // (drag handle) drives this and the .rmd-view --rmd-gutter-width CSS var.
+  const GUTTER_WIDTH_KEY = "rmd-gutter-width";
+  const DEFAULT_GUTTER_WIDTH = 280;
+  function loadGutterWidth(): number {
+    try {
+      const v = Number(localStorage.getItem(GUTTER_WIDTH_KEY));
+      if (Number.isFinite(v) && v > 0) return v;
+    } catch {
+      /* localStorage unavailable — fall through to default */
+    }
+    return DEFAULT_GUTTER_WIDTH;
+  }
+  let gutterWidth = $state(loadGutterWidth());
+  let resizing = $state(false);
+  let resizeStartX = 0;
+  let resizeStartWidth = 0;
+
+  function startResize(e: PointerEvent) {
+    resizing = true;
+    resizeStartX = e.clientX;
+    resizeStartWidth = gutterWidth;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    e.preventDefault();
+  }
+  function moveResize(e: PointerEvent) {
+    if (!resizing) return;
+    // Dragging the divider left (toward the body) widens the gutter.
+    const delta = resizeStartX - e.clientX;
+    gutterWidth = clampGutterWidth(resizeStartWidth + delta, viewEl?.clientWidth ?? 0);
+  }
+  function endResize(e: PointerEvent) {
+    if (!resizing) return;
+    resizing = false;
+    try {
+      localStorage.setItem(GUTTER_WIDTH_KEY, String(Math.round(gutterWidth)));
+    } catch {
+      /* localStorage unavailable — width still applies for this session */
+    }
+    (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+  }
 
   function findBlockIdx(start: number, end: number): number | null {
     for (const [idx, range] of doc.blockRangeByIdx) {
@@ -657,7 +700,12 @@
   });
 </script>
 
-<div class="rmd-view" class:rmd-view--gutter={commentLayout === "gutter" && !narrowMode} bind:this={viewEl}>
+<div
+  class="rmd-view"
+  class:rmd-view--gutter={commentLayout === "gutter" && !narrowMode}
+  style="--rmd-gutter-width: {gutterWidth}px"
+  bind:this={viewEl}
+>
   {#if loading && raw === null}
     <div class="rmd-state">Loading…</div>
   {:else if error}
@@ -711,6 +759,17 @@
 
   {#if commentLayout === "gutter" && !narrowMode}
     <div class="rmd-gutter-col">
+      <div
+        class="rmd-gutter-resize"
+        class:rmd-gutter-resize--active={resizing}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize comment gutter"
+        title="Drag to resize the comment gutter"
+        onpointerdown={startResize}
+        onpointermove={moveResize}
+        onpointerup={endResize}
+      ></div>
       <CommentGutter
         entries={gutterEntries}
         repoOwner={owner}
@@ -732,7 +791,7 @@
   /* Gutter layout: content + right gutter side by side. */
   .rmd-view--gutter {
     display: grid;
-    grid-template-columns: 1fr 280px;
+    grid-template-columns: 1fr var(--rmd-gutter-width, 280px);
     grid-template-rows: auto;
     column-gap: 16px;
     align-items: start;
@@ -1016,5 +1075,36 @@
     position: relative;
     min-height: 100%;
     align-self: stretch;
+  }
+
+  /* Draggable divider on the gutter's left edge. Sits in the column-gap and
+     gives the gutter a visible boundary; drag horizontally to resize. */
+  .rmd-gutter-resize {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -16px;
+    width: 16px;
+    cursor: col-resize;
+    z-index: 2;
+    touch-action: none;
+    /* A 2px line centered in the 16px hit area. */
+    background: linear-gradient(
+      to right,
+      transparent 7px,
+      var(--diff-border) 7px,
+      var(--diff-border) 9px,
+      transparent 9px
+    );
+  }
+  .rmd-gutter-resize:hover,
+  .rmd-gutter-resize--active {
+    background: linear-gradient(
+      to right,
+      transparent 7px,
+      var(--text-muted) 7px,
+      var(--text-muted) 9px,
+      transparent 9px
+    );
   }
 </style>

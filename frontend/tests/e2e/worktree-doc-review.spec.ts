@@ -174,3 +174,40 @@ test("comment gutter: gutter container present and composer opens in gutter on h
   // Assertion 4: the heading block carries the .rmd-block--commented marker.
   await expect(headingBlock).toHaveClass(/rmd-block--commented/);
 });
+
+test("comment gutter: dragging the divider resizes the gutter width (horizontal)", async ({ page }) => {
+  // Start from the default width regardless of prior runs.
+  await page.addInitScript(() => localStorage.removeItem("rmd-gutter-width"));
+
+  await page.goto(docRoute);
+  await expect(page.locator(".rmd-body")).toContainText("Hello");
+
+  const gutterCol = page.locator(".rmd-gutter-col");
+  await expect(gutterCol).toBeVisible();
+
+  // The divider handle is present and grabbable.
+  const divider = page.locator(".rmd-gutter-resize");
+  await expect(divider).toBeVisible();
+
+  const before = await gutterCol.boundingBox();
+  const handle = await divider.boundingBox();
+  expect(before).not.toBeNull();
+  expect(handle).not.toBeNull();
+
+  // Drag the divider left (toward the body) by 120px — this widens the gutter.
+  const startX = handle!.x + handle!.width / 2;
+  const y = handle!.y + Math.min(handle!.height / 2, 60);
+  await page.mouse.move(startX, y);
+  await page.mouse.down();
+  await page.mouse.move(startX - 120, y, { steps: 8 });
+  await page.mouse.up();
+
+  // The gutter column is meaningfully wider (allow for clamping/rounding).
+  const after = await gutterCol.boundingBox();
+  expect(after).not.toBeNull();
+  expect(after!.width).toBeGreaterThan(before!.width + 80);
+
+  // The chosen width is persisted for next time.
+  const stored = await page.evaluate(() => localStorage.getItem("rmd-gutter-width"));
+  expect(Number(stored)).toBeGreaterThan(before!.width);
+});
