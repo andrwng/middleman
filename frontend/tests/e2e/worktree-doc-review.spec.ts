@@ -175,6 +175,37 @@ test("comment gutter: gutter container present and composer opens in gutter on h
   await expect(headingBlock).toHaveClass(/rmd-block--commented/);
 });
 
+test("comment gutter: hovering a card highlights its source block", async ({ page }) => {
+  await page.addInitScript(() => {
+    for (const k of Object.keys(localStorage)) {
+      if (k.startsWith("diff-draft")) localStorage.removeItem(k);
+    }
+  });
+
+  await page.goto(docRoute);
+  await expect(page.locator(".rmd-body")).toContainText("Hello");
+
+  // Create a comment on the heading block.
+  const headingBlock = page.locator(".rmd-body > h1.rmd-block").first();
+  await headingBlock.hover();
+  await headingBlock.locator(".rmd-add-comment-btn").click();
+  const composer = page.locator('[data-gutter-key^="composer:"]');
+  await composer.locator("textarea").fill("link me");
+  await composer.locator("button", { hasText: "Save draft" }).click();
+
+  // The card lives in the gutter; the source block is not highlighted yet.
+  const card = page.locator('[data-gutter-key^="block:"]');
+  await expect(card).toHaveCount(1);
+  await expect(headingBlock).not.toHaveClass(/rmd-block--linked/);
+
+  // Hovering the card highlights the source block.
+  await card.hover();
+  await expect(headingBlock).toHaveClass(/rmd-block--linked/);
+
+  // The per-card "scroll to source" button is present.
+  await expect(card.locator(".comment-gutter__jump")).toHaveCount(1);
+});
+
 test("comment gutter: dragging the divider resizes the gutter width (horizontal)", async ({ page }) => {
   // Start from the default width regardless of prior runs.
   await page.addInitScript(() => localStorage.removeItem("rmd-gutter-width"));

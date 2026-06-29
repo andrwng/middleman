@@ -573,6 +573,57 @@ describe("RenderedMarkdownView", () => {
     expect(marked!.classList.contains("rmd-block--commented-comment")).toBe(false);
   });
 
+  it("(gutter) hovering cross-links a card and its source block, and the jump button scrolls", async () => {
+    const stores = makeStores();
+    stores.diff.setActivePR("local", "demo", 1);
+
+    const { container } = renderViewGutter(stores);
+    await settle();
+
+    stores.diff.addDraftComment({
+      path: "doc.md",
+      line: 1,
+      side: "RIGHT",
+      commitSha: "abc",
+      body: "hover link",
+    });
+    await settle();
+
+    const block = container.querySelector<HTMLElement>(".rmd-body [data-block-key]");
+    const entry = container.querySelector<HTMLElement>(".comment-gutter__entry[data-gutter-key]");
+    const gutter = container.querySelector<HTMLElement>(".comment-gutter");
+    expect(block).toBeTruthy();
+    expect(entry).toBeTruthy();
+    expect(gutter).toBeTruthy();
+    // The shared key value ties the card to its source block.
+    expect(entry!.dataset.gutterKey).toBe(block!.dataset.blockKey);
+    expect(block!.classList.contains("rmd-block--linked")).toBe(false);
+
+    // Hovering the card highlights the source block (delegated mouseover).
+    await fireEvent.mouseOver(entry!);
+    await settle();
+    expect(block!.classList.contains("rmd-block--linked")).toBe(true);
+    // Leaving the gutter clears it.
+    await fireEvent.mouseLeave(gutter!);
+    await settle();
+    expect(block!.classList.contains("rmd-block--linked")).toBe(false);
+
+    // Reverse: hovering the block highlights the gutter card (the block uses an
+    // imperative onmouseenter handler).
+    await fireEvent.mouseEnter(block!);
+    await settle();
+    expect(entry!.classList.contains("comment-gutter__entry--linked")).toBe(true);
+    await fireEvent.mouseLeave(block!);
+    await settle();
+
+    // The per-card jump button scrolls the source block into view.
+    const scrollSpy = vi.spyOn(Element.prototype, "scrollIntoView");
+    const jump = entry!.querySelector<HTMLButtonElement>(".comment-gutter__jump");
+    expect(jump).toBeTruthy();
+    await fireEvent.click(jump!);
+    expect(scrollSpy).toHaveBeenCalled();
+  });
+
   it("(inline, default) commentLayout omitted — draft still renders as .rmd-thread-wrap", async () => {
     const stores = makeStores();
     stores.diff.setActivePR("local", "demo", 1);

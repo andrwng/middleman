@@ -91,6 +91,28 @@
   // GutterEntry[] for gutter mode — rebuilt whenever cards or the doc changes.
   let gutterEntries = $state<GutterEntry[]>([]);
 
+  // Cross-linking: the key of the block/card pair currently hovered (from
+  // either side). Used to highlight the matching block and gutter card together
+  // so a floating card is traceable to its source text.
+  let highlightedKey = $state<string | null>(null);
+
+  // Toggle .rmd-block--linked on the block matching highlightedKey. Re-runs when
+  // the hover changes; each block's data-gutter-key is assigned during the walk.
+  $effect(() => {
+    if (!bodyEl) return;
+    const key = highlightedKey;
+    for (const node of bodyEl.querySelectorAll<HTMLElement>("[data-block-key]")) {
+      node.classList.toggle("rmd-block--linked", key !== null && node.dataset.blockKey === key);
+    }
+  });
+
+  // Smooth-scroll a gutter card's source block into view (its jump button).
+  function scrollToBlock(key: string) {
+    bodyEl
+      ?.querySelector<HTMLElement>(`[data-block-key="${key}"]`)
+      ?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
   // Horizontally-resizable gutter width. Persisted across reloads; the divider
   // (drag handle) drives this and the .rmd-view --rmd-gutter-width CSS var.
   const GUTTER_WIDTH_KEY = "rmd-gutter-width";
@@ -573,13 +595,24 @@
         if (cards.length > 0) {
           const hasAsk = cards.some((c) => c.kind === "ai");
           const hasComment = cards.some((c) => c.kind !== "ai");
+          const blockKey = `block:${blockStart}:${blockEnd}`;
           el.classList.add("rmd-block--commented");
           el.classList.toggle("rmd-block--commented-comment", hasComment);
           el.classList.toggle("rmd-block--commented-ask", hasAsk);
+          // Cross-link the block with its gutter card: hovering either side
+          // highlights the other (highlightedKey + the .rmd-block--linked
+          // effect). Property assignment is idempotent across effect re-runs.
+          el.dataset.blockKey = blockKey;
+          el.onmouseenter = () => {
+            highlightedKey = blockKey;
+          };
+          el.onmouseleave = () => {
+            if (highlightedKey === blockKey) highlightedKey = null;
+          };
           const top = computeBlockBottom(i) ?? 0;
           newGutterEntries.push({
             kind: "cards",
-            key: `block:${blockStart}:${blockEnd}`,
+            key: blockKey,
             desiredTop: top,
             cards: cards as unknown as GutterCardSpec[],
           });
@@ -589,6 +622,9 @@
             "rmd-block--commented-comment",
             "rmd-block--commented-ask",
           );
+          delete el.dataset.blockKey;
+          el.onmouseenter = null;
+          el.onmouseleave = null;
         }
       } else {
         // Inline mode: inject .rmd-thread-wrap after the block.
@@ -597,6 +633,9 @@
           "rmd-block--commented-comment",
           "rmd-block--commented-ask",
         );
+        delete el.dataset.blockKey;
+        el.onmouseenter = null;
+        el.onmouseleave = null;
         if (cards.length === 0) continue;
 
         const wrap = document.createElement("div");
@@ -788,6 +827,9 @@
         repoOwner={owner}
         repoName={name}
         currentHeadSha={sha}
+        {highlightedKey}
+        onhighlight={(k) => (highlightedKey = k)}
+        onactivate={scrollToBlock}
         ondelete={(id) => diffStore.removeDraftComment(id)}
       />
     </div>
@@ -1021,6 +1063,12 @@
         color-mix(in srgb, var(--accent-amber) 60%, transparent)
       )
       1;
+  }
+  /* Cross-link highlight: the block whose gutter card is hovered (or vice
+     versa) gets a faint neutral tint so the pair reads as connected. */
+  .rmd-body :global(.rmd-block--linked) {
+    background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+    border-radius: 0 3px 3px 0;
   }
 
   .outdated-banner {
