@@ -196,6 +196,17 @@ test("comment gutter: hovering a card highlights its source block", async ({ pag
   // The card lives in the gutter; the source block is not highlighted yet.
   const card = page.locator('[data-gutter-key^="block:"]');
   await expect(card).toHaveCount(1);
+
+  // The card aligns with the TOP of its source block, not the bottom: its top
+  // is near the block's top (within one block height), not a block-height below.
+  const cardBox = await card.boundingBox();
+  const blockBox = await headingBlock.boundingBox();
+  expect(cardBox).not.toBeNull();
+  expect(blockBox).not.toBeNull();
+  const topDelta = cardBox!.y - blockBox!.y;
+  expect(topDelta).toBeGreaterThan(-8);
+  expect(topDelta).toBeLessThan(blockBox!.height);
+
   await expect(headingBlock).not.toHaveClass(/rmd-block--linked/);
 
   // Hovering the card highlights the source block.

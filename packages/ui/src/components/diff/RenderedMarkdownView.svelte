@@ -162,30 +162,38 @@
     return null;
   }
 
-  // Computes the CSS top offset (px) for the composer overlay / gutter entry,
-  // relative to .rmd-view. Uses a bounding-rect delta so the offset is correct
-  // regardless of intermediate positioning contexts — avoids the double-count
-  // bug that arose from adding bodyEl.offsetTop + target.offsetTop when
-  // .rmd-body is statically positioned (target.offsetTop is already relative
-  // to .rmd-view in that case).
-  function computeBlockBottom(idx: number | null): number | null {
-    if (idx === null || !bodyEl || !viewEl) return null;
-    const allChildren = Array.from(bodyEl.children) as HTMLElement[];
+  // Resolve the idx-th content block element (skipping injected thread wraps).
+  function blockElAt(idx: number | null): HTMLElement | null {
+    if (idx === null || !bodyEl) return null;
     let original = 0;
-    let target: HTMLElement | null = null;
-    for (const child of allChildren) {
+    for (const child of Array.from(bodyEl.children) as HTMLElement[]) {
       if (child.classList.contains("rmd-thread-wrap")) continue;
-      if (original === idx) {
-        target = child;
-        break;
-      }
+      if (original === idx) return child;
       original++;
     }
-    if (!target) return null;
-    // Bounding-rect delta relative to .rmd-view, accounting for scroll.
+    return null;
+  }
+
+  // CSS top offset (px) of a block's TOP edge relative to .rmd-view. Uses a
+  // bounding-rect delta so the offset is correct regardless of intermediate
+  // positioning contexts — avoids the double-count bug that arose from adding
+  // bodyEl.offsetTop + target.offsetTop when .rmd-body is statically positioned
+  // (target.offsetTop is already relative to .rmd-view in that case). Gutter
+  // cards/composers align to this so a card sits beside the START of its block.
+  function computeBlockTop(idx: number | null): number | null {
+    const target = blockElAt(idx);
+    if (!target || !viewEl) return null;
     const targetRect = target.getBoundingClientRect();
     const viewRect = viewEl.getBoundingClientRect();
-    return targetRect.top - viewRect.top + viewEl.scrollTop + target.offsetHeight;
+    return targetRect.top - viewRect.top + viewEl.scrollTop;
+  }
+
+  // CSS top offset of a block's BOTTOM edge — used by the inline composer
+  // overlay (.rmd-composer-wrap), which sits just below its block.
+  function computeBlockBottom(idx: number | null): number | null {
+    const target = blockElAt(idx);
+    const top = computeBlockTop(idx);
+    return target && top !== null ? top + target.offsetHeight : null;
   }
 
   function openComposerForBlock(start: number, end: number): void {
@@ -609,7 +617,7 @@
           el.onmouseleave = () => {
             if (highlightedKey === blockKey) highlightedKey = null;
           };
-          const top = computeBlockBottom(i) ?? 0;
+          const top = computeBlockTop(i) ?? 0;
           newGutterEntries.push({
             kind: "cards",
             key: blockKey,
@@ -681,7 +689,7 @@
     // active block's position, mirroring the inline overlay.
     if (useGutter) {
       if (openComposerKey && rangeSnapshot) {
-        const top = computeBlockBottom(activeBlockIdx) ?? 0;
+        const top = computeBlockTop(activeBlockIdx) ?? 0;
         newGutterEntries.push({
           kind: "composer-diff",
           key: `composer:${openComposerKey}`,
@@ -695,7 +703,7 @@
           oncancel: closeComposer,
         });
       } else if (openAskKey && rangeSnapshot) {
-        const top = computeBlockBottom(activeBlockIdx) ?? 0;
+        const top = computeBlockTop(activeBlockIdx) ?? 0;
         newGutterEntries.push({
           kind: "composer-ask",
           key: `ask:${openAskKey}`,
