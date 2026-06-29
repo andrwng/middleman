@@ -2,7 +2,6 @@ package worktrees
 
 import (
 	"context"
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -44,7 +43,7 @@ func TestBlobPathTraversalRejected(t *testing.T) {
 	// dot-dot traversal is rejected.
 	got, err := Blob(ctx, worktreeDir, WorkingTreeSentinel, "../secret.txt")
 	require.Error(err, "expected error for path traversal")
-	assert.True(errors.Is(err, ErrNotFound), "error should wrap ErrNotFound, got: %v", err)
+	require.ErrorIs(err, ErrNotFound, "error should wrap ErrNotFound, got: %v", err)
 	assert.Nil(got, "should return no content for traversal path")
 	assert.NotContains(string(got), "secret-content")
 
@@ -52,7 +51,7 @@ func TestBlobPathTraversalRejected(t *testing.T) {
 	// but a caller passing an absolute path that falls outside must still fail).
 	got, err = Blob(ctx, worktreeDir, WorkingTreeSentinel, secretFile)
 	require.Error(err, "expected error for absolute path outside worktree")
-	assert.True(errors.Is(err, ErrNotFound), "error should wrap ErrNotFound, got: %v", err)
+	require.ErrorIs(err, ErrNotFound, "error should wrap ErrNotFound, got: %v", err)
 	assert.Nil(got)
 
 	// Normal in-tree read still works (regression guard).
@@ -80,7 +79,7 @@ func TestBlobRangePathTraversalRejected(t *testing.T) {
 	// BlobRange routes through Blob — traversal must also be rejected.
 	lines, err := BlobRange(ctx, worktreeDir, WorkingTreeSentinel, "../secret.txt", 1, 2)
 	require.Error(err)
-	assert.True(errors.Is(err, ErrNotFound))
+	require.ErrorIs(err, ErrNotFound)
 	assert.Nil(lines)
 
 	// Normal in-tree range still works.

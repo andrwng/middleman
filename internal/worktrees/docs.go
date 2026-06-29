@@ -30,7 +30,7 @@ func MarkdownFiles(ctx context.Context, repoPath string) ([]string, error) {
 	}
 	seen := map[string]struct{}{}
 	var files []string
-	for _, p := range bytes.Split(out, []byte{0}) {
+	for p := range bytes.SplitSeq(out, []byte{0}) {
 		s := string(p)
 		if s == "" {
 			continue
