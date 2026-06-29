@@ -939,6 +939,11 @@
     background: color-mix(in srgb, var(--accent-amber) 8%, var(--bg-inset));
     border-bottom: 1px solid color-mix(in srgb, var(--accent-amber) 30%, var(--diff-border));
     cursor: help;
+    /* Span both columns in gutter grid mode so the banner sits above the
+       full-width row rather than becoming a stray first-column item that
+       displaces .rmd-body to col 2 and .rmd-gutter-col onto a new row.
+       grid-column is ignored in non-grid (inline) mode. */
+    grid-column: 1 / -1;
   }
 
   /* Per-block hover affordance, mirroring DiffFile.svelte's
