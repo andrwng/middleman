@@ -7,6 +7,7 @@ import { createAIStore } from "../../stores/ai.svelte.js";
 import { createDetailStore } from "../../stores/detail.svelte.js";
 import type { MiddlemanClient } from "../../types.js";
 import type { AIThread, AIQuestion } from "../../stores/ai.svelte.js";
+import mermaid from "mermaid";
 
 // Mermaid is heavy and needs real layout; mock it so the unit test exercises
 // the detect -> render -> inject flow without loading the library.
@@ -583,6 +584,70 @@ describe("RenderedMarkdownView", () => {
     expect(marked!.classList.contains("rmd-block--commented-comment")).toBe(false);
   });
 
+  it("(gutter) a block with both a comment and an Ask-Claude thread carries both marker classes", async () => {
+    const stores = makeStores();
+    stores.diff.setActivePR("local", "demo", 1);
+
+    let blobFetched = false;
+    globalThis.fetch = vi.fn(async (input: unknown) => {
+      const url = typeof input === "string" ? input : (input as Request).url ?? "";
+      if (!blobFetched && url.includes("/blob")) {
+        blobFetched = true;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ content: SAMPLE_MD, truncated: false }),
+        } as Response;
+      }
+      const thread: AIThread = {
+        id: 88,
+        mr_id: 1,
+        path: "doc.md",
+        anchor_line: 1,
+        anchor_side: "RIGHT",
+        commit_sha: "abc",
+        status: "open",
+        created_at: new Date().toISOString(),
+      };
+      const question: AIQuestion = {
+        id: 1,
+        thread_id: 88,
+        question: "q",
+        answer: "",
+        citations_json: "[]",
+        status: "queued",
+        created_at: new Date().toISOString(),
+      };
+      return { ok: true, status: 200, json: async () => ({ thread, question }) } as Response;
+    });
+
+    const { container } = renderViewGutter(stores);
+    await settle();
+
+    // A draft comment AND an AI thread on the same block (line 1).
+    stores.diff.addDraftComment({
+      path: "doc.md",
+      line: 1,
+      side: "RIGHT",
+      commitSha: "abc",
+      body: "both kinds",
+    });
+    await stores.ai.createThread({
+      path: "doc.md",
+      anchor_side: "RIGHT",
+      anchor_line: 1,
+      commit_sha: "abc",
+      question: "q",
+    });
+    await settle();
+
+    const marked = container.querySelector(".rmd-block--commented");
+    expect(marked).toBeTruthy();
+    // Both kinds present → both classes (CSS renders a split blue/amber bar).
+    expect(marked!.classList.contains("rmd-block--commented-comment")).toBe(true);
+    expect(marked!.classList.contains("rmd-block--commented-ask")).toBe(true);
+  });
+
   it("(gutter) hovering cross-links a card and its source block, and the jump button scrolls", async () => {
     const stores = makeStores();
     stores.diff.setActivePR("local", "demo", 1);
@@ -660,6 +725,35 @@ describe("RenderedMarkdownView", () => {
     // The (mocked) SVG was injected and the source <pre> replaced.
     expect(container.querySelector(".rmd-mermaid__svg svg")).toBeTruthy();
     expect(container.querySelector(".rmd-mermaid__src")).toBeNull();
+  });
+
+  it("(mermaid) keeps the source visible and flags an error when a diagram fails to parse", async () => {
+    const stores = makeStores();
+    stores.diff.setActivePR("local", "demo", 1);
+
+    // Force the parse guard to fail for this render (malformed diagram).
+    // parse(..,{suppressErrors:true}) resolves false on bad syntax; the typed
+    // overload doesn't include false, so cast for the mock.
+    vi.mocked(mermaid.parse).mockResolvedValueOnce(false as never);
+
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ content: "```mermaid\nnot a real diagram\n```\n", truncated: false }),
+    }) as unknown as Response);
+
+    const { container } = renderViewWithStores(stores);
+    await settle();
+    for (let i = 0; i < 6 && !container.querySelector(".rmd-mermaid--error"); i++) {
+      await settle();
+    }
+
+    const holder = container.querySelector(".rmd-mermaid");
+    expect(holder).toBeTruthy();
+    // Flagged as an error and the raw source stays visible as a fallback.
+    expect(holder!.classList.contains("rmd-mermaid--error")).toBe(true);
+    expect(container.querySelector(".rmd-mermaid__src")).toBeTruthy();
+    expect(container.querySelector(".rmd-mermaid__svg")).toBeNull();
   });
 
   it("(inline, default) commentLayout omitted — draft still renders as .rmd-thread-wrap", async () => {
