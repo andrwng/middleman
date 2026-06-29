@@ -113,6 +113,67 @@
       ?.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
+  // Escape text for safe interpolation into HTML element content.
+  function escapeHtml(s: string): string {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  // Mermaid diagrams: ```mermaid code blocks are emitted as .rmd-mermaid
+  // placeholders by the code renderer above. Here we lazy-load mermaid (it is
+  // heavy, so it loads only for docs that actually use it) and replace each
+  // source <pre> with the rendered SVG. Strict security; theme follows the app.
+  let mermaidMod: (typeof import("mermaid"))["default"] | null = null;
+  let mermaidSeq = 0;
+
+  async function loadMermaid() {
+    if (!mermaidMod) {
+      const mod = await import("mermaid");
+      mermaidMod = mod.default;
+      mermaidMod.initialize({
+        startOnLoad: false,
+        securityLevel: "strict",
+        theme: document.documentElement.classList.contains("dark") ? "dark" : "default",
+      });
+    }
+    return mermaidMod;
+  }
+
+  async function renderMermaidDiagrams() {
+    if (!bodyEl) return;
+    const pending = Array.from(bodyEl.querySelectorAll<HTMLElement>(".rmd-mermaid")).filter(
+      (h) => !h.dataset.mermaidDone,
+    );
+    if (pending.length === 0) return;
+    const mermaid = await loadMermaid();
+    for (const holder of pending) {
+      if (holder.dataset.mermaidDone) continue;
+      holder.dataset.mermaidDone = "1";
+      const src = holder.querySelector(".rmd-mermaid__src")?.textContent ?? "";
+      try {
+        // parse (suppressErrors) avoids mermaid injecting an error graphic on
+        // bad syntax; we keep the source visible as a readable fallback instead.
+        if ((await mermaid.parse(src, { suppressErrors: true })) === false) {
+          throw new Error("invalid mermaid syntax");
+        }
+        const { svg } = await mermaid.render(`rmd-mermaid-${mermaidSeq++}`, src);
+        if (!holder.isConnected) return; // doc changed mid-render; discard
+        const fig = document.createElement("div");
+        fig.className = "rmd-mermaid__svg";
+        fig.innerHTML = svg;
+        holder.querySelector(".rmd-mermaid__src")?.replaceWith(fig);
+      } catch {
+        holder.classList.add("rmd-mermaid--error");
+      }
+    }
+  }
+
+  $effect(() => {
+    // Reading raw re-runs this when the document content changes (after the
+    // @html re-renders); then we render any (new) mermaid blocks.
+    if (!bodyEl || raw === null) return;
+    void renderMermaidDiagrams();
+  });
+
   // Horizontally-resizable gutter width. Persisted across reloads; the divider
   // (drag handle) drives this and the .rmd-view --rmd-gutter-width CSS var.
   const GUTTER_WIDTH_KEY = "rmd-gutter-width";
@@ -419,6 +480,12 @@
           return `<h${depth}>${inner}${badge}</h${depth}>\n`;
         },
         code({ text, lang }: Tokens.Code): string {
+          if (lang === "mermaid") {
+            // Emit a placeholder carrying the raw source; renderMermaidDiagrams()
+            // lazy-loads mermaid after mount and replaces the source <pre> with
+            // the rendered SVG. The source stays visible until then (and on error).
+            return `<div class="rmd-mermaid"><pre class="rmd-mermaid__src">${escapeHtml(text)}</pre></div>\n`;
+          }
           const langAttr = lang ? ` class="language-${lang}"` : "";
           return `<pre><code${langAttr}>${wrapCodeBlock(text, currentBlockStart, renderedSide)}</code></pre>\n`;
         },
@@ -1077,6 +1144,21 @@
   .rmd-body :global(.rmd-block--linked) {
     background: color-mix(in srgb, var(--text-muted) 12%, transparent);
     border-radius: 0 3px 3px 0;
+  }
+
+  /* Mermaid diagrams: the rendered SVG replaces the source <pre> after mount. */
+  .rmd-body :global(.rmd-mermaid) {
+    margin: 12px 0;
+    text-align: center;
+  }
+  .rmd-body :global(.rmd-mermaid__svg svg) {
+    max-width: 100%;
+    height: auto;
+  }
+  /* On a render/parse error the source <pre> stays visible, flagged in red. */
+  .rmd-body :global(.rmd-mermaid--error .rmd-mermaid__src) {
+    border-left: 3px solid var(--accent-red);
+    padding-left: 10px;
   }
 
   .outdated-banner {

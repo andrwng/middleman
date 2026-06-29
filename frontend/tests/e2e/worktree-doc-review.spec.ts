@@ -9,6 +9,7 @@ const LOCAL_ID = 7;
 
 const filesRoute = `/pulls/${LOCAL_OWNER}/${LOCAL_REPO}/${LOCAL_ID}/files`;
 const docRoute = `/pulls/${LOCAL_OWNER}/${LOCAL_REPO}/${LOCAL_ID}/doc?path=README.md`;
+const diagramRoute = `/pulls/${LOCAL_OWNER}/${LOCAL_REPO}/${LOCAL_ID}/doc?path=diagram.md`;
 
 test.beforeEach(async ({ page }) => {
   await mockApi(page);
@@ -217,6 +218,16 @@ test("comment gutter: hovering a card highlights its source block", async ({ pag
   await expect(card.locator(".comment-gutter__jump")).toHaveCount(1);
 });
 
+test("doc view: a mermaid code block renders as an embedded SVG diagram", async ({ page }) => {
+  await page.goto(diagramRoute);
+  await expect(page.locator(".rmd-body")).toContainText("Diagram");
+
+  // The mermaid fenced block renders to an inline SVG (mermaid runs in-browser,
+  // lazy-loaded). The raw source <pre> is replaced once the SVG is ready.
+  await expect(page.locator(".rmd-mermaid__svg svg")).toBeVisible({ timeout: 10000 });
+  await expect(page.locator(".rmd-mermaid__src")).toHaveCount(0);
+});
+
 test("comment gutter: dragging the divider resizes the gutter width (horizontal)", async ({ page }) => {
   // Start from the default width regardless of prior runs.
   await page.addInitScript(() => localStorage.removeItem("rmd-gutter-width"));
@@ -232,22 +243,25 @@ test("comment gutter: dragging the divider resizes the gutter width (horizontal)
   await expect(divider).toBeVisible();
 
   const before = await gutterCol.boundingBox();
-  const handle = await divider.boundingBox();
   expect(before).not.toBeNull();
-  expect(handle).not.toBeNull();
 
-  // Drag the divider left (toward the body) by 120px — this widens the gutter.
-  const startX = handle!.x + handle!.width / 2;
+  // Drag the divider left (toward the body) by 120px to widen the gutter.
+  // hover() waits for actionability so the pointerdown reliably registers even
+  // under parallel load; poll() tolerates the reactive width update settling.
+  await divider.hover();
+  const handle = await divider.boundingBox();
+  expect(handle).not.toBeNull();
+  const targetX = handle!.x + handle!.width / 2 - 120;
   const y = handle!.y + Math.min(handle!.height / 2, 60);
-  await page.mouse.move(startX, y);
   await page.mouse.down();
-  await page.mouse.move(startX - 120, y, { steps: 8 });
+  await page.mouse.move(targetX, y, { steps: 10 });
+  await page.mouse.move(targetX, y); // settle the final position
   await page.mouse.up();
 
   // The gutter column is meaningfully wider (allow for clamping/rounding).
-  const after = await gutterCol.boundingBox();
-  expect(after).not.toBeNull();
-  expect(after!.width).toBeGreaterThan(before!.width + 80);
+  await expect
+    .poll(async () => (await gutterCol.boundingBox())?.width ?? 0)
+    .toBeGreaterThan(before!.width + 80);
 
   // The chosen width is persisted for next time.
   const stored = await page.evaluate(() => localStorage.getItem("rmd-gutter-width"));

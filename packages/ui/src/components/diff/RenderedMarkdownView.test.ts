@@ -8,6 +8,16 @@ import { createDetailStore } from "../../stores/detail.svelte.js";
 import type { MiddlemanClient } from "../../types.js";
 import type { AIThread, AIQuestion } from "../../stores/ai.svelte.js";
 
+// Mermaid is heavy and needs real layout; mock it so the unit test exercises
+// the detect -> render -> inject flow without loading the library.
+vi.mock("mermaid", () => ({
+  default: {
+    initialize: vi.fn(),
+    parse: vi.fn(async () => true),
+    render: vi.fn(async () => ({ svg: '<svg data-testid="mermaid-svg"></svg>', bindFunctions: undefined })),
+  },
+}));
+
 function stubClient(): MiddlemanClient {
   return {
     GET: vi.fn(async () => ({ data: undefined, error: undefined })),
@@ -622,6 +632,34 @@ describe("RenderedMarkdownView", () => {
     expect(jump).toBeTruthy();
     await fireEvent.click(jump!);
     expect(scrollSpy).toHaveBeenCalled();
+  });
+
+  it("(mermaid) renders a mermaid code block as an embedded SVG, not a raw code block", async () => {
+    const stores = makeStores();
+    stores.diff.setActivePR("local", "demo", 1);
+
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        content: "# Title\n\n```mermaid\ngraph TD;\n  A-->B;\n```\n",
+        truncated: false,
+      }),
+    }) as unknown as Response);
+
+    const { container } = renderViewWithStores(stores);
+    await settle();
+    // Allow the lazy import + parse + render + DOM swap to resolve.
+    for (let i = 0; i < 6 && !container.querySelector(".rmd-mermaid__svg"); i++) {
+      await settle();
+    }
+
+    // The fenced block became a .rmd-mermaid holder, not a raw code block.
+    expect(container.querySelector(".rmd-mermaid")).toBeTruthy();
+    expect(container.querySelector("code.language-mermaid")).toBeNull();
+    // The (mocked) SVG was injected and the source <pre> replaced.
+    expect(container.querySelector(".rmd-mermaid__svg svg")).toBeTruthy();
+    expect(container.querySelector(".rmd-mermaid__src")).toBeNull();
   });
 
   it("(inline, default) commentLayout omitted — draft still renders as .rmd-thread-wrap", async () => {

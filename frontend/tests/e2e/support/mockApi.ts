@@ -6,6 +6,7 @@ import type { Page, Route } from "@playwright/test";
 const LOCAL_WORKTREE_ID = 7;
 const LOCAL_REPO_NAME = "myproject";
 const LOCAL_DOC_CONTENT = "# Hello\n\nsome text here\n";
+const LOCAL_DIAGRAM_CONTENT = "# Diagram\n\n```mermaid\ngraph TD;\n  A-->B;\n```\n";
 
 const localWorktreePull = {
   ID: LOCAL_WORKTREE_ID,
@@ -361,7 +362,7 @@ export async function mockApi(page: Page): Promise<void> {
       /^\/api\/v1\/worktrees\/(\d+)\/markdown-files$/,
     );
     if (method === "GET" && markdownFilesMatch) {
-      await fulfillJson(route, { files: ["README.md"] });
+      await fulfillJson(route, { files: ["README.md", "diagram.md"] });
       return;
     }
 
@@ -375,6 +376,8 @@ export async function mockApi(page: Page): Promise<void> {
       const blobPath = url.searchParams.get("path") ?? "";
       if (blobOwner === "local" && blobPath === "README.md") {
         await fulfillJson(route, { content: LOCAL_DOC_CONTENT, truncated: false });
+      } else if (blobOwner === "local" && blobPath === "diagram.md") {
+        await fulfillJson(route, { content: LOCAL_DIAGRAM_CONTENT, truncated: false });
       } else {
         await fulfillJson(route, { error: "Not found" }, 404);
       }
