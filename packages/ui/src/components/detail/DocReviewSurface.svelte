@@ -74,6 +74,7 @@
       {path}
       sha={WORKING_TREE_SENTINEL}
       hunks={[]}
+      commentLayout="gutter"
     />
   </div>
 </div>

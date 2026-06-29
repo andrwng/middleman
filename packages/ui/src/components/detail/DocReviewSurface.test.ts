@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/svelte";
 import DocReviewSurface from "./DocReviewSurface.svelte";
+import RenderedMarkdownView from "../diff/RenderedMarkdownView.svelte";
 import { STORES_KEY, NAVIGATE_KEY } from "../../context.js";
 import { createDiffStore } from "../../stores/diff.svelte.js";
 import { createAIStore } from "../../stores/ai.svelte.js";
@@ -106,6 +107,16 @@ describe("DocReviewSurface", () => {
     const href = link.getAttribute("href") ?? "";
     expect(href).toContain("/myapp/pulls/");
     expect(href).toContain(encodeURIComponent("docs/guide.md"));
+  });
+
+  it("passes commentLayout=\"gutter\" to RenderedMarkdownView", () => {
+    renderSurface();
+    const mock = vi.mocked(RenderedMarkdownView);
+    // Svelte 5 calls the component function as Component(anchor, props).
+    // The second argument is the props object.
+    const props = mock.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(props).toBeDefined();
+    expect(props["commentLayout"]).toBe("gutter");
   });
 
   it("sets the diff store active PR on mount and resets it on unmount", () => {
