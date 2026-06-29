@@ -8,11 +8,36 @@
     | { kind: "published"; key: string; comment: PublishedReviewComment }
     | { kind: "ai"; key: string; thread: AIThread };
 
-  export type GutterEntry = {
-    key: string;
-    desiredTop: number;
-    cards: CardSpec[];
-  };
+  interface Anchor {
+    line: number;
+    side: "LEFT" | "RIGHT";
+    startLine?: number;
+  }
+
+  // GutterEntry is a discriminated union:
+  //   "cards"        — a stacked block of review cards (drafts, published, AI threads)
+  //   "composer-diff"— a DiffComposer rendered at the given offset
+  //   "composer-ask" — an AIAskComposer rendered at the given offset
+  export type GutterEntry =
+    | { kind: "cards"; key: string; desiredTop: number; cards: CardSpec[] }
+    | {
+        kind: "composer-diff";
+        key: string;
+        desiredTop: number;
+        anchor: Anchor;
+        onsave: (body: string) => void;
+        oncancel: () => void;
+      }
+    | {
+        kind: "composer-ask";
+        key: string;
+        desiredTop: number;
+        anchor: Anchor;
+        error: string | null;
+        submitting: boolean;
+        onsubmit: (question: string) => void;
+        oncancel: () => void;
+      };
 </script>
 
 <script lang="ts">
@@ -20,6 +45,8 @@
   import AIThreadCard from "./AIThreadCard.svelte";
   import ReviewCommentCard from "./ReviewCommentCard.svelte";
   import PendingCommentCard from "./PendingCommentCard.svelte";
+  import DiffComposer from "./DiffComposer.svelte";
+  import AIAskComposer from "./AIAskComposer.svelte";
 
   interface Props {
     entries: GutterEntry[];
@@ -65,24 +92,36 @@
       style:top="{resolvedTops[i] ?? e.desiredTop}px"
       bind:this={wrapperEls[i]}
     >
-      {#each e.cards as spec (spec.key)}
-        {#if spec.kind === "ai"}
-          <AIThreadCard thread={spec.thread} {repoOwner} repoName={repoName} />
-        {:else if spec.kind === "published"}
-          <ReviewCommentCard
-            comment={spec.comment}
-            {repoOwner}
-            repoName={repoName}
-            {currentHeadSha}
-          />
-        {:else}
-          <PendingCommentCard
-            comment={spec.comment}
-            {currentHeadSha}
-            ondelete={() => ondelete(spec.comment.id)}
-          />
-        {/if}
-      {/each}
+      {#if e.kind === "composer-diff"}
+        <DiffComposer anchor={e.anchor} onsave={e.onsave} oncancel={e.oncancel} />
+      {:else if e.kind === "composer-ask"}
+        <AIAskComposer
+          anchor={e.anchor}
+          error={e.error}
+          submitting={e.submitting}
+          onsubmit={e.onsubmit}
+          oncancel={e.oncancel}
+        />
+      {:else}
+        {#each e.cards as spec (spec.key)}
+          {#if spec.kind === "ai"}
+            <AIThreadCard thread={spec.thread} {repoOwner} repoName={repoName} />
+          {:else if spec.kind === "published"}
+            <ReviewCommentCard
+              comment={spec.comment}
+              {repoOwner}
+              repoName={repoName}
+              {currentHeadSha}
+            />
+          {:else}
+            <PendingCommentCard
+              comment={spec.comment}
+              {currentHeadSha}
+              ondelete={() => ondelete(spec.comment.id)}
+            />
+          {/if}
+        {/each}
+      {/if}
     </div>
   {/each}
 </div>

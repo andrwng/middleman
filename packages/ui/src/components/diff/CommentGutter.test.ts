@@ -61,11 +61,13 @@ describe("CommentGutter", () => {
   it("renders one positioned wrapper per entry with data-gutter-key", async () => {
     const entries: GutterEntry[] = [
       {
+        kind: "cards",
         key: "e1",
         desiredTop: 100,
         cards: [{ kind: "draft", key: "d:d1", comment: fakeDraft }],
       },
       {
+        kind: "cards",
         key: "e2",
         desiredTop: 200,
         cards: [{ kind: "published", key: "p:1", comment: fakePublished }],
@@ -94,6 +96,7 @@ describe("CommentGutter", () => {
   it("each wrapper has a style:top applied (position-before-paint, even at 0px in jsdom)", async () => {
     const entries: GutterEntry[] = [
       {
+        kind: "cards",
         key: "k1",
         desiredTop: 50,
         cards: [{ kind: "ai", key: "a:99", thread: fakeThread }],
@@ -126,9 +129,9 @@ describe("CommentGutter", () => {
 
   it("renders wrappers in entry order", async () => {
     const entries: GutterEntry[] = [
-      { key: "first", desiredTop: 0, cards: [] },
-      { key: "second", desiredTop: 10, cards: [] },
-      { key: "third", desiredTop: 20, cards: [] },
+      { kind: "cards", key: "first", desiredTop: 0, cards: [] },
+      { kind: "cards", key: "second", desiredTop: 10, cards: [] },
+      { kind: "cards", key: "third", desiredTop: 20, cards: [] },
     ];
 
     const { container } = render(CommentGutter, {
@@ -152,7 +155,7 @@ describe("CommentGutter", () => {
   it("renders no wrappers when entries is empty", async () => {
     const { container } = render(CommentGutter, {
       props: {
-        entries: [],
+        entries: [] as GutterEntry[],
         repoOwner: "local",
         repoName: "demo",
         currentHeadSha: "abc",

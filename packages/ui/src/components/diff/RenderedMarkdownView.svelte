@@ -14,6 +14,7 @@
   import ReviewCommentCard from "./ReviewCommentCard.svelte";
   import PendingCommentCard from "./PendingCommentCard.svelte";
   import AIThreadCard from "./AIThreadCard.svelte";
+  import CommentGutter, { type GutterEntry, type CardSpec as GutterCardSpec } from "./CommentGutter.svelte";
   import { getStores } from "../../context.js";
 
   // Renders a markdown file at a given SHA inside the diff surface,
@@ -25,7 +26,7 @@
   // markdown renderer. The annotations are layered on top:
   //   - Headings get an inline L<n> badge appended after the title
   //     text — small monospace, faint, right-aligned.
-  //   - Top-level blocks whose source-line range overlaps a changed
+  //   - Top-level blocks whose source-line range overlapped a changed
   //     hunk get a left accent bar via a post-mount class.
   //
   // The "compute changed blocks by walking the lexer separately,
@@ -34,6 +35,12 @@
   // signal — marked.parser([token]) per block would render the same
   // HTML but break margin collapse, which is what made the earlier
   // version's spacing read as off.
+  //
+  // commentLayout controls how comment cards are rendered:
+  //   "inline" (default): cards are injected as .rmd-thread-wrap elements
+  //                       directly after each block in the body.
+  //   "gutter": cards are rendered in a right-side CommentGutter column.
+  //             Below max-width:720px the view falls back to inline mode.
 
   export interface RenderedHunk {
     new_start: number;
@@ -47,9 +54,10 @@
     path: string;
     sha: string;
     hunks: RenderedHunk[];
+    commentLayout?: "inline" | "gutter";
   }
 
-  const { owner, name, number, path, sha, hunks }: Props = $props();
+  const { owner, name, number, path, sha, hunks, commentLayout = "inline" }: Props = $props();
 
   const { diff: diffStore, ai: aiStore, detail: detailStore } = getStores();
 
@@ -60,6 +68,8 @@
   let fetchSeq = 0;
 
   let bodyEl: HTMLDivElement | undefined = $state();
+  // Root element — used for bounding-rect offset math in gutter mode.
+  let viewEl: HTMLDivElement | undefined = $state();
 
   // The rendered view always represents the new (right) side of the diff.
   const renderedSide: AnchorSide = "RIGHT";
@@ -70,8 +80,15 @@
   // the composer so we can position the overlay next to it.
   let activeBlockIdx = $state<number | null>(null);
   // CSS top offset (px) for the positioned composer overlay, relative to
-  // .rmd-body. Updated by the positioning effect below.
+  // .rmd-view. Updated by the positioning effect below.
   let composerTop = $state<number | null>(null);
+
+  // Narrow-mode flag: true when the view is too narrow to show a right gutter
+  // (below ~720px). In narrow mode, gutter layout falls back to inline.
+  let narrowMode = $state(false);
+
+  // GutterEntry[] for gutter mode — rebuilt whenever cards or the doc changes.
+  let gutterEntries = $state<GutterEntry[]>([]);
 
   function findBlockIdx(start: number, end: number): number | null {
     for (const [idx, range] of doc.blockRangeByIdx) {
@@ -80,15 +97,14 @@
     return null;
   }
 
-  // Computes the CSS top offset (px) for the composer overlay relative to
-  // .rmd-view, given a block index. Shared by the open-composer functions
-  // (called synchronously so composerTop is set before the first render of
-  // the composer, preventing a flash to the document bottom) and by the
-  // positioning $effect below (which re-runs whenever activeBlockIdx or the
-  // DOM changes, keeping the position correct after card injection or
-  // scroll).
+  // Computes the CSS top offset (px) for the composer overlay / gutter entry,
+  // relative to .rmd-view. Uses a bounding-rect delta so the offset is correct
+  // regardless of intermediate positioning contexts — avoids the double-count
+  // bug that arose from adding bodyEl.offsetTop + target.offsetTop when
+  // .rmd-body is statically positioned (target.offsetTop is already relative
+  // to .rmd-view in that case).
   function computeBlockBottom(idx: number | null): number | null {
-    if (idx === null || !bodyEl) return null;
+    if (idx === null || !bodyEl || !viewEl) return null;
     const allChildren = Array.from(bodyEl.children) as HTMLElement[];
     let original = 0;
     let target: HTMLElement | null = null;
@@ -101,7 +117,10 @@
       original++;
     }
     if (!target) return null;
-    return bodyEl.offsetTop + target.offsetTop + target.offsetHeight;
+    // Bounding-rect delta relative to .rmd-view, accounting for scroll.
+    const targetRect = target.getBoundingClientRect();
+    const viewRect = viewEl.getBoundingClientRect();
+    return targetRect.top - viewRect.top + viewEl.scrollTop + target.offsetHeight;
   }
 
   function openComposerForBlock(start: number, end: number): void {
@@ -432,6 +451,11 @@
   // top-level tokens in source order, so the Nth direct child of
   // the body corresponds to the Nth non-space top-level token we
   // counted while lexing.
+  //
+  // In gutter mode (commentLayout === "gutter" and not narrowMode), we skip
+  // inline .rmd-thread-wrap injection and instead build GutterEntry[] that
+  // is rendered by <CommentGutter> in the right column. Blocks with cards
+  // receive .rmd-block--commented for a gutter-edge accent.
   const mountedInstances = new Set<ReturnType<typeof mount>>();
 
   $effect(() => {
@@ -441,11 +465,18 @@
     const __ = drafts;
     const ___ = publishedForFile;
     const ____ = aiThreadsForFile;
+    const _____ = commentLayout;
+    const ______ = narrowMode;
 
     for (const inst of mountedInstances) unmount(inst);
     mountedInstances.clear();
     bodyEl.querySelectorAll(".rmd-thread-wrap").forEach((el) => el.remove());
     bodyEl.querySelectorAll(".rmd-line-actions").forEach((el) => el.remove());
+
+    // Determine effective layout for this render pass.
+    const useGutter = commentLayout === "gutter" && !narrowMode;
+
+    const newGutterEntries: GutterEntry[] = [];
 
     const children = Array.from(bodyEl.children) as HTMLElement[];
     for (let i = 0; i < children.length; i++) {
@@ -492,44 +523,102 @@
       el.appendChild(actions);
 
       const cards = cardsForRange(blockStart, blockEnd);
-      if (cards.length === 0) continue;
 
-      const wrap = document.createElement("div");
-      wrap.className = "rmd-thread-wrap";
-      for (const spec of cards) {
-        const host = document.createElement("div");
-        host.className = "rmd-thread-host";
-        wrap.appendChild(host);
-        if (spec.kind === "ai") {
-          const inst = mount(AIThreadCard, {
-            target: host,
-            props: { thread: spec.thread, repoOwner: owner, repoName: name },
+      if (useGutter) {
+        // Gutter mode: add marker class to blocks with cards, build GutterEntry.
+        if (cards.length > 0) {
+          el.classList.add("rmd-block--commented");
+          const top = computeBlockBottom(i) ?? 0;
+          newGutterEntries.push({
+            kind: "cards",
+            key: `block:${blockStart}:${blockEnd}`,
+            desiredTop: top,
+            cards: cards as unknown as GutterCardSpec[],
           });
-          mountedInstances.add(inst);
-        } else if (spec.kind === "published") {
-          const inst = mount(ReviewCommentCard, {
-            target: host,
-            props: {
-              comment: spec.comment,
-              repoOwner: owner,
-              repoName: name,
-              currentHeadSha: sha,
-            },
-          });
-          mountedInstances.add(inst);
         } else {
-          const inst = mount(PendingCommentCard, {
-            target: host,
-            props: {
-              comment: spec.comment,
-              currentHeadSha: sha,
-              ondelete: () => diffStore.removeDraftComment(spec.comment.id),
-            },
-          });
-          mountedInstances.add(inst);
+          el.classList.remove("rmd-block--commented");
         }
+      } else {
+        // Inline mode: inject .rmd-thread-wrap after the block.
+        el.classList.remove("rmd-block--commented");
+        if (cards.length === 0) continue;
+
+        const wrap = document.createElement("div");
+        wrap.className = "rmd-thread-wrap";
+        for (const spec of cards) {
+          const host = document.createElement("div");
+          host.className = "rmd-thread-host";
+          wrap.appendChild(host);
+          if (spec.kind === "ai") {
+            const inst = mount(AIThreadCard, {
+              target: host,
+              props: { thread: spec.thread, repoOwner: owner, repoName: name },
+            });
+            mountedInstances.add(inst);
+          } else if (spec.kind === "published") {
+            const inst = mount(ReviewCommentCard, {
+              target: host,
+              props: {
+                comment: spec.comment,
+                repoOwner: owner,
+                repoName: name,
+                currentHeadSha: sha,
+              },
+            });
+            mountedInstances.add(inst);
+          } else {
+            const inst = mount(PendingCommentCard, {
+              target: host,
+              props: {
+                comment: spec.comment,
+                currentHeadSha: sha,
+                ondelete: () => diffStore.removeDraftComment(spec.comment.id),
+              },
+            });
+            mountedInstances.add(inst);
+          }
+        }
+        el.after(wrap);
       }
-      el.after(wrap);
+    }
+
+    // In gutter mode, add the open composer as a gutter entry at the
+    // active block's position, mirroring the inline overlay.
+    if (useGutter) {
+      if (openComposerKey && rangeSnapshot) {
+        const top = computeBlockBottom(activeBlockIdx) ?? 0;
+        newGutterEntries.push({
+          kind: "composer-diff",
+          key: `composer:${openComposerKey}`,
+          desiredTop: top,
+          anchor: {
+            line: rangeSnapshot.endLine,
+            side: rangeSnapshot.side,
+            startLine: rangeSnapshot.startLine,
+          },
+          onsave: saveDraft,
+          oncancel: closeComposer,
+        });
+      } else if (openAskKey && rangeSnapshot) {
+        const top = computeBlockBottom(activeBlockIdx) ?? 0;
+        newGutterEntries.push({
+          kind: "composer-ask",
+          key: `ask:${openAskKey}`,
+          desiredTop: top,
+          anchor: {
+            line: rangeSnapshot.endLine,
+            side: rangeSnapshot.side,
+            startLine: rangeSnapshot.startLine,
+          },
+          error: askError,
+          submitting: askSubmitting,
+          onsubmit: (q: string) => void submitAsk(q),
+          oncancel: closeAsk,
+        });
+      }
+      gutterEntries = newGutterEntries;
+    } else {
+      gutterEntries = [];
     }
 
     // Cleanup on component teardown so the imperatively-mounted
@@ -552,9 +641,23 @@
     const idx = activeBlockIdx;
     composerTop = computeBlockBottom(idx);
   });
+
+  // Narrow-mode detection via ResizeObserver. Below 720px the view is
+  // too narrow to show a right gutter column, so we fall back to inline.
+  // Guard for environments (jsdom) where ResizeObserver is unavailable.
+  $effect(() => {
+    if (!viewEl || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        narrowMode = entry.contentRect.width < 720;
+      }
+    });
+    ro.observe(viewEl);
+    return () => ro.disconnect();
+  });
 </script>
 
-<div class="rmd-view">
+<div class="rmd-view" class:rmd-view--gutter={commentLayout === "gutter" && !narrowMode} bind:this={viewEl}>
   {#if loading && raw === null}
     <div class="rmd-state">Loading…</div>
   {:else if error}
@@ -572,34 +675,48 @@
     </div>
   {/if}
 
-  {#if openComposerKey && rangeSnapshot}
-    <div
-      class="rmd-composer-wrap"
-      class:rmd-composer-wrap--positioned={composerTop !== null}
-      style={composerTop !== null ? `top: ${composerTop}px` : undefined}
-      data-rmd-block-idx={activeBlockIdx !== null ? String(activeBlockIdx) : undefined}
-    >
-      <DiffComposer
-        anchor={{ line: rangeSnapshot.endLine, side: rangeSnapshot.side, startLine: rangeSnapshot.startLine }}
-        onsave={saveDraft}
-        oncancel={closeComposer}
-      />
-    </div>
+  {#if commentLayout === "inline" || narrowMode}
+    {#if openComposerKey && rangeSnapshot}
+      <div
+        class="rmd-composer-wrap"
+        class:rmd-composer-wrap--positioned={composerTop !== null}
+        style={composerTop !== null ? `top: ${composerTop}px` : undefined}
+        data-rmd-block-idx={activeBlockIdx !== null ? String(activeBlockIdx) : undefined}
+      >
+        <DiffComposer
+          anchor={{ line: rangeSnapshot.endLine, side: rangeSnapshot.side, startLine: rangeSnapshot.startLine }}
+          onsave={saveDraft}
+          oncancel={closeComposer}
+        />
+      </div>
+    {/if}
+
+    {#if openAskKey && rangeSnapshot}
+      <div
+        class="rmd-composer-wrap"
+        class:rmd-composer-wrap--positioned={composerTop !== null}
+        style={composerTop !== null ? `top: ${composerTop}px` : undefined}
+        data-rmd-block-idx={activeBlockIdx !== null ? String(activeBlockIdx) : undefined}
+      >
+        <AIAskComposer
+          anchor={{ line: rangeSnapshot.endLine, side: rangeSnapshot.side, startLine: rangeSnapshot.startLine }}
+          error={askError}
+          submitting={askSubmitting}
+          onsubmit={(q) => void submitAsk(q)}
+          oncancel={closeAsk}
+        />
+      </div>
+    {/if}
   {/if}
 
-  {#if openAskKey && rangeSnapshot}
-    <div
-      class="rmd-composer-wrap"
-      class:rmd-composer-wrap--positioned={composerTop !== null}
-      style={composerTop !== null ? `top: ${composerTop}px` : undefined}
-      data-rmd-block-idx={activeBlockIdx !== null ? String(activeBlockIdx) : undefined}
-    >
-      <AIAskComposer
-        anchor={{ line: rangeSnapshot.endLine, side: rangeSnapshot.side, startLine: rangeSnapshot.startLine }}
-        error={askError}
-        submitting={askSubmitting}
-        onsubmit={(q) => void submitAsk(q)}
-        oncancel={closeAsk}
+  {#if commentLayout === "gutter" && !narrowMode}
+    <div class="rmd-gutter-col">
+      <CommentGutter
+        entries={gutterEntries}
+        repoOwner={owner}
+        repoName={name}
+        currentHeadSha={sha}
+        ondelete={(id) => diffStore.removeDraftComment(id)}
       />
     </div>
   {/if}
@@ -610,6 +727,15 @@
     position: relative;
     padding: 16px 24px;
     background: var(--diff-bg);
+  }
+
+  /* Gutter layout: content + right gutter side by side. */
+  .rmd-view--gutter {
+    display: grid;
+    grid-template-columns: 1fr 280px;
+    grid-template-rows: auto;
+    column-gap: 16px;
+    align-items: start;
   }
 
   .rmd-state {
@@ -798,6 +924,14 @@
     padding-left: calc(2em + 10px);
   }
 
+  /* Gutter-mode block marker: a faint left bar + comment glyph hint.
+     Applied imperatively in gutter mode when a block has cards. */
+  .rmd-body :global(.rmd-block--commented) {
+    border-left: 3px solid color-mix(in srgb, var(--accent-blue) 50%, transparent);
+    padding-left: 10px;
+    margin-left: -13px;
+  }
+
   .outdated-banner {
     padding: 6px 14px;
     font-size: 11px;
@@ -869,5 +1003,13 @@
     right: 24px;
     margin-top: 0;
     z-index: 10;
+  }
+
+  /* Right gutter column for gutter layout mode. Positioned relative
+     to .rmd-view so the CommentGutter can use absolute placement. */
+  .rmd-gutter-col {
+    position: relative;
+    min-height: 100%;
+    align-self: stretch;
   }
 </style>

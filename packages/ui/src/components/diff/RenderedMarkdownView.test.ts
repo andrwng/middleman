@@ -45,7 +45,7 @@ function makeStores() {
   return { diff, ai, detail };
 }
 
-function renderViewWithStores(stores: ReturnType<typeof makeStores>) {
+function renderViewWithStores(stores: ReturnType<typeof makeStores>, commentLayout?: "inline" | "gutter") {
   return render(RenderedMarkdownView, {
     props: {
       owner: "local",
@@ -54,6 +54,7 @@ function renderViewWithStores(stores: ReturnType<typeof makeStores>) {
       path: "doc.md",
       sha: "abc",
       hunks: [],
+      ...(commentLayout ? { commentLayout } : {}),
     },
     context: new Map([[STORES_KEY, stores]]),
   });
@@ -61,6 +62,10 @@ function renderViewWithStores(stores: ReturnType<typeof makeStores>) {
 
 function renderView() {
   return renderViewWithStores(makeStores());
+}
+
+function renderViewGutter(stores: ReturnType<typeof makeStores>) {
+  return renderViewWithStores(stores, "gutter");
 }
 
 // Flush all pending microtasks and one macrotask tick so that
@@ -412,5 +417,86 @@ describe("RenderedMarkdownView", () => {
     await settle();
 
     expect(container.querySelectorAll(".rmd-thread-wrap").length).toBe(1);
+  });
+
+  // Gutter mode tests (commentLayout="gutter")
+  //
+  // In gutter mode the card-injection $effect must NOT inject inline
+  // .rmd-thread-wrap elements. Instead a CommentGutter (.comment-gutter)
+  // column is rendered, and cards appear inside it as [data-gutter-key]
+  // entries. The inline path is exercised by all tests above; these tests
+  // exercise only the gutter branch.
+
+  it("(gutter) draft renders inside .comment-gutter — not as inline .rmd-thread-wrap", async () => {
+    const stores = makeStores();
+    stores.diff.setActivePR("local", "demo", 1);
+
+    const { container } = renderViewGutter(stores);
+    await settle();
+
+    // Add a draft so a card exists.
+    stores.diff.addDraftComment({
+      path: "doc.md",
+      line: 1,
+      side: "RIGHT",
+      commitSha: "abc",
+      body: "gutter draft",
+    });
+    await settle();
+
+    // Must NOT inject an inline thread-wrap.
+    expect(container.querySelector(".rmd-thread-wrap")).toBeNull();
+
+    // The gutter container must be present.
+    const gutter = container.querySelector(".comment-gutter");
+    expect(gutter).toBeTruthy();
+
+    // The gutter must contain at least one entry.
+    expect(gutter!.querySelector("[data-gutter-key]")).toBeTruthy();
+  });
+
+  it("(gutter) a block with comments carries .rmd-block--commented", async () => {
+    const stores = makeStores();
+    stores.diff.setActivePR("local", "demo", 1);
+
+    const { container } = renderViewGutter(stores);
+    await settle();
+
+    // No comments yet — no block should carry the marker.
+    expect(container.querySelector(".rmd-block--commented")).toBeNull();
+
+    stores.diff.addDraftComment({
+      path: "doc.md",
+      line: 1,
+      side: "RIGHT",
+      commitSha: "abc",
+      body: "marker test",
+    });
+    await settle();
+
+    // At least one block should now carry .rmd-block--commented.
+    expect(container.querySelector(".rmd-block--commented")).toBeTruthy();
+  });
+
+  it("(inline, default) commentLayout omitted — draft still renders as .rmd-thread-wrap", async () => {
+    const stores = makeStores();
+    stores.diff.setActivePR("local", "demo", 1);
+
+    // Default (no commentLayout prop) must remain inline.
+    const { container } = renderViewWithStores(stores);
+    await settle();
+
+    stores.diff.addDraftComment({
+      path: "doc.md",
+      line: 1,
+      side: "RIGHT",
+      commitSha: "abc",
+      body: "inline check",
+    });
+    await settle();
+
+    expect(container.querySelector(".rmd-thread-wrap")).toBeTruthy();
+    // No gutter column in inline mode.
+    expect(container.querySelector(".rmd-gutter-col")).toBeNull();
   });
 });
