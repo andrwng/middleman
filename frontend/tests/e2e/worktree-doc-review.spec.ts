@@ -243,6 +243,26 @@ test("doc view: clicking an internal anchor link scrolls to that section", async
   await expect(details).toBeInViewport();
 });
 
+test("doc view: clicking a cross-doc link opens the linked doc in docs mode", async ({ page }) => {
+  await page.goto(linksRoute);
+  await expect(page.locator(".rmd-body")).toContainText("Top");
+
+  // The cross-doc link's href is rewritten to the doc route (so a modified /
+  // middle click opens it in a new tab natively).
+  const link = page.getByRole("link", { name: "see the readme" });
+  await expect(link).toHaveAttribute("href", /\/doc\?path=README\.md$/);
+
+  // A plain click opens README.md in docs mode via client-side navigation.
+  await link.click();
+  await expect(page).toHaveURL(/\/doc\?path=README\.md$/);
+  await expect(page.locator(".rmd-body")).toContainText("Hello");
+
+  // Back returns to the linking doc (history navigation works).
+  await page.goBack();
+  await expect(page).toHaveURL(/\/doc\?path=links\.md$/);
+  await expect(page.locator(".rmd-body")).toContainText("Top");
+});
+
 test("comment gutter: dragging the divider resizes the gutter width (horizontal)", async ({ page }) => {
   // Start from the default width regardless of prior runs.
   await page.addInitScript(() => localStorage.removeItem("rmd-gutter-width"));

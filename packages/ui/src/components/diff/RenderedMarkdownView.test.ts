@@ -802,6 +802,57 @@ describe("RenderedMarkdownView", () => {
     expect(ids).toEqual(["setup", "setup-1", "setup-2"]);
   });
 
+  it("(links) relative markdown links are rewritten and open the target doc on click", async () => {
+    const stores = makeStores();
+    stores.diff.setActivePR("local", "demo", 1);
+
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        content: "# Home\n\nSee [notes](notes.md) and [ext](https://example.com).\n",
+        truncated: false,
+      }),
+    }) as unknown as Response);
+
+    const opened: string[] = [];
+    const { container } = render(RenderedMarkdownView, {
+      props: {
+        owner: "local",
+        name: "demo",
+        number: 1,
+        path: "docs/home.md",
+        sha: "abc",
+        hunks: [],
+        commentLayout: "gutter" as const,
+        docHref: (t: string) => `/base/pulls/local/demo/1/doc?path=${encodeURIComponent(t)}`,
+        openDoc: (t: string) => {
+          opened.push(t);
+        },
+      },
+      context: new Map([[STORES_KEY, stores]]),
+    });
+    await settle();
+
+    // The bare relative link resolves to the same directory and is rewritten
+    // to the doc route (so a modified click opens a new tab).
+    const docLink = container.querySelector<HTMLAnchorElement>("a[data-doc-path]");
+    expect(docLink).toBeTruthy();
+    expect(docLink!.dataset.docPath).toBe("docs/notes.md");
+    expect(docLink!.getAttribute("href")).toBe(
+      "/base/pulls/local/demo/1/doc?path=docs%2Fnotes.md",
+    );
+
+    // The external link is left untouched.
+    const extLink = container.querySelector<HTMLAnchorElement>('a[href="https://example.com"]');
+    expect(extLink).toBeTruthy();
+    expect(extLink!.dataset.docPath).toBeUndefined();
+
+    // A plain click opens the target doc in docs mode.
+    await fireEvent.click(docLink!);
+    expect(opened).toEqual(["docs/notes.md"]);
+  });
+
   it("(inline, default) commentLayout omitted — draft still renders as .rmd-thread-wrap", async () => {
     const stores = makeStores();
     stores.diff.setActivePR("local", "demo", 1);

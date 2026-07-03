@@ -34,6 +34,23 @@
       encodeURIComponent(path),
   );
 
+  // Build the base-prefixed doc-route href for a target worktree path — used
+  // as the rewritten cross-doc link's href so a modified/middle click opens it
+  // in a new tab natively.
+  function docHrefFor(targetPath: string): string {
+    return (
+      basePath.replace(/\/$/, "") +
+      `/pulls/${owner}/${name}/${number}/doc?path=` +
+      encodeURIComponent(targetPath)
+    );
+  }
+
+  // Open a linked doc in docs mode (client-side; unprefixed — navigate applies
+  // the base prefix). Goes through history, so back/forward work.
+  function openDoc(targetPath: string): void {
+    navigate(`/pulls/${owner}/${name}/${number}/doc?path=${encodeURIComponent(targetPath)}`);
+  }
+
   // When this component replaces ReviewSurface (which hosts DiffView),
   // the aiStore.start() and reviewThreadsStore.load() calls that DiffView
   // normally makes on mount won't happen. Trigger them here so that
@@ -75,6 +92,8 @@
       sha={WORKING_TREE_SENTINEL}
       hunks={[]}
       commentLayout="gutter"
+      docHref={docHrefFor}
+      {openDoc}
     />
   </div>
 </div>

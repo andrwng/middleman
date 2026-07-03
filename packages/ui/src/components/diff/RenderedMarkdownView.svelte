@@ -16,6 +16,7 @@
   import AIThreadCard from "./AIThreadCard.svelte";
   import CommentGutter, { type GutterEntry, type CardSpec as GutterCardSpec } from "./CommentGutter.svelte";
   import { clampGutterWidth } from "./gutterStack";
+  import { crossDocTarget } from "./docLinks";
   import { getStores } from "../../context.js";
 
   // Renders a markdown file at a given SHA inside the diff surface,
@@ -56,9 +57,24 @@
     sha: string;
     hunks: RenderedHunk[];
     commentLayout?: "inline" | "gutter";
+    // Doc-mode cross-document links: docHref builds the (new-tab) href for a
+    // target worktree path; openDoc navigates to it client-side. When both are
+    // set, relative markdown links are rewritten to open in the doc view.
+    docHref?: (targetPath: string) => string;
+    openDoc?: (targetPath: string) => void;
   }
 
-  const { owner, name, number, path, sha, hunks, commentLayout = "inline" }: Props = $props();
+  const {
+    owner,
+    name,
+    number,
+    path,
+    sha,
+    hunks,
+    commentLayout = "inline",
+    docHref,
+    openDoc,
+  }: Props = $props();
 
   const { diff: diffStore, ai: aiStore, detail: detailStore } = getStores();
 
@@ -142,8 +158,27 @@
   // instead of letting the browser jump to the top. Headings carry slug ids
   // (see the heading renderer); other links (external, cross-doc) are untouched.
   function onDocClick(e: MouseEvent) {
+    // Let the browser handle modified/middle clicks (new tab, window, etc.).
+    if (
+      e.defaultPrevented ||
+      e.button !== 0 ||
+      e.metaKey ||
+      e.ctrlKey ||
+      e.shiftKey ||
+      e.altKey
+    ) {
+      return;
+    }
     const a = (e.target as HTMLElement).closest("a");
     if (!a || !bodyEl) return;
+    // Cross-document link → open the target doc in docs mode (client-side).
+    const docPath = a.dataset.docPath;
+    if (docPath && openDoc) {
+      e.preventDefault();
+      openDoc(docPath);
+      return;
+    }
+    // Same-document anchor → scroll to the section.
     const href = a.getAttribute("href");
     if (!href || href.length < 2 || !href.startsWith("#")) return;
     let id: string;
@@ -165,6 +200,22 @@
     if (!el) return;
     el.addEventListener("click", onDocClick);
     return () => el.removeEventListener("click", onDocClick);
+  });
+
+  // Doc mode (docHref set): rewrite relative markdown links so they point at
+  // the doc route. A plain click opens the target in docs mode (onDocClick); a
+  // modified/middle click opens it in a new tab natively. Re-runs when the doc
+  // content or current path changes.
+  $effect(() => {
+    void raw;
+    if (!bodyEl || !docHref) return;
+    for (const a of bodyEl.querySelectorAll<HTMLAnchorElement>("a[href]")) {
+      if (a.dataset.docPath) continue;
+      const target = crossDocTarget(path, a.getAttribute("href"));
+      if (!target) continue;
+      a.dataset.docPath = target;
+      a.setAttribute("href", docHref(target));
+    }
   });
 
   // Mermaid diagrams: ```mermaid code blocks are emitted as .rmd-mermaid

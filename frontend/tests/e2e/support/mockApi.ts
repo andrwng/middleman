@@ -8,7 +8,7 @@ const LOCAL_REPO_NAME = "myproject";
 const LOCAL_DOC_CONTENT = "# Hello\n\nsome text here\n";
 const LOCAL_DIAGRAM_CONTENT = "# Diagram\n\n```mermaid\ngraph TD;\n  A-->B;\n```\n";
 const LOCAL_LINKS_CONTENT =
-  "# Top\n\n[jump to details](#details)\n\n" +
+  "# Top\n\n[jump to details](#details) or [see the readme](README.md)\n\n" +
   "Filler paragraph for scroll distance.\n\n".repeat(40) +
   "## Details\n\nThe details section.\n";
 
