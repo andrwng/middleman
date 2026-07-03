@@ -34,6 +34,24 @@ test("Docs trigger opens palette listing README.md", async ({ page }) => {
   ).toBeVisible();
 });
 
+test("Docs palette: Ctrl-N / Ctrl-P move the selection", async ({ page }) => {
+  await page.goto(filesRoute);
+  await page.locator("button.doc-open").click();
+  const palette = page.locator('[role="dialog"][aria-label="Open a doc"]');
+  await expect(palette).toBeVisible();
+
+  const options = page.locator('[role="option"]');
+  await expect(options.first()).toHaveAttribute("aria-selected", "true");
+
+  const input = palette.getByRole("textbox");
+  await input.press("Control+n");
+  await expect(options.nth(1)).toHaveAttribute("aria-selected", "true");
+  await expect(options.first()).toHaveAttribute("aria-selected", "false");
+
+  await input.press("Control+p");
+  await expect(options.first()).toHaveAttribute("aria-selected", "true");
+});
+
 test("picking README.md navigates to doc URL and renders heading", async ({ page }) => {
   await page.goto(filesRoute);
 
