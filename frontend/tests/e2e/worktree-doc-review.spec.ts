@@ -10,6 +10,7 @@ const LOCAL_ID = 7;
 const filesRoute = `/pulls/${LOCAL_OWNER}/${LOCAL_REPO}/${LOCAL_ID}/files`;
 const docRoute = `/pulls/${LOCAL_OWNER}/${LOCAL_REPO}/${LOCAL_ID}/doc?path=README.md`;
 const diagramRoute = `/pulls/${LOCAL_OWNER}/${LOCAL_REPO}/${LOCAL_ID}/doc?path=diagram.md`;
+const linksRoute = `/pulls/${LOCAL_OWNER}/${LOCAL_REPO}/${LOCAL_ID}/doc?path=links.md`;
 
 test.beforeEach(async ({ page }) => {
   await mockApi(page);
@@ -226,6 +227,20 @@ test("doc view: a mermaid code block renders as an embedded SVG diagram", async 
   // lazy-loaded). The raw source <pre> is replaced once the SVG is ready.
   await expect(page.locator(".rmd-mermaid__svg svg")).toBeVisible({ timeout: 10000 });
   await expect(page.locator(".rmd-mermaid__src")).toHaveCount(0);
+});
+
+test("doc view: clicking an internal anchor link scrolls to that section", async ({ page }) => {
+  await page.goto(linksRoute);
+  await expect(page.locator(".rmd-body")).toContainText("Top");
+
+  // The "## Details" heading (id="details") starts below the fold.
+  const details = page.locator("#details");
+  await expect(details).toHaveCount(1);
+  await expect(details).not.toBeInViewport();
+
+  // Clicking the internal link scrolls it into view (no bounce to the top).
+  await page.getByRole("link", { name: "jump to details" }).click();
+  await expect(details).toBeInViewport();
 });
 
 test("comment gutter: dragging the divider resizes the gutter width (horizontal)", async ({ page }) => {

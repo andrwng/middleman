@@ -756,6 +756,52 @@ describe("RenderedMarkdownView", () => {
     expect(container.querySelector(".rmd-mermaid__svg")).toBeNull();
   });
 
+  it("(links) headings get slug ids and an internal #link scrolls to the section", async () => {
+    const stores = makeStores();
+    stores.diff.setActivePR("local", "demo", 1);
+
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        content: "# Data Flow\n\nJump to [the section](#data-flow).\n",
+        truncated: false,
+      }),
+    }) as unknown as Response);
+
+    const { container } = renderViewWithStores(stores);
+    await settle();
+
+    // The heading carries a GitHub-style slug id.
+    const heading = container.querySelector<HTMLHeadingElement>("h1");
+    expect(heading?.id).toBe("data-flow");
+
+    // Clicking the internal link scrolls the target heading into view.
+    const scrollSpy = vi.spyOn(Element.prototype, "scrollIntoView");
+    const link = container.querySelector<HTMLAnchorElement>('a[href="#data-flow"]');
+    expect(link).toBeTruthy();
+    await fireEvent.click(link!);
+    expect(scrollSpy).toHaveBeenCalled();
+    expect(scrollSpy.mock.instances[0]).toBe(heading);
+  });
+
+  it("(links) duplicate heading text produces de-duplicated slug ids", async () => {
+    const stores = makeStores();
+    stores.diff.setActivePR("local", "demo", 1);
+
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ content: "# Setup\n\n## Setup\n\n### Setup\n", truncated: false }),
+    }) as unknown as Response);
+
+    const { container } = renderViewWithStores(stores);
+    await settle();
+
+    const ids = Array.from(container.querySelectorAll("h1, h2, h3")).map((h) => h.id);
+    expect(ids).toEqual(["setup", "setup-1", "setup-2"]);
+  });
+
   it("(inline, default) commentLayout omitted — draft still renders as .rmd-thread-wrap", async () => {
     const stores = makeStores();
     stores.diff.setActivePR("local", "demo", 1);

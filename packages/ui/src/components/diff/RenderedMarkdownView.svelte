@@ -118,6 +118,55 @@
     return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
 
+  // GitHub-style heading slug for anchor ids: lowercase, drop punctuation,
+  // spaces to hyphens.
+  function slugify(text: string): string {
+    return text
+      .toLowerCase()
+      .trim()
+      .replace(/[^\w\s-]/g, "")
+      .replace(/\s+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-+|-+$/g, "");
+  }
+
+  // De-duplicate slugs within a document (GitHub appends -1, -2, ...).
+  function uniqueSlug(text: string, counts: Map<string, number>): string {
+    const base = slugify(text) || "section";
+    const n = counts.get(base) ?? 0;
+    counts.set(base, n + 1);
+    return n === 0 ? base : `${base}-${n}`;
+  }
+
+  // Same-document anchor links (href="#slug") scroll to the target heading
+  // instead of letting the browser jump to the top. Headings carry slug ids
+  // (see the heading renderer); other links (external, cross-doc) are untouched.
+  function onDocClick(e: MouseEvent) {
+    const a = (e.target as HTMLElement).closest("a");
+    if (!a || !bodyEl) return;
+    const href = a.getAttribute("href");
+    if (!href || href.length < 2 || !href.startsWith("#")) return;
+    let id: string;
+    try {
+      id = decodeURIComponent(href.slice(1));
+    } catch {
+      return;
+    }
+    // Attribute selector (with the two chars that break a quoted value escaped)
+    // rather than CSS.escape, which isn't available in every environment.
+    const target = bodyEl.querySelector(`[id="${id.replace(/["\\]/g, "\\$&")}"]`);
+    if (!target) return;
+    e.preventDefault();
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  $effect(() => {
+    const el = bodyEl;
+    if (!el) return;
+    el.addEventListener("click", onDocClick);
+    return () => el.removeEventListener("click", onDocClick);
+  });
+
   // Mermaid diagrams: ```mermaid code blocks are emitted as .rmd-mermaid
   // placeholders by the code renderer above. Here we lazy-load mermaid (it is
   // heavy, so it loads only for docs that actually use it) and replace each
@@ -462,6 +511,9 @@
     // line the block being rendered started on.
     let currentBlockStart = 1;
 
+    // Per-document heading slug counter for stable, de-duplicated anchor ids.
+    const slugCounts = new Map<string, number>();
+
     m.use({
       renderer: {
         paragraph({ tokens: _t, raw: rawText }: Tokens.Paragraph): string {
@@ -470,14 +522,16 @@
           )}</p>\n`;
         },
         heading({ tokens: _t, raw: rawText, depth }: Tokens.Heading): string {
+          const headingText = rawText.replace(/^#+\s*/, "");
           const inner = wrapProseBlock(
-            rawText.replace(/^#+\s*/, ""),
+            headingText,
             currentBlockStart,
             renderedSide,
             (s) => m.parseInline(s) as string,
           );
           const badge = `<span class="rmd-line" title="Line ${currentBlockStart}">L${currentBlockStart}</span>`;
-          return `<h${depth}>${inner}${badge}</h${depth}>\n`;
+          const id = uniqueSlug(headingText, slugCounts);
+          return `<h${depth} id="${id}">${inner}${badge}</h${depth}>\n`;
         },
         code({ text, lang }: Tokens.Code): string {
           if (lang === "mermaid") {

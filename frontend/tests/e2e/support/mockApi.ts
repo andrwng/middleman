@@ -7,6 +7,10 @@ const LOCAL_WORKTREE_ID = 7;
 const LOCAL_REPO_NAME = "myproject";
 const LOCAL_DOC_CONTENT = "# Hello\n\nsome text here\n";
 const LOCAL_DIAGRAM_CONTENT = "# Diagram\n\n```mermaid\ngraph TD;\n  A-->B;\n```\n";
+const LOCAL_LINKS_CONTENT =
+  "# Top\n\n[jump to details](#details)\n\n" +
+  "Filler paragraph for scroll distance.\n\n".repeat(40) +
+  "## Details\n\nThe details section.\n";
 
 const localWorktreePull = {
   ID: LOCAL_WORKTREE_ID,
@@ -362,7 +366,7 @@ export async function mockApi(page: Page): Promise<void> {
       /^\/api\/v1\/worktrees\/(\d+)\/markdown-files$/,
     );
     if (method === "GET" && markdownFilesMatch) {
-      await fulfillJson(route, { files: ["README.md", "diagram.md"] });
+      await fulfillJson(route, { files: ["README.md", "diagram.md", "links.md"] });
       return;
     }
 
@@ -378,6 +382,8 @@ export async function mockApi(page: Page): Promise<void> {
         await fulfillJson(route, { content: LOCAL_DOC_CONTENT, truncated: false });
       } else if (blobOwner === "local" && blobPath === "diagram.md") {
         await fulfillJson(route, { content: LOCAL_DIAGRAM_CONTENT, truncated: false });
+      } else if (blobOwner === "local" && blobPath === "links.md") {
+        await fulfillJson(route, { content: LOCAL_LINKS_CONTENT, truncated: false });
       } else {
         await fulfillJson(route, { error: "Not found" }, 404);
       }
