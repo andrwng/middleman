@@ -281,6 +281,20 @@ test("doc view: clicking a cross-doc link opens the linked doc in docs mode", as
   await expect(page.locator(".rmd-body")).toContainText("Top");
 });
 
+test("doc view: a cross-doc link with a #fragment opens the doc and scrolls to the section", async ({ page }) => {
+  await page.goto(docRoute);
+  await expect(page.locator(".rmd-body")).toContainText("Hello");
+
+  // The link href carries both the target doc and the fragment.
+  const link = page.getByRole("link", { name: "details section" });
+  await expect(link).toHaveAttribute("href", /\/doc\?path=links\.md#details$/);
+
+  // Clicking opens links.md AND scrolls to the (below-the-fold) #details section.
+  await link.click();
+  await expect(page).toHaveURL(/\/doc\?path=links\.md#details$/);
+  await expect(page.locator("#details")).toBeInViewport();
+});
+
 test("comment gutter: dragging the divider resizes the gutter width (horizontal)", async ({ page }) => {
   // Start from the default width regardless of prior runs.
   await page.addInitScript(() => localStorage.removeItem("rmd-gutter-width"));

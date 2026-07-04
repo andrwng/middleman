@@ -21,15 +21,25 @@ describe("resolveDocPath", () => {
 });
 
 describe("crossDocTarget", () => {
-  it("resolves a bare same-directory markdown link", () => {
-    expect(crossDocTarget("docs/a.md", "b.md")).toBe("docs/b.md");
+  it("resolves a bare same-directory markdown link (no fragment)", () => {
+    expect(crossDocTarget("docs/a.md", "b.md")).toEqual({ path: "docs/b.md", fragment: "" });
   });
-  it("strips a #fragment and resolves the doc path", () => {
-    expect(crossDocTarget("docs/a.md", "b.md#section")).toBe("docs/b.md");
+  it("captures a #fragment alongside the resolved doc path", () => {
+    expect(crossDocTarget("docs/a.md", "b.md#section")).toEqual({
+      path: "docs/b.md",
+      fragment: "section",
+    });
+    expect(crossDocTarget("docs/a.md", "../README.md#install")).toEqual({
+      path: "README.md",
+      fragment: "install",
+    });
   });
   it("accepts .mdx and .markdown", () => {
-    expect(crossDocTarget("a.md", "b.mdx")).toBe("b.mdx");
-    expect(crossDocTarget("docs/a.md", "c.markdown")).toBe("docs/c.markdown");
+    expect(crossDocTarget("a.md", "b.mdx")).toEqual({ path: "b.mdx", fragment: "" });
+    expect(crossDocTarget("docs/a.md", "c.markdown")).toEqual({
+      path: "docs/c.markdown",
+      fragment: "",
+    });
   });
   it("ignores anchor-only links", () => {
     expect(crossDocTarget("a.md", "#section")).toBeNull();

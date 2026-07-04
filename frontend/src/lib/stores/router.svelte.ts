@@ -45,9 +45,13 @@ function stripBase(path: string): string {
 }
 
 function parseRoute(fullPath: string): Route {
-  const qIdx = fullPath.indexOf("?");
-  const pathname = qIdx >= 0 ? fullPath.slice(0, qIdx) : fullPath;
-  const search = qIdx >= 0 ? fullPath.slice(qIdx + 1) : "";
+  // Drop any #fragment before parsing: it belongs to neither the pathname nor
+  // the query, and must not leak into a query param (e.g. ?path=x.md#section).
+  const hashIdx = fullPath.indexOf("#");
+  const noHash = hashIdx >= 0 ? fullPath.slice(0, hashIdx) : fullPath;
+  const qIdx = noHash.indexOf("?");
+  const pathname = qIdx >= 0 ? noHash.slice(0, qIdx) : noHash;
+  const search = qIdx >= 0 ? noHash.slice(qIdx + 1) : "";
   const path = stripBase(pathname);
   if (path.startsWith("/focus/")) {
     if (path === "/focus/mrs") {

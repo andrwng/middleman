@@ -46,9 +46,14 @@
   }
 
   // Open a linked doc in docs mode (client-side; unprefixed — navigate applies
-  // the base prefix). Goes through history, so back/forward work.
-  function openDoc(targetPath: string): void {
-    navigate(`/pulls/${owner}/${name}/${number}/doc?path=${encodeURIComponent(targetPath)}`);
+  // the base prefix). A #fragment rides along in the URL hash so the target
+  // doc scrolls to that section once it renders. Goes through history, so
+  // back/forward work.
+  function openDoc(targetPath: string, fragment?: string): void {
+    navigate(
+      `/pulls/${owner}/${name}/${number}/doc?path=${encodeURIComponent(targetPath)}` +
+        (fragment ? `#${fragment}` : ""),
+    );
   }
 
   // When this component replaces ReviewSurface (which hosts DiffView),

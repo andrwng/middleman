@@ -95,6 +95,11 @@ describe("router /pulls/.../doc route", () => {
       docPath: "docs/a.md",
     });
   });
+
+  it("strips a #fragment so it does not leak into docPath", () => {
+    navigate("/pulls/local/redpanda/8/doc?path=b.md#section");
+    expect(getRoute()).toMatchObject({ docPath: "b.md" });
+  });
 });
 
 describe("router basic routes", () => {

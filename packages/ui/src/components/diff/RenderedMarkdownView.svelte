@@ -62,7 +62,7 @@
     // target worktree path; openDoc navigates to it client-side. When both are
     // set, relative markdown links are rewritten to open in the doc view.
     docHref?: (targetPath: string) => string;
-    openDoc?: (targetPath: string) => void;
+    openDoc?: (targetPath: string, fragment?: string) => void;
   }
 
   const {
@@ -156,7 +156,7 @@
     const docPath = a.dataset.docPath;
     if (docPath && openDoc) {
       e.preventDefault();
-      openDoc(docPath);
+      openDoc(docPath, a.dataset.docFragment);
       return;
     }
     // Same-document anchor → scroll to the section.
@@ -194,9 +194,47 @@
       if (a.dataset.docPath) continue;
       const target = crossDocTarget(path, a.getAttribute("href"));
       if (!target) continue;
-      a.dataset.docPath = target;
-      a.setAttribute("href", docHref(target));
+      a.dataset.docPath = target.path;
+      if (target.fragment) a.dataset.docFragment = target.fragment;
+      a.setAttribute(
+        "href",
+        docHref(target.path) + (target.fragment ? `#${target.fragment}` : ""),
+      );
     }
+  });
+
+  // On render (fresh load or cross-doc navigation), scroll to the section named
+  // by window.location.hash — e.g. arriving at a `?path=X#section` URL, or a
+  // cross-doc link that carried a #fragment. Runs after the doc renders (raw)
+  // so the target heading's slug id exists.
+  $effect(() => {
+    void raw;
+    if (!bodyEl) return;
+    let cancelled = false;
+    const scrollToHash = () => {
+      if (cancelled || !bodyEl) return;
+      const hash = window.location.hash;
+      if (hash.length < 2) return;
+      let id: string;
+      try {
+        id = decodeURIComponent(hash.slice(1));
+      } catch {
+        return;
+      }
+      bodyEl
+        .querySelector(`[id="${id.replace(/["\\]/g, "\\$&")}"]`)
+        ?.scrollIntoView({ block: "start" });
+    };
+    // Defer past layout so a just-rendered (possibly tall) doc scrolls to the
+    // correct offset — two frames = after the next layout+paint.
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => requestAnimationFrame(scrollToHash));
+    } else {
+      scrollToHash();
+    }
+    return () => {
+      cancelled = true;
+    };
   });
 
   // Mermaid diagrams: ```mermaid code blocks are emitted as .rmd-mermaid

@@ -25,16 +25,24 @@ export function resolveDocPath(currentPath: string, target: string): string {
   return out.join("/");
 }
 
+export interface CrossDocLink {
+  // Resolved worktree path of the target document.
+  path: string;
+  // The link's #fragment without the leading "#" ("" when there is none).
+  fragment: string;
+}
+
 // If href is a relative link to a markdown document (bare same-directory name,
 // ./x.md, ../x.md, sub/x.md, optionally with a #fragment), return the resolved
-// worktree path. Otherwise (external URL, absolute path, anchor-only, or a
-// non-markdown target) return null so the link is left untouched.
-export function crossDocTarget(currentPath: string, href: string | null): string | null {
+// worktree path and the fragment. Otherwise (external URL, absolute path,
+// anchor-only, or a non-markdown target) return null so the link is untouched.
+export function crossDocTarget(currentPath: string, href: string | null): CrossDocLink | null {
   if (!href) return null;
   if (/^[a-z][a-z0-9+.-]*:/i.test(href)) return null; // has a scheme: http:, mailto:, ...
   if (href.startsWith("#") || href.startsWith("/")) return null; // anchor-only or absolute
   const hashIdx = href.indexOf("#");
   const pathPart = hashIdx >= 0 ? href.slice(0, hashIdx) : href;
+  const fragment = hashIdx >= 0 ? href.slice(hashIdx + 1) : "";
   if (!pathPart || !/\.(md|mdx|markdown)$/i.test(pathPart)) return null;
   let decoded = pathPart;
   try {
@@ -42,5 +50,5 @@ export function crossDocTarget(currentPath: string, href: string | null): string
   } catch {
     // Malformed escape — fall back to the raw path.
   }
-  return resolveDocPath(currentPath, decoded);
+  return { path: resolveDocPath(currentPath, decoded), fragment };
 }
