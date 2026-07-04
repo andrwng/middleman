@@ -17,6 +17,7 @@
   import CommentGutter, { type GutterEntry, type CardSpec as GutterCardSpec } from "./CommentGutter.svelte";
   import { clampGutterWidth } from "./gutterStack";
   import { crossDocTarget } from "./docLinks";
+  import { uniqueSlug } from "./headingSlug";
   import { getStores } from "../../context.js";
 
   // Renders a markdown file at a given SHA inside the diff surface,
@@ -132,26 +133,6 @@
   // Escape text for safe interpolation into HTML element content.
   function escapeHtml(s: string): string {
     return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  }
-
-  // GitHub-style heading slug for anchor ids: lowercase, drop punctuation,
-  // spaces to hyphens.
-  function slugify(text: string): string {
-    return text
-      .toLowerCase()
-      .trim()
-      .replace(/[^\w\s-]/g, "")
-      .replace(/\s+/g, "-")
-      .replace(/-+/g, "-")
-      .replace(/^-+|-+$/g, "");
-  }
-
-  // De-duplicate slugs within a document (GitHub appends -1, -2, ...).
-  function uniqueSlug(text: string, counts: Map<string, number>): string {
-    const base = slugify(text) || "section";
-    const n = counts.get(base) ?? 0;
-    counts.set(base, n + 1);
-    return n === 0 ? base : `${base}-${n}`;
   }
 
   // Same-document anchor links (href="#slug") scroll to the target heading

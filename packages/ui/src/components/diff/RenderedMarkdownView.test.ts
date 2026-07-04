@@ -785,6 +785,23 @@ describe("RenderedMarkdownView", () => {
     expect(scrollSpy.mock.instances[0]).toBe(heading);
   });
 
+  it("(links) a heading with '+' gets the GitHub double-hyphen slug id", async () => {
+    const stores = makeStores();
+    stores.diff.setActivePR("local", "demo", 1);
+
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ content: "## Record schemas + serde\n", truncated: false }),
+    }) as unknown as Response);
+
+    const { container } = renderViewWithStores(stores);
+    await settle();
+
+    // "+" dropped, its two surrounding spaces each become a hyphen -> "--".
+    expect(container.querySelector("h2")?.id).toBe("record-schemas--serde");
+  });
+
   it("(links) duplicate heading text produces de-duplicated slug ids", async () => {
     const stores = makeStores();
     stores.diff.setActivePR("local", "demo", 1);
