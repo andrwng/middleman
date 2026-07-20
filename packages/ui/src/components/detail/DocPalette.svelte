@@ -86,11 +86,16 @@
   }
 
   function handleKeydown(e: KeyboardEvent) {
-    if (e.key === "ArrowDown") {
+    // Ctrl-N / Ctrl-P move the cursor down / up (Emacs-style), alongside the
+    // arrow keys. preventDefault stops the browser defaults (Ctrl-P print,
+    // Ctrl-N new window) while the palette is focused.
+    const moveDown = e.key === "ArrowDown" || (e.ctrlKey && e.key === "n");
+    const moveUp = e.key === "ArrowUp" || (e.ctrlKey && e.key === "p");
+    if (moveDown) {
       e.preventDefault();
       if (filtered.length === 0) return;
       highlightIndex = Math.min(highlightIndex + 1, filtered.length - 1);
-    } else if (e.key === "ArrowUp") {
+    } else if (moveUp) {
       e.preventDefault();
       if (filtered.length === 0) return;
       highlightIndex = Math.max(highlightIndex - 1, 0);

@@ -1,5 +1,5 @@
 import { beforeEach, describe, it, expect, vi } from "vitest";
-import { render, fireEvent } from "@testing-library/svelte";
+import { render, fireEvent, waitFor } from "@testing-library/svelte";
 import RenderedMarkdownView from "./RenderedMarkdownView.svelte";
 import { STORES_KEY } from "../../context.js";
 import { createDiffStore } from "../../stores/diff.svelte.js";
@@ -754,6 +754,157 @@ describe("RenderedMarkdownView", () => {
     expect(holder!.classList.contains("rmd-mermaid--error")).toBe(true);
     expect(container.querySelector(".rmd-mermaid__src")).toBeTruthy();
     expect(container.querySelector(".rmd-mermaid__svg")).toBeNull();
+  });
+
+  it("(links) headings get slug ids and an internal #link scrolls to the section", async () => {
+    const stores = makeStores();
+    stores.diff.setActivePR("local", "demo", 1);
+
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        content: "# Data Flow\n\nJump to [the section](#data-flow).\n",
+        truncated: false,
+      }),
+    }) as unknown as Response);
+
+    const { container } = renderViewWithStores(stores);
+    await settle();
+
+    // The heading carries a GitHub-style slug id.
+    const heading = container.querySelector<HTMLHeadingElement>("h1");
+    expect(heading?.id).toBe("data-flow");
+
+    // Clicking the internal link scrolls the target heading into view.
+    const scrollSpy = vi.spyOn(Element.prototype, "scrollIntoView");
+    const link = container.querySelector<HTMLAnchorElement>('a[href="#data-flow"]');
+    expect(link).toBeTruthy();
+    await fireEvent.click(link!);
+    expect(scrollSpy).toHaveBeenCalled();
+    expect(scrollSpy.mock.instances[0]).toBe(heading);
+  });
+
+  it("(links) a heading with '+' gets the GitHub double-hyphen slug id", async () => {
+    const stores = makeStores();
+    stores.diff.setActivePR("local", "demo", 1);
+
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ content: "## Record schemas + serde\n", truncated: false }),
+    }) as unknown as Response);
+
+    const { container } = renderViewWithStores(stores);
+    await settle();
+
+    // "+" dropped, its two surrounding spaces each become a hyphen -> "--".
+    expect(container.querySelector("h2")?.id).toBe("record-schemas--serde");
+  });
+
+  it("(links) duplicate heading text produces de-duplicated slug ids", async () => {
+    const stores = makeStores();
+    stores.diff.setActivePR("local", "demo", 1);
+
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ content: "# Setup\n\n## Setup\n\n### Setup\n", truncated: false }),
+    }) as unknown as Response);
+
+    const { container } = renderViewWithStores(stores);
+    await settle();
+
+    const ids = Array.from(container.querySelectorAll("h1, h2, h3")).map((h) => h.id);
+    expect(ids).toEqual(["setup", "setup-1", "setup-2"]);
+  });
+
+  it("(links) relative markdown links are rewritten and open the target doc (with fragment) on click", async () => {
+    const stores = makeStores();
+    stores.diff.setActivePR("local", "demo", 1);
+
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        content:
+          "# Home\n\nSee [notes](notes.md), [deep](sub/x.md#usage) and [ext](https://example.com).\n",
+        truncated: false,
+      }),
+    }) as unknown as Response);
+
+    const opened: Array<[string, string | undefined]> = [];
+    const { container } = render(RenderedMarkdownView, {
+      props: {
+        owner: "local",
+        name: "demo",
+        number: 1,
+        path: "docs/home.md",
+        sha: "abc",
+        hunks: [],
+        commentLayout: "gutter" as const,
+        docHref: (t: string) => `/base/pulls/local/demo/1/doc?path=${encodeURIComponent(t)}`,
+        openDoc: (t: string, f?: string) => {
+          opened.push([t, f]);
+        },
+      },
+      context: new Map([[STORES_KEY, stores]]),
+    });
+    await settle();
+
+    // Bare relative link → same-directory doc path, no fragment.
+    const notesLink = container.querySelector<HTMLAnchorElement>('a[data-doc-path="docs/notes.md"]');
+    expect(notesLink).toBeTruthy();
+    expect(notesLink!.dataset.docFragment).toBeUndefined();
+    expect(notesLink!.getAttribute("href")).toBe(
+      "/base/pulls/local/demo/1/doc?path=docs%2Fnotes.md",
+    );
+
+    // Link with a fragment → resolved path + fragment carried in href + dataset.
+    const deepLink = container.querySelector<HTMLAnchorElement>('a[data-doc-path="docs/sub/x.md"]');
+    expect(deepLink).toBeTruthy();
+    expect(deepLink!.dataset.docFragment).toBe("usage");
+    expect(deepLink!.getAttribute("href")).toBe(
+      "/base/pulls/local/demo/1/doc?path=docs%2Fsub%2Fx.md#usage",
+    );
+
+    // External link untouched.
+    const extLink = container.querySelector<HTMLAnchorElement>('a[href="https://example.com"]');
+    expect(extLink).toBeTruthy();
+    expect(extLink!.dataset.docPath).toBeUndefined();
+
+    // Clicks open the target doc, passing the fragment when present.
+    await fireEvent.click(notesLink!);
+    await fireEvent.click(deepLink!);
+    expect(opened).toEqual([
+      ["docs/notes.md", undefined],
+      ["docs/sub/x.md", "usage"],
+    ]);
+  });
+
+  it("(links) scrolls to window.location.hash's section on render", async () => {
+    const stores = makeStores();
+    stores.diff.setActivePR("local", "demo", 1);
+
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ content: "# Intro\n\n## Data Flow\n\ntext\n", truncated: false }),
+    }) as unknown as Response);
+
+    const scrollSpy = vi.spyOn(Element.prototype, "scrollIntoView");
+    window.location.hash = "#data-flow";
+    try {
+      const { container } = renderViewWithStores(stores);
+      await settle();
+      const heading = container.querySelector<HTMLElement>("#data-flow");
+      expect(heading).toBeTruthy();
+      // Scroll is deferred via requestAnimationFrame, so wait for it.
+      await waitFor(() => expect(scrollSpy).toHaveBeenCalled());
+      expect(scrollSpy.mock.instances[0]).toBe(heading);
+    } finally {
+      window.location.hash = "";
+    }
   });
 
   it("(inline, default) commentLayout omitted — draft still renders as .rmd-thread-wrap", async () => {

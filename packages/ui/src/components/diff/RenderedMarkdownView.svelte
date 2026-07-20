@@ -16,6 +16,8 @@
   import AIThreadCard from "./AIThreadCard.svelte";
   import CommentGutter, { type GutterEntry, type CardSpec as GutterCardSpec } from "./CommentGutter.svelte";
   import { clampGutterWidth } from "./gutterStack";
+  import { crossDocTarget } from "./docLinks";
+  import { uniqueSlug } from "./headingSlug";
   import { getStores } from "../../context.js";
 
   // Renders a markdown file at a given SHA inside the diff surface,
@@ -56,9 +58,24 @@
     sha: string;
     hunks: RenderedHunk[];
     commentLayout?: "inline" | "gutter";
+    // Doc-mode cross-document links: docHref builds the (new-tab) href for a
+    // target worktree path; openDoc navigates to it client-side. When both are
+    // set, relative markdown links are rewritten to open in the doc view.
+    docHref?: (targetPath: string) => string;
+    openDoc?: (targetPath: string, fragment?: string) => void;
   }
 
-  const { owner, name, number, path, sha, hunks, commentLayout = "inline" }: Props = $props();
+  const {
+    owner,
+    name,
+    number,
+    path,
+    sha,
+    hunks,
+    commentLayout = "inline",
+    docHref,
+    openDoc,
+  }: Props = $props();
 
   const { diff: diffStore, ai: aiStore, detail: detailStore } = getStores();
 
@@ -117,6 +134,108 @@
   function escapeHtml(s: string): string {
     return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
+
+  // Same-document anchor links (href="#slug") scroll to the target heading
+  // instead of letting the browser jump to the top. Headings carry slug ids
+  // (see the heading renderer); other links (external, cross-doc) are untouched.
+  function onDocClick(e: MouseEvent) {
+    // Let the browser handle modified/middle clicks (new tab, window, etc.).
+    if (
+      e.defaultPrevented ||
+      e.button !== 0 ||
+      e.metaKey ||
+      e.ctrlKey ||
+      e.shiftKey ||
+      e.altKey
+    ) {
+      return;
+    }
+    const a = (e.target as HTMLElement).closest("a");
+    if (!a || !bodyEl) return;
+    // Cross-document link → open the target doc in docs mode (client-side).
+    const docPath = a.dataset.docPath;
+    if (docPath && openDoc) {
+      e.preventDefault();
+      openDoc(docPath, a.dataset.docFragment);
+      return;
+    }
+    // Same-document anchor → scroll to the section.
+    const href = a.getAttribute("href");
+    if (!href || href.length < 2 || !href.startsWith("#")) return;
+    let id: string;
+    try {
+      id = decodeURIComponent(href.slice(1));
+    } catch {
+      return;
+    }
+    // Attribute selector (with the two chars that break a quoted value escaped)
+    // rather than CSS.escape, which isn't available in every environment.
+    const target = bodyEl.querySelector(`[id="${id.replace(/["\\]/g, "\\$&")}"]`);
+    if (!target) return;
+    e.preventDefault();
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  $effect(() => {
+    const el = bodyEl;
+    if (!el) return;
+    el.addEventListener("click", onDocClick);
+    return () => el.removeEventListener("click", onDocClick);
+  });
+
+  // Doc mode (docHref set): rewrite relative markdown links so they point at
+  // the doc route. A plain click opens the target in docs mode (onDocClick); a
+  // modified/middle click opens it in a new tab natively. Re-runs when the doc
+  // content or current path changes.
+  $effect(() => {
+    void raw;
+    if (!bodyEl || !docHref) return;
+    for (const a of bodyEl.querySelectorAll<HTMLAnchorElement>("a[href]")) {
+      if (a.dataset.docPath) continue;
+      const target = crossDocTarget(path, a.getAttribute("href"));
+      if (!target) continue;
+      a.dataset.docPath = target.path;
+      if (target.fragment) a.dataset.docFragment = target.fragment;
+      a.setAttribute(
+        "href",
+        docHref(target.path) + (target.fragment ? `#${target.fragment}` : ""),
+      );
+    }
+  });
+
+  // On render (fresh load or cross-doc navigation), scroll to the section named
+  // by window.location.hash — e.g. arriving at a `?path=X#section` URL, or a
+  // cross-doc link that carried a #fragment. Runs after the doc renders (raw)
+  // so the target heading's slug id exists.
+  $effect(() => {
+    void raw;
+    if (!bodyEl) return;
+    let cancelled = false;
+    const scrollToHash = () => {
+      if (cancelled || !bodyEl) return;
+      const hash = window.location.hash;
+      if (hash.length < 2) return;
+      let id: string;
+      try {
+        id = decodeURIComponent(hash.slice(1));
+      } catch {
+        return;
+      }
+      bodyEl
+        .querySelector(`[id="${id.replace(/["\\]/g, "\\$&")}"]`)
+        ?.scrollIntoView({ block: "start" });
+    };
+    // Defer past layout so a just-rendered (possibly tall) doc scrolls to the
+    // correct offset — two frames = after the next layout+paint.
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => requestAnimationFrame(scrollToHash));
+    } else {
+      scrollToHash();
+    }
+    return () => {
+      cancelled = true;
+    };
+  });
 
   // Mermaid diagrams: ```mermaid code blocks are emitted as .rmd-mermaid
   // placeholders by the code renderer above. Here we lazy-load mermaid (it is
@@ -462,6 +581,9 @@
     // line the block being rendered started on.
     let currentBlockStart = 1;
 
+    // Per-document heading slug counter for stable, de-duplicated anchor ids.
+    const slugCounts = new Map<string, number>();
+
     m.use({
       renderer: {
         paragraph({ tokens: _t, raw: rawText }: Tokens.Paragraph): string {
@@ -470,14 +592,16 @@
           )}</p>\n`;
         },
         heading({ tokens: _t, raw: rawText, depth }: Tokens.Heading): string {
+          const headingText = rawText.replace(/^#+\s*/, "");
           const inner = wrapProseBlock(
-            rawText.replace(/^#+\s*/, ""),
+            headingText,
             currentBlockStart,
             renderedSide,
             (s) => m.parseInline(s) as string,
           );
           const badge = `<span class="rmd-line" title="Line ${currentBlockStart}">L${currentBlockStart}</span>`;
-          return `<h${depth}>${inner}${badge}</h${depth}>\n`;
+          const id = uniqueSlug(headingText, slugCounts);
+          return `<h${depth} id="${id}">${inner}${badge}</h${depth}>\n`;
         },
         code({ text, lang }: Tokens.Code): string {
           if (lang === "mermaid") {

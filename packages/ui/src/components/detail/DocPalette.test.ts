@@ -126,4 +126,27 @@ describe("DocPalette", () => {
     await fireEvent.keyDown(input, { key: "Escape" });
     expect(onClose).toHaveBeenCalled();
   });
+
+  it("Ctrl-N / Ctrl-P move the highlighted row down / up", async () => {
+    renderPalette();
+    await new Promise((r) => setTimeout(r, 0));
+    const input = screen.getByRole("textbox");
+    // Assert by selected index (independent of file sort order).
+    const selectedIndex = () =>
+      screen.getAllByRole("option").findIndex((r) => r.getAttribute("aria-selected") === "true");
+
+    expect(selectedIndex()).toBe(0);
+
+    // Ctrl-N moves down (and preventDefault fires, so the browser won't act).
+    const notPrevented = await fireEvent.keyDown(input, { key: "n", ctrlKey: true });
+    expect(notPrevented).toBe(false);
+    expect(selectedIndex()).toBe(1);
+
+    await fireEvent.keyDown(input, { key: "n", ctrlKey: true });
+    expect(selectedIndex()).toBe(2);
+
+    // Ctrl-P moves back up.
+    await fireEvent.keyDown(input, { key: "p", ctrlKey: true });
+    expect(selectedIndex()).toBe(1);
+  });
 });

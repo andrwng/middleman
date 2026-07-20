@@ -10,6 +10,7 @@ const LOCAL_ID = 7;
 const filesRoute = `/pulls/${LOCAL_OWNER}/${LOCAL_REPO}/${LOCAL_ID}/files`;
 const docRoute = `/pulls/${LOCAL_OWNER}/${LOCAL_REPO}/${LOCAL_ID}/doc?path=README.md`;
 const diagramRoute = `/pulls/${LOCAL_OWNER}/${LOCAL_REPO}/${LOCAL_ID}/doc?path=diagram.md`;
+const linksRoute = `/pulls/${LOCAL_OWNER}/${LOCAL_REPO}/${LOCAL_ID}/doc?path=links.md`;
 
 test.beforeEach(async ({ page }) => {
   await mockApi(page);
@@ -31,6 +32,24 @@ test("Docs trigger opens palette listing README.md", async ({ page }) => {
   await expect(
     page.locator('[role="option"]').filter({ hasText: "README.md" }),
   ).toBeVisible();
+});
+
+test("Docs palette: Ctrl-N / Ctrl-P move the selection", async ({ page }) => {
+  await page.goto(filesRoute);
+  await page.locator("button.doc-open").click();
+  const palette = page.locator('[role="dialog"][aria-label="Open a doc"]');
+  await expect(palette).toBeVisible();
+
+  const options = page.locator('[role="option"]');
+  await expect(options.first()).toHaveAttribute("aria-selected", "true");
+
+  const input = palette.getByRole("textbox");
+  await input.press("Control+n");
+  await expect(options.nth(1)).toHaveAttribute("aria-selected", "true");
+  await expect(options.first()).toHaveAttribute("aria-selected", "false");
+
+  await input.press("Control+p");
+  await expect(options.first()).toHaveAttribute("aria-selected", "true");
 });
 
 test("picking README.md navigates to doc URL and renders heading", async ({ page }) => {
@@ -226,6 +245,54 @@ test("doc view: a mermaid code block renders as an embedded SVG diagram", async 
   // lazy-loaded). The raw source <pre> is replaced once the SVG is ready.
   await expect(page.locator(".rmd-mermaid__svg svg")).toBeVisible({ timeout: 10000 });
   await expect(page.locator(".rmd-mermaid__src")).toHaveCount(0);
+});
+
+test("doc view: clicking an internal anchor link scrolls to that section", async ({ page }) => {
+  await page.goto(linksRoute);
+  await expect(page.locator(".rmd-body")).toContainText("Top");
+
+  // The "## Details" heading (id="details") starts below the fold.
+  const details = page.locator("#details");
+  await expect(details).toHaveCount(1);
+  await expect(details).not.toBeInViewport();
+
+  // Clicking the internal link scrolls it into view (no bounce to the top).
+  await page.getByRole("link", { name: "jump to details" }).click();
+  await expect(details).toBeInViewport();
+});
+
+test("doc view: clicking a cross-doc link opens the linked doc in docs mode", async ({ page }) => {
+  await page.goto(linksRoute);
+  await expect(page.locator(".rmd-body")).toContainText("Top");
+
+  // The cross-doc link's href is rewritten to the doc route (so a modified /
+  // middle click opens it in a new tab natively).
+  const link = page.getByRole("link", { name: "see the readme" });
+  await expect(link).toHaveAttribute("href", /\/doc\?path=README\.md$/);
+
+  // A plain click opens README.md in docs mode via client-side navigation.
+  await link.click();
+  await expect(page).toHaveURL(/\/doc\?path=README\.md$/);
+  await expect(page.locator(".rmd-body")).toContainText("Hello");
+
+  // Back returns to the linking doc (history navigation works).
+  await page.goBack();
+  await expect(page).toHaveURL(/\/doc\?path=links\.md$/);
+  await expect(page.locator(".rmd-body")).toContainText("Top");
+});
+
+test("doc view: a cross-doc link with a #fragment opens the doc and scrolls to the section", async ({ page }) => {
+  await page.goto(docRoute);
+  await expect(page.locator(".rmd-body")).toContainText("Hello");
+
+  // The link href carries both the target doc and the fragment.
+  const link = page.getByRole("link", { name: "details section" });
+  await expect(link).toHaveAttribute("href", /\/doc\?path=links\.md#details$/);
+
+  // Clicking opens links.md AND scrolls to the (below-the-fold) #details section.
+  await link.click();
+  await expect(page).toHaveURL(/\/doc\?path=links\.md#details$/);
+  await expect(page.locator("#details")).toBeInViewport();
 });
 
 test("comment gutter: dragging the divider resizes the gutter width (horizontal)", async ({ page }) => {
