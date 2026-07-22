@@ -2,7 +2,7 @@
   import { Marked, type Token, type Tokens } from "marked";
   import DOMPurify from "dompurify";
   import {
-    wrapProseBlock,
+    wrapInlineTokens,
     wrapCodeBlock,
     anchorOverlapsBlock,
     type AnchorSide,
@@ -586,15 +586,15 @@
 
     m.use({
       renderer: {
-        paragraph({ tokens: _t, raw: rawText }: Tokens.Paragraph): string {
-          return `<p>${wrapProseBlock(rawText, currentBlockStart, renderedSide, (s) =>
+        paragraph({ tokens }: Tokens.Paragraph): string {
+          return `<p>${wrapInlineTokens(tokens, currentBlockStart, renderedSide, (s) =>
             m.parseInline(s) as string,
           )}</p>\n`;
         },
-        heading({ tokens: _t, raw: rawText, depth }: Tokens.Heading): string {
+        heading({ tokens, raw: rawText, depth }: Tokens.Heading): string {
           const headingText = rawText.replace(/^#+\s*/, "");
-          const inner = wrapProseBlock(
-            headingText,
+          const inner = wrapInlineTokens(
+            tokens,
             currentBlockStart,
             renderedSide,
             (s) => m.parseInline(s) as string,
@@ -631,16 +631,16 @@
           for (const tok of tokens) {
             if (tok.type === "text") {
               const t = tok as Tokens.Text;
-              out += wrapProseBlock(
-                t.raw.replace(/\n$/, ""),
+              out += wrapInlineTokens(
+                (t.tokens ?? []) as Token[],
                 currentBlockStart,
                 renderedSide,
                 (s) => m.parseInline(s) as string,
               );
             } else if (tok.type === "paragraph") {
               const p = tok as Tokens.Paragraph;
-              out += `<p>${wrapProseBlock(
-                p.raw.replace(/\n$/, ""),
+              out += `<p>${wrapInlineTokens(
+                p.tokens,
                 currentBlockStart,
                 renderedSide,
                 (s) => m.parseInline(s) as string,

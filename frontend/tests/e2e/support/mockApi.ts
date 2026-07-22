@@ -5,7 +5,12 @@ import type { Page, Route } from "@playwright/test";
 // /pulls/local/<repo_name>/<id> and in worktree API calls /worktrees/<id>/...
 const LOCAL_WORKTREE_ID = 7;
 const LOCAL_REPO_NAME = "myproject";
-const LOCAL_DOC_CONTENT = "# Hello\n\nsome text here\n\n[details section](links.md#details)\n";
+const LOCAL_DOC_CONTENT =
+  "# Hello\n\nsome text here\n\n" +
+  // A bullet whose bold phrase wraps across a source line — regression
+  // fixture for inline markup that straddles a soft-wrapped boundary.
+  "- **This leading phrase is bold and it\n  wraps to a second source line** then plain.\n\n" +
+  "[details section](links.md#details)\n";
 const LOCAL_DIAGRAM_CONTENT = "# Diagram\n\n```mermaid\ngraph TD;\n  A-->B;\n```\n";
 const LOCAL_LINKS_CONTENT =
   "# Top\n\n[jump to details](#details) or [see the readme](README.md)\n\n" +

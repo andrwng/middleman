@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  wrapProseBlock,
+  wrapInlineTokens,
   wrapCodeBlock,
   computeRangeFromSelection,
   anchorOverlapsBlock,
@@ -41,10 +41,16 @@ describe("anchorOverlapsBlock", () => {
   });
 });
 
-describe("wrapProseBlock", () => {
-  it("wraps each source line in an anchor span using the provided inline parser", () => {
-    const inline = (s: string): string => `<em>${s}</em>`;
-    const out = wrapProseBlock("foo\nbar baz", 10, "RIGHT", inline);
+describe("wrapInlineTokens", () => {
+  const render = (s: string): string => `<em>${s}</em>`;
+
+  it("splits at br tokens, giving each source line its own anchor span", () => {
+    const tokens = [
+      { type: "text", raw: "foo" },
+      { type: "br", raw: "\n" },
+      { type: "text", raw: "bar baz" },
+    ];
+    const out = wrapInlineTokens(tokens, 10, "RIGHT", render);
     expect(out).toBe(
       `<span class="rmd-anchor" data-anchor-line="10" data-anchor-side="RIGHT"><em>foo</em></span>` +
       ` ` +
@@ -52,8 +58,34 @@ describe("wrapProseBlock", () => {
     );
   });
 
+  it("keeps a markup token that spans soft-wrapped lines in one span", () => {
+    // The regression: a bold phrase whose ** delimiters straddle a soft
+    // wrap must render as a single unit, not split into literal asterisks.
+    const tokens = [
+      { type: "text", raw: "lead " },
+      { type: "strong", raw: "**wraps here\nand closes**" },
+      { type: "text", raw: " end" },
+    ];
+    const out = wrapInlineTokens(tokens, 3, "RIGHT", (raw) => raw);
+    expect(out).toBe(
+      `<span class="rmd-anchor" data-anchor-line="3" data-anchor-side="RIGHT">` +
+      `lead **wraps here and closes** end</span>`,
+    );
+  });
+
+  it("advances the line counter past a multi-line token's internal newlines", () => {
+    const tokens = [
+      { type: "strong", raw: "**a\nb**" },
+      { type: "br", raw: "\n" },
+      { type: "text", raw: "next" },
+    ];
+    const out = wrapInlineTokens(tokens, 1, "RIGHT", (raw) => raw);
+    // The strong spans lines 1-2; the br after it lands "next" on line 3.
+    expect(out).toContain(`data-anchor-line="3" data-anchor-side="RIGHT">next</span>`);
+  });
+
   it("uses LEFT side when requested (for deleted files)", () => {
-    const out = wrapProseBlock("x", 5, "LEFT", (s) => s);
+    const out = wrapInlineTokens([{ type: "text", raw: "x" }], 5, "LEFT", (s) => s);
     expect(out).toContain(`data-anchor-side="LEFT"`);
     expect(out).toContain(`data-anchor-line="5"`);
   });

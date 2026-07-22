@@ -79,6 +79,19 @@ test("picking README.md navigates to doc URL and renders heading", async ({ page
   await expect(page.locator(".rmd-body")).toContainText("Hello");
 });
 
+test("renders bold in a bullet whose bold phrase wraps across a source line", async ({ page }) => {
+  await page.goto(docRoute);
+
+  // Regression: inline markup that straddles a soft-wrapped source line
+  // (a bold phrase leading a wrapped bullet) must render as one <strong>,
+  // not as literal asterisks.
+  const strong = page.locator(".rmd-body li strong");
+  await expect(strong).toHaveCount(1);
+  await expect(strong).toHaveText(
+    "This leading phrase is bold and it wraps to a second source line",
+  );
+});
+
 test("palette row exposes a working new-tab href", async ({ page }) => {
   await page.goto(filesRoute);
 

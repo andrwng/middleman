@@ -21,20 +21,60 @@ function span(line: number, side: AnchorSide, inner: string): string {
   return `<span class="rmd-anchor" data-anchor-line="${line}" data-anchor-side="${side}">${inner}</span>`;
 }
 
-// wrapProseBlock splits raw on \n (markdown soft-wrap boundaries),
-// runs each segment through the caller-supplied inline parser, and
-// joins with a single space — the same join markdown's HTML output
-// uses for soft-wrapped lines inside a paragraph.
-export function wrapProseBlock(
-  raw: string,
+// A marked inline token, narrowed to the two fields we need. The full
+// Token union is structurally compatible.
+export interface InlineToken {
+  type: string;
+  raw: string;
+}
+
+function countNewlines(s: string): number {
+  let n = 0;
+  for (let i = 0; i < s.length; i++) if (s.charCodeAt(i) === 10) n++;
+  return n;
+}
+
+// wrapInlineTokens renders a block's already-parsed inline tokens into
+// per-source-line anchor spans. With marked's `breaks: true`, soft-wrap
+// boundaries appear as explicit `br` tokens; each one closes the current
+// span and starts the next source line. Every other token is rendered
+// whole via renderRaw and appended to the current line's span.
+//
+// Rendering whole tokens (rather than the old approach of splitting the
+// raw string on \n and parsing each line independently) is what keeps
+// inline markup that spans a soft-wrapped line — e.g. a bold phrase at
+// the start of a wrapped bullet — intact. Splitting first fed each half
+// to the inline parser separately, so `**foo` / `bar**` on adjacent
+// lines parsed as literal asterisks instead of a single <strong>.
+//
+// A token whose own raw spans lines (bold that wraps mid-phrase) can't
+// be split across spans, so it stays in one span anchored to where that
+// span began; its internal newlines still advance the line counter so
+// later spans keep their source-line mapping. Internal newlines are
+// collapsed to spaces before rendering, matching markdown's soft-wrap.
+export function wrapInlineTokens(
+  tokens: InlineToken[],
   startLine: number,
   side: AnchorSide,
-  parseInline: (segment: string) => string,
+  renderRaw: (raw: string) => string,
 ): string {
-  const lines = raw.split("\n");
-  return lines
-    .map((seg, i) => span(startLine + i, side, parseInline(seg)))
-    .join(" ");
+  const spans: string[] = [];
+  let line = startLine;
+  let bufStartLine = startLine;
+  let cur = "";
+  for (const tok of tokens) {
+    if (tok.type === "br") {
+      spans.push(span(bufStartLine, side, cur));
+      line += 1;
+      bufStartLine = line;
+      cur = "";
+      continue;
+    }
+    cur += renderRaw(tok.raw.replace(/\n/g, " "));
+    line += countNewlines(tok.raw);
+  }
+  spans.push(span(bufStartLine, side, cur));
+  return spans.join(" ");
 }
 
 // wrapCodeBlock preserves newlines between segments because <pre>

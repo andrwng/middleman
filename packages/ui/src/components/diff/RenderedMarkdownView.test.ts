@@ -928,4 +928,53 @@ describe("RenderedMarkdownView", () => {
     // No gutter column in inline mode.
     expect(container.querySelector(".rmd-gutter-col")).toBeNull();
   });
+
+  // Inline markup whose delimiters straddle a soft-wrapped source line
+  // used to break: the body was rendered by splitting each block's raw on
+  // \n and parsing every line independently, so `**foo` / `bar**` on
+  // adjacent lines parsed as literal asterisks. A bold phrase at the start
+  // of a bullet is long enough to wrap, which is how this surfaced.
+  async function renderMarkdown(stores: ReturnType<typeof makeStores>, content: string) {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ content, truncated: false }),
+    }) as unknown as Response);
+    const { container } = renderViewWithStores(stores);
+    await settle();
+    return container;
+  }
+
+  it("bolds a bullet that leads with bold text", async () => {
+    const container = await renderMarkdown(makeStores(), "- **Server**: description here\n");
+    const strong = container.querySelector(".rmd-body li strong");
+    expect(strong?.textContent).toBe("Server");
+  });
+
+  it("bolds a bullet whose bold phrase wraps across a source line", async () => {
+    const container = await renderMarkdown(
+      makeStores(),
+      "- **This leading phrase is bold and it\n  wraps to a second source line** then plain.\n",
+    );
+    const strong = container.querySelector(".rmd-body li strong");
+    expect(strong?.textContent).toBe(
+      "This leading phrase is bold and it wraps to a second source line",
+    );
+  });
+
+  it("bolds a paragraph whose bold phrase wraps across a source line", async () => {
+    const container = await renderMarkdown(
+      makeStores(),
+      "A paragraph with **bold that wraps across\nthe newline boundary** here.\n",
+    );
+    const strong = container.querySelector(".rmd-body p strong");
+    expect(strong?.textContent).toBe("bold that wraps across the newline boundary");
+  });
+
+  it("still gives each soft-wrapped source line its own anchor span", async () => {
+    const container = await renderMarkdown(makeStores(), "Line one.\nLine two.\n");
+    const anchors = container.querySelectorAll(".rmd-body p .rmd-anchor");
+    expect(anchors[0]?.getAttribute("data-anchor-line")).toBe("1");
+    expect(anchors[1]?.getAttribute("data-anchor-line")).toBe("2");
+  });
 });
