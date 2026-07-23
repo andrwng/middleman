@@ -1,7 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, fireEvent } from "@testing-library/svelte";
+import type { ReviewThreadDraftInput, ReviewThreadMode } from "../../stores/reviewThreads.svelte.js";
 
-const createThreads = vi.fn(async () => true);
+// Typed to match reviewThreadsStore.createThreads(drafts, mode?) so
+// createThreads.mock.calls[0]![0] resolves to ReviewThreadDraftInput[]
+// (an untyped `vi.fn(async () => true)` infers a zero-arg signature,
+// making Parameters<T> `[]` and calls[0]![0] a TS2493 tuple-index error).
+const createThreads = vi.fn<
+  (drafts: ReviewThreadDraftInput[], mode?: ReviewThreadMode) => Promise<boolean>
+>(async () => true);
 const clearDraft = vi.fn();
 const clearDraftCommentsForPath = vi.fn();
 
@@ -78,7 +85,7 @@ describe("ReviewPanel scopePath (local)", () => {
     });
     await fireEvent.click(getByText("Create & apply"));
     expect(createThreads).toHaveBeenCalledTimes(1);
-    expect(createThreads.mock.calls[0]![0].map((d: { path: string }) => d.path)).toEqual(["a.md"]);
+    expect(createThreads.mock.calls[0]![0].map((d) => d.path)).toEqual(["a.md"]);
     expect(clearDraftCommentsForPath).toHaveBeenCalledWith("a.md");
     expect(clearDraft).not.toHaveBeenCalled();
   });
@@ -90,7 +97,7 @@ describe("ReviewPanel scopePath (local)", () => {
     });
     await fireEvent.click(getByText("Create & apply"));
     expect(createThreads).toHaveBeenCalledTimes(1);
-    expect(createThreads.mock.calls[0]![0].map((d: { path: string }) => d.path)).toEqual(["a.md", "b.md"]);
+    expect(createThreads.mock.calls[0]![0].map((d) => d.path)).toEqual(["a.md", "b.md"]);
     expect(clearDraft).toHaveBeenCalledTimes(1);
     expect(clearDraftCommentsForPath).not.toHaveBeenCalled();
   });
