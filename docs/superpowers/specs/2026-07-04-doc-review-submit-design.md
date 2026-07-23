@@ -89,10 +89,15 @@ or the agent engine.
 - On submit, `ReviewPanel` already calls `reviewThreadsStore.createThreads(...)`.
   Because doc drafts are in the shared `diffStore` bucket, they are picked up with
   no store change.
-- **Submit scope:** submits *all* pending comments in this worktree's draft bucket
-  (across docs + any diff drafts), matching the diff view's "finish review". The
-  drafts are a single per-worktree bucket, and a review is per-branch, so this is
-  the natural model. The pending count reflects that bucket.
+- **Submit scope:** submits only the **current doc's** pending comments (drafts
+  whose `path` matches the open doc); the pending count reflects that per-doc
+  subset via `diffStore.getDraftCommentsForPath(path)`. Mechanism: `ReviewPanel`
+  gains an optional `scopePath?: string` prop — when set (doc pane) it filters
+  `draft.comments` to that path before submitting and, on success, clears **only**
+  those comments (a scoped clear / removing the submitted ids via
+  `removeDraftComment`) rather than `clearDraft()`; when unset (diff view) it
+  submits the whole bucket and clears it, exactly as today. Comments on other docs
+  and any diff-view drafts are left intact for their own submit.
 
 ### 2. `WORKING-TREE` sentinel → HEAD (server)
 
@@ -140,7 +145,8 @@ or the agent engine.
 
 ## Decisions
 
-- **Submit scope** = all pending comments in the worktree (matches the diff view).
+- **Submit scope** = only the current doc's pending comments (per-doc review). The
+  diff view keeps its whole-bucket submit, distinguished by the unset `scopePath`.
 - **Sha** = HEAD (translate the `WORKING-TREE` sentinel server-side).
 - **Gutter card** = approach B (gutter-native card reusing `ReviewThreadCard`
   internals).
