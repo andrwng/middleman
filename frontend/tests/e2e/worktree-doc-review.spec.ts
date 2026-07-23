@@ -1,6 +1,6 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
-import { mockApi } from "./support/mockApi";
+import { getCreatedReviewThreads, getReviewThreadsRequests, mockApi } from "./support/mockApi";
 
 // Local worktree fixture constants — must match mockApi.ts.
 const LOCAL_OWNER = "local";
@@ -15,6 +15,19 @@ const linksRoute = `/pulls/${LOCAL_OWNER}/${LOCAL_REPO}/${LOCAL_ID}/doc?path=lin
 test.beforeEach(async ({ page }) => {
   await mockApi(page);
 });
+
+// Draft a comment on the doc's first H1 block (present in README.md,
+// diagram.md, and links.md) via the same add-comment-btn -> gutter
+// composer -> Save draft flow the "comment gutter" tests exercise below.
+async function seedHeadingDraft(page: Page, text: string): Promise<void> {
+  const heading = page.locator(".rmd-body > h1.rmd-block").first();
+  await heading.hover();
+  await heading.locator(".rmd-add-comment-btn").click();
+  const composer = page.locator('[data-gutter-key^="composer:"]');
+  await composer.locator("textarea").fill(text);
+  await composer.locator("button", { hasText: "Save draft" }).click();
+  await expect(composer).toHaveCount(0);
+}
 
 test("Docs trigger opens palette listing README.md", async ({ page }) => {
   await page.goto(filesRoute);
@@ -346,4 +359,157 @@ test("comment gutter: dragging the divider resizes the gutter width (horizontal)
   // The chosen width is persisted for next time.
   const stored = await page.evaluate(() => localStorage.getItem("rmd-gutter-width"));
   expect(Number(stored)).toBeGreaterThan(before!.width);
+});
+
+test("doc review: save-only submit persists a thread and renders it in the gutter", async ({ page }) => {
+  await page.addInitScript(() => {
+    for (const k of Object.keys(localStorage)) {
+      if (k.startsWith("diff-draft")) localStorage.removeItem(k);
+    }
+  });
+
+  await page.goto(docRoute);
+  await expect(page.locator(".rmd-body")).toContainText("Hello");
+
+  await seedHeadingDraft(page, "does this still hold?");
+
+  const reviewBtn = page.getByRole("button", { name: /^Review \(\d+\)$/ });
+  await expect(reviewBtn).toHaveText("Review (1)");
+  await reviewBtn.click();
+
+  const panel = page.locator('[role="dialog"][aria-label="Finish review"]');
+  await expect(panel).toBeVisible();
+
+  // "Have Claude apply these changes" — uncheck it so this submit only
+  // persists the thread (no agent turn).
+  const agentCheckbox = panel.locator(".panel__agent input[type=checkbox]");
+  await expect(agentCheckbox).toBeChecked();
+  await agentCheckbox.uncheck();
+  await panel.getByRole("button", { name: "Create review threads" }).click();
+
+  // The panel closes on a successful submit.
+  await expect(panel).toHaveCount(0);
+
+  // The mock persisted exactly one thread, and did not receive a mode
+  // (persist-only is the API-level default when `mode` is omitted).
+  expect(getCreatedReviewThreads()).toHaveLength(1);
+  expect(getReviewThreadsRequests().at(-1)?.mode).toBeUndefined();
+
+  // The draft is gone — no composer, no pending-draft card, and the
+  // Review button's count drops back to 0.
+  await expect(page.locator('[data-gutter-key^="composer:"]')).toHaveCount(0);
+  await expect(page.locator(".pending")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Review \(\d+\)$/ })).toHaveText("Review (0)");
+
+  // The persisted thread now renders as a gutter review-thread card.
+  const card = page.locator(".comment-gutter .review-thread");
+  await expect(card).toHaveCount(1);
+  await expect(card).toContainText("does this still hold?");
+  await expect(card.locator(".review-thread__badge")).toHaveText("Review");
+});
+
+test("doc review: apply submit sends act-immediately and still renders the thread", async ({ page }) => {
+  await page.addInitScript(() => {
+    for (const k of Object.keys(localStorage)) {
+      if (k.startsWith("diff-draft")) localStorage.removeItem(k);
+    }
+  });
+
+  await page.goto(docRoute);
+  await expect(page.locator(".rmd-body")).toContainText("Hello");
+
+  await seedHeadingDraft(page, "please simplify this section");
+
+  await page.getByRole("button", { name: /^Review \(\d+\)$/ }).click();
+  const panel = page.locator('[role="dialog"][aria-label="Finish review"]');
+  await expect(panel).toBeVisible();
+
+  // Leave "Have Claude apply these changes" checked (the default) and
+  // submit via the apply verb.
+  const agentCheckbox = panel.locator(".panel__agent input[type=checkbox]");
+  await expect(agentCheckbox).toBeChecked();
+  await panel.getByRole("button", { name: "Create & apply" }).click();
+
+  await expect(panel).toHaveCount(0);
+
+  // The create-threads POST carried mode: "act-immediately".
+  const lastRequest = getReviewThreadsRequests().at(-1);
+  expect(lastRequest?.mode).toBe("act-immediately");
+  expect(lastRequest?.threads).toHaveLength(1);
+
+  // The thread still renders as a gutter card regardless of the mode.
+  const card = page.locator(".comment-gutter .review-thread");
+  await expect(card).toHaveCount(1);
+  await expect(card).toContainText("please simplify this section");
+});
+
+test("doc review: submitting from one doc only sends that doc's comment", async ({ page }) => {
+  await page.addInitScript(() => {
+    for (const k of Object.keys(localStorage)) {
+      if (k.startsWith("diff-draft")) localStorage.removeItem(k);
+    }
+  });
+
+  // Seed a draft on README.md.
+  await page.goto(docRoute);
+  await expect(page.locator(".rmd-body")).toContainText("Hello");
+  await seedHeadingDraft(page, "readme comment");
+  await expect(page.getByRole("button", { name: /^Review \(\d+\)$/ })).toHaveText("Review (1)");
+
+  // Switch to diagram.md via the Docs palette (client-side navigation —
+  // a second page.goto would re-run the localStorage-clearing init script
+  // above and wipe the README draft just seeded) and seed a draft there.
+  await page.locator("button.doc-open").click();
+  await expect(page.locator('[role="dialog"][aria-label="Open a doc"]')).toBeVisible();
+  await page
+    .locator('[role="option"]')
+    .filter({ hasText: "diagram.md" })
+    .locator("a.palette-row-link")
+    .click();
+  await expect(page).toHaveURL(/[?&]path=diagram\.md$/);
+  await expect(page.locator(".rmd-body")).toContainText("Diagram");
+  await seedHeadingDraft(page, "diagram comment");
+  await expect(page.getByRole("button", { name: /^Review \(\d+\)$/ })).toHaveText("Review (1)");
+
+  // Back to README.md — its Review count is untouched by the other doc's draft.
+  await page.locator("button.doc-open").click();
+  await expect(page.locator('[role="dialog"][aria-label="Open a doc"]')).toBeVisible();
+  await page
+    .locator('[role="option"]')
+    .filter({ hasText: "README.md" })
+    .locator("a.palette-row-link")
+    .click();
+  await expect(page).toHaveURL(/[?&]path=README\.md$/);
+  await expect(page.getByRole("button", { name: /^Review \(\d+\)$/ })).toHaveText("Review (1)");
+
+  // Submit README's review only.
+  await page.getByRole("button", { name: /^Review \(\d+\)$/ }).click();
+  const panel = page.locator('[role="dialog"][aria-label="Finish review"]');
+  await expect(panel).toBeVisible();
+  await panel.locator(".panel__agent input[type=checkbox]").uncheck();
+  await panel.getByRole("button", { name: "Create review threads" }).click();
+  await expect(panel).toHaveCount(0);
+
+  // Exactly one thread was sent, scoped to README.md.
+  const lastRequest = getReviewThreadsRequests().at(-1);
+  expect(lastRequest?.threads).toHaveLength(1);
+  expect(lastRequest?.threads[0]?.path).toBe("README.md");
+  expect(lastRequest?.threads[0]?.body).toBe("readme comment");
+
+  // README.md's comment is now a review thread, not a pending draft.
+  await expect(page.locator(".comment-gutter .review-thread")).toContainText("readme comment");
+  await expect(page.locator(".pending")).toHaveCount(0);
+
+  // diagram.md's pending draft is untouched by the scoped submit.
+  await page.locator("button.doc-open").click();
+  await expect(page.locator('[role="dialog"][aria-label="Open a doc"]')).toBeVisible();
+  await page
+    .locator('[role="option"]')
+    .filter({ hasText: "diagram.md" })
+    .locator("a.palette-row-link")
+    .click();
+  await expect(page).toHaveURL(/[?&]path=diagram\.md$/);
+  await expect(page.getByRole("button", { name: /^Review \(\d+\)$/ })).toHaveText("Review (1)");
+  await expect(page.locator(".pending")).toHaveCount(1);
+  await expect(page.locator(".comment-gutter .review-thread")).toHaveCount(0);
 });
