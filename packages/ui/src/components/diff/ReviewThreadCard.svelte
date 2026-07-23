@@ -5,8 +5,9 @@
 
   interface Props {
     thread: ReviewThread;
+    variant?: "inline" | "gutter";
   }
-  const { thread }: Props = $props();
+  const { thread, variant = "inline" }: Props = $props();
 
   const { reviewThreads, worktreeSession } = getStores();
   const busy = $derived(worktreeSession.hasRunningTurn());
@@ -93,7 +94,7 @@
 </script>
 
 {#if thread.hidden}
-  <div class="review-thread review-thread--hidden">
+  <div class="review-thread review-thread--hidden" class:review-thread--gutter={variant === "gutter"}>
     <span class="review-thread__hidden-label">Hidden thread</span>
     <button
       type="button"
@@ -102,7 +103,7 @@
     >Show</button>
   </div>
 {:else}
-  <div class="review-thread">
+  <div class="review-thread" class:review-thread--gutter={variant === "gutter"}>
     <div class="review-thread__header">
       <span class="review-thread__badge">Review</span>
       <span class="review-thread__anchor">
@@ -206,6 +207,10 @@
     border-left: 3px solid var(--accent-blue);
     border-radius: var(--radius-sm);
     background: color-mix(in srgb, var(--accent-blue) 6%, var(--bg-surface));
+  }
+
+  .review-thread--gutter {
+    margin: 0;
   }
 
   .review-thread--hidden {
