@@ -2,11 +2,13 @@
   import type { DraftComment } from "../../stores/diff.svelte.js";
   import type { PublishedReviewComment } from "../../stores/detail.svelte.js";
   import type { AIThread } from "../../stores/ai.svelte.js";
+  import type { ReviewThread } from "../../stores/reviewThreads.svelte.js";
 
   export type CardSpec =
     | { kind: "draft"; key: string; comment: DraftComment }
     | { kind: "published"; key: string; comment: PublishedReviewComment }
-    | { kind: "ai"; key: string; thread: AIThread };
+    | { kind: "ai"; key: string; thread: AIThread }
+    | { kind: "review-thread"; key: string; thread: ReviewThread };
 
   interface Anchor {
     line: number;
@@ -45,6 +47,7 @@
   import AIThreadCard from "./AIThreadCard.svelte";
   import ReviewCommentCard from "./ReviewCommentCard.svelte";
   import PendingCommentCard from "./PendingCommentCard.svelte";
+  import ReviewThreadCard from "./ReviewThreadCard.svelte";
   import DiffComposer from "./DiffComposer.svelte";
   import AIAskComposer from "./AIAskComposer.svelte";
 
@@ -162,6 +165,8 @@
               repoName={repoName}
               {currentHeadSha}
             />
+          {:else if spec.kind === "review-thread"}
+            <ReviewThreadCard thread={spec.thread} variant="gutter" />
           {:else}
             <PendingCommentCard
               comment={spec.comment}

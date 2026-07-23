@@ -14,6 +14,7 @@
   import ReviewCommentCard from "./ReviewCommentCard.svelte";
   import PendingCommentCard from "./PendingCommentCard.svelte";
   import AIThreadCard from "./AIThreadCard.svelte";
+  import ReviewThreadCard from "./ReviewThreadCard.svelte";
   import CommentGutter, { type GutterEntry, type CardSpec as GutterCardSpec } from "./CommentGutter.svelte";
   import { clampGutterWidth } from "./gutterStack";
   import { crossDocTarget } from "./docLinks";
@@ -77,7 +78,12 @@
     openDoc,
   }: Props = $props();
 
-  const { diff: diffStore, ai: aiStore, detail: detailStore } = getStores();
+  const {
+    diff: diffStore,
+    ai: aiStore,
+    detail: detailStore,
+    reviewThreads: reviewThreadsStore,
+  } = getStores();
 
   let raw = $state<string | null>(null);
   let truncated = $state(false);
@@ -460,6 +466,11 @@
     detailStore.getReviewCommentsByFilePath().get(path) ?? [],
   );
   const aiThreadsForFile = $derived(aiStore.getThreadsForFile(path));
+  // The store has no per-path accessor (only getThreads(), the full unfiltered
+  // list for the active PR, and getThreadsAtAnchor()) — filter by path here.
+  const reviewThreadsForFile = $derived(
+    reviewThreadsStore.getThreads().filter((t) => t.path === path),
+  );
 
   const outdatedCount = $derived(
     publishedForFile.filter((c: { line: number }) => c.line <= 0).length,
@@ -468,7 +479,8 @@
   type CardSpec =
     | { kind: "draft"; key: string; comment: (typeof drafts)[number] }
     | { kind: "published"; key: string; comment: (typeof publishedForFile)[number] }
-    | { kind: "ai"; key: string; thread: (typeof aiThreadsForFile)[number] };
+    | { kind: "ai"; key: string; thread: (typeof aiThreadsForFile)[number] }
+    | { kind: "review-thread"; key: string; thread: (typeof reviewThreadsForFile)[number] };
 
   // start..end is the block's half-open source-line range
   // [start, end) — matches blockRangeByIdx and blockOverlapsChanged.
@@ -495,6 +507,16 @@
       const tEnd = t.hunk_end_line ?? t.anchor_line;
       if (t.anchor_side === renderedSide && anchorOverlapsBlock(start, end, tStart, tEnd)) {
         out.push({ kind: "ai", key: `a:${t.id}`, thread: t });
+      }
+    }
+    // Persisted review threads for this doc, matched to the block by line.
+    // Not filtered by `hidden` — ReviewThreadCard renders the hidden stub
+    // itself, matching how the diff view's getThreadsAtAnchor also doesn't
+    // filter hidden threads.
+    for (const t of reviewThreadsForFile) {
+      const tStart = t.start_line ?? t.line;
+      if (t.side === renderedSide && anchorOverlapsBlock(start, end, tStart, t.line)) {
+        out.push({ kind: "review-thread", key: `rt:${t.id}`, thread: t });
       }
     }
     return out;
@@ -708,8 +730,8 @@
 
   // After the HTML mounts, walk the body's direct children and mark
   // the ones whose source-line range overlapped a changed hunk. Also
-  // mount inline thread cards (drafts, published comments, AI threads)
-  // anchored to each block's source-line range.
+  // mount inline thread cards (drafts, published comments, AI threads,
+  // persisted review threads) anchored to each block's source-line range.
   //
   // The index alignment relies on the fact that marked's parser emits
   // top-level tokens in source order, so the Nth direct child of
@@ -731,6 +753,7 @@
     const ____ = aiThreadsForFile;
     const _____ = commentLayout;
     const ______ = narrowMode;
+    const _______ = reviewThreadsForFile;
 
     for (const inst of mountedInstances) unmount(inst);
     mountedInstances.clear();
@@ -858,6 +881,16 @@
                 repoName: name,
                 currentHeadSha: sha,
               },
+            });
+            mountedInstances.add(inst);
+          } else if (spec.kind === "review-thread") {
+            // variant="gutter" (margin:0) rather than the default "inline"
+            // (margin-left:68px) — that indent is tuned for DiffFile's
+            // line-number gutter column, which doesn't exist in this
+            // rendered-doc view.
+            const inst = mount(ReviewThreadCard, {
+              target: host,
+              props: { thread: spec.thread, variant: "gutter" },
             });
             mountedInstances.add(inst);
           } else {

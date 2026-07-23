@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render } from "@testing-library/svelte";
 import CommentGutter from "./CommentGutter.svelte";
 import type { GutterEntry } from "./CommentGutter.svelte";
+import { STORES_KEY } from "../../context.js";
+import type { ReviewThread } from "../../stores/reviewThreads.svelte.js";
 
 // Stub the card components so they render without pulling in store context
 // or layout-dependent code. Pattern mirrors DocReviewSurface.test.ts.
@@ -56,6 +58,47 @@ const fakeThread = {
   status: "open",
   created_at: new Date().toISOString(),
 };
+
+// A persisted review thread — unlike fakeThread (an Ask-Claude AIThread), this
+// is a real ReviewThreadCard-shaped thread. ReviewThreadCard is NOT mocked
+// (the test below asserts its real markup), so it self-injects `reviewThreads`
+// + `worktreeSession` via getStores() — the test provides both through a
+// STORES_KEY context, mirroring ReviewThreadCard.test.ts's own stub surface.
+const fakeReviewThread: ReviewThread = {
+  id: 42,
+  path: "README.md",
+  side: "RIGHT",
+  line: 5,
+  commit_sha: "abc1234",
+  status: "open",
+  hidden: false,
+  created_at: "",
+  updated_at: "",
+  writes_allowed: false,
+  comments: [{ id: 1, author: "user", body: "seeded thread comment", created_at: "", sent_to_agent: false }],
+};
+
+function reviewThreadStoresContext() {
+  return new Map([
+    [
+      STORES_KEY,
+      {
+        reviewThreads: {
+          resolve: vi.fn(async () => true),
+          unresolve: vi.fn(async () => true),
+          hide: vi.fn(async () => true),
+          unhide: vi.fn(async () => true),
+          addComment: vi.fn(async () => true),
+          apply: vi.fn(async () => true),
+          deleteThread: vi.fn(async () => true),
+          ask: vi.fn(async () => true),
+          discuss: vi.fn(async () => true),
+        },
+        worktreeSession: { hasRunningTurn: () => false },
+      },
+    ],
+  ]);
+}
 
 describe("CommentGutter", () => {
   it("renders one positioned wrapper per entry with data-gutter-key", async () => {
@@ -166,5 +209,34 @@ describe("CommentGutter", () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(container.querySelectorAll("[data-gutter-key]").length).toBe(0);
+  });
+
+  it("renders a review-thread card via ReviewThreadCard", async () => {
+    const entries: GutterEntry[] = [
+      {
+        kind: "cards",
+        key: "e3",
+        desiredTop: 0,
+        cards: [{ kind: "review-thread", key: "rt:42", thread: fakeReviewThread }],
+      },
+    ];
+
+    const { container } = render(CommentGutter, {
+      props: {
+        entries,
+        repoOwner: "local",
+        repoName: "demo",
+        currentHeadSha: "abc",
+        ondelete: vi.fn(),
+      },
+      context: reviewThreadStoresContext(),
+    });
+
+    await new Promise((r) => setTimeout(r, 0));
+
+    const card = container.querySelector(".review-thread");
+    expect(card).toBeTruthy();
+    expect(card?.querySelector(".review-thread__badge")?.textContent).toBe("Review");
+    expect(card?.textContent).toContain("seeded thread comment");
   });
 });

@@ -7,6 +7,7 @@ import { createAIStore } from "../../stores/ai.svelte.js";
 import { createDetailStore } from "../../stores/detail.svelte.js";
 import type { MiddlemanClient } from "../../types.js";
 import type { AIThread, AIQuestion } from "../../stores/ai.svelte.js";
+import type { ReviewThread } from "../../stores/reviewThreads.svelte.js";
 import mermaid from "mermaid";
 
 // Mermaid is heavy and needs real layout; mock it so the unit test exercises
@@ -49,11 +50,53 @@ beforeEach(() => {
   localStorage.clear();
 });
 
-function makeStores() {
+// Minimal reviewThreads stub — RenderedMarkdownView only calls getThreads()
+// (there is no per-file accessor on the real store); ReviewThreadCard's
+// mutators are stubbed too since a mounted card wires them to its buttons
+// even when no test here clicks them.
+function makeReviewThreadsStub(initial: ReviewThread[] = []) {
+  return {
+    getThreads: (): ReviewThread[] => initial,
+    resolve: vi.fn(async () => true),
+    unresolve: vi.fn(async () => true),
+    hide: vi.fn(async () => true),
+    unhide: vi.fn(async () => true),
+    addComment: vi.fn(async () => true),
+    apply: vi.fn(async () => true),
+    deleteThread: vi.fn(async () => true),
+    ask: vi.fn(async () => true),
+    discuss: vi.fn(async () => true),
+  };
+}
+
+function makeWorktreeSessionStub() {
+  return { hasRunningTurn: (): boolean => false };
+}
+
+// Builds a ReviewThreadResponse-shaped fixture; callers override id/path/
+// line/side plus whatever else the scenario needs.
+function makeReviewThread(
+  over: Partial<ReviewThread> & Pick<ReviewThread, "id" | "path" | "line" | "side">,
+): ReviewThread {
+  return {
+    commit_sha: "abc0000000000000000000000000000000000000",
+    status: "open",
+    hidden: false,
+    created_at: "",
+    updated_at: "",
+    writes_allowed: false,
+    comments: [],
+    ...over,
+  };
+}
+
+function makeStores(opts: { reviewThreads?: ReviewThread[] } = {}) {
   const diff = createDiffStore({ client: stubClient() });
   const ai = createAIStore();
   const detail = createDetailStore({ client: null as unknown as MiddlemanClient });
-  return { diff, ai, detail };
+  const reviewThreads = makeReviewThreadsStub(opts.reviewThreads ?? []);
+  const worktreeSession = makeWorktreeSessionStub();
+  return { diff, ai, detail, reviewThreads, worktreeSession };
 }
 
 function renderViewWithStores(stores: ReturnType<typeof makeStores>, commentLayout?: "inline" | "gutter") {
@@ -498,6 +541,59 @@ describe("RenderedMarkdownView", () => {
 
     // The gutter must contain at least one entry.
     expect(gutter!.querySelector("[data-gutter-key]")).toBeTruthy();
+  });
+
+  it("(gutter) renders a persisted review thread as a gutter card", async () => {
+    const stores = makeStores({
+      reviewThreads: [
+        makeReviewThread({
+          id: 1,
+          path: "doc.md",
+          line: 1,
+          side: "RIGHT",
+          comments: [
+            { id: 9, author: "user", body: "persisted note", created_at: "", sent_to_agent: false },
+          ],
+        }),
+      ],
+    });
+    stores.diff.setActivePR("local", "demo", 1);
+
+    const { container } = renderViewGutter(stores);
+    await settle();
+
+    const card = container.querySelector(".comment-gutter .review-thread");
+    expect(card).toBeTruthy();
+    expect(card?.textContent).toContain("persisted note");
+  });
+
+  it("(gutter) a review thread on a different path does not render here", async () => {
+    const stores = makeStores({
+      reviewThreads: [
+        makeReviewThread({ id: 2, path: "other.md", line: 1, side: "RIGHT" }),
+      ],
+    });
+    stores.diff.setActivePR("local", "demo", 1);
+
+    const { container } = renderViewGutter(stores);
+    await settle();
+
+    expect(container.querySelector(".comment-gutter .review-thread")).toBeNull();
+  });
+
+  it("(gutter) a hidden review thread still renders (as the hidden stub, not filtered out)", async () => {
+    const stores = makeStores({
+      reviewThreads: [
+        makeReviewThread({ id: 3, path: "doc.md", line: 1, side: "RIGHT", hidden: true }),
+      ],
+    });
+    stores.diff.setActivePR("local", "demo", 1);
+
+    const { container } = renderViewGutter(stores);
+    await settle();
+
+    const card = container.querySelector(".comment-gutter .review-thread--hidden");
+    expect(card).toBeTruthy();
   });
 
   it("(gutter) a block with comments carries .rmd-block--commented", async () => {
