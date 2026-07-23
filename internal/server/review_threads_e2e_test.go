@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/wesm/middleman/internal/aireview"
 	"github.com/wesm/middleman/internal/apiclient/generated"
 	"github.com/wesm/middleman/internal/db"
+	"github.com/wesm/middleman/internal/worktrees"
 )
 
 // seedReviewWorktree registers a local repo + worktree row and returns its
@@ -191,6 +193,48 @@ func TestAPIReviewThreadsCreateWithAppendedComments(t *testing.T) {
 
 	// A promoted thread carries agent input, so it is created 'discussed'.
 	assert.Equal("discussed", created[0].Status)
+}
+
+// TestCreateReviewThreads_WorkingTreeSentinelResolvesToHead verifies that a
+// draft thread whose commit_sha carries the WORKING-TREE sentinel — how the
+// doc pane anchors a comment made against the live worktree, not a specific
+// commit — is resolved to the worktree's real HEAD sha rather than being
+// persisted verbatim (which would anchor the thread to a non-commit).
+func TestCreateReviewThreads_WorkingTreeSentinelResolvesToHead(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on PATH")
+	}
+	require := require.New(t)
+	assert := Assert.New(t)
+	srv, database := setupTestServer(t)
+	client := setupTestClient(t, srv)
+	ctx := context.Background()
+	num, dir := seedReviewWorktreeGit(t, database)
+
+	resp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(
+		ctx, "local", "demo", num,
+		generated.CreateReviewThreadsInputBody{
+			Threads: &[]generated.ReviewThreadDraft{{
+				Path: "README.md", Side: "RIGHT", Line: 1,
+				CommitSha: worktrees.WorkingTreeSentinel,
+				Body:      "doc note",
+			}},
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, resp.StatusCode())
+	require.NotNil(resp.JSON200)
+	require.NotNil(resp.JSON200.Threads)
+	created := *resp.JSON200.Threads
+	require.Len(created, 1)
+
+	got := created[0].CommitSha
+	assert.NotEqual(worktrees.WorkingTreeSentinel, got, "sentinel must be resolved, not stored verbatim")
+	assert.Len(got, 40, "resolved commit_sha should be a full SHA")
+
+	head, err := worktrees.ResolveCommitSHA(ctx, dir, "HEAD")
+	require.NoError(err)
+	assert.Equal(head, got)
 }
 
 func TestAPIReviewThreadsCreateRejectsBadCommentAuthor(t *testing.T) {
