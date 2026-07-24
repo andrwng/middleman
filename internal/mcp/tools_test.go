@@ -247,3 +247,53 @@ func TestStartThreadFallsBackWhenResponseHasNoThreads(t *testing.T) {
 }
 
 type recordedPost struct{ path, body string }
+
+func TestResolveTarget(t *testing.T) {
+	worktrees := `{"worktrees":[
+		{"id":7,"repo_owner":"local","repo_name":"alpha","branch":"main","path":"/w/alpha"},
+		{"id":8,"repo_owner":"local","repo_name":"beta","branch":"feat","path":"/w/beta-feat"},
+		{"id":9,"repo_owner":"local","repo_name":"beta","branch":"main","path":"/w/beta-main"}
+	]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/worktrees", r.URL.Path)
+		_, _ = w.Write([]byte(worktrees))
+	}))
+	defer srv.Close()
+	s := New(Config{ServerName: "middleman", BaseURL: srv.URL})
+
+	cases := []struct {
+		name, repo, branch string
+		wantName           string
+		wantNumber         int
+		wantErr            string // substring; "" => no error
+	}{
+		{"single match no branch", "alpha", "", "alpha", 7, ""},
+		{"single match right branch", "alpha", "main", "alpha", 7, ""},
+		{"single match wrong branch", "alpha", "nope", "", 0, "branch"},
+		{"multi match with branch", "beta", "feat", "beta", 8, ""},
+		{"multi match other branch", "beta", "main", "beta", 9, ""},
+		{"multi match no branch (ambiguous)", "beta", "", "", 0, "multiple worktrees"},
+		{"multi match unknown branch", "beta", "zzz", "", 0, "no worktree on branch"},
+		{"no such repo", "ghost", "", "", 0, "no local repo named"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			owner, name, number, err := s.resolveTarget(c.repo, c.branch)
+			if c.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), c.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, "local", owner)
+			assert.Equal(t, c.wantName, name)
+			assert.Equal(t, c.wantNumber, number)
+		})
+	}
+}
+
+func TestResolveTargetWorktreesFetchError(t *testing.T) {
+	s := New(Config{ServerName: "middleman", BaseURL: "http://127.0.0.1:0"})
+	_, _, _, err := s.resolveTarget("alpha", "")
+	require.Error(t, err)
+}

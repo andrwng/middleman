@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -19,6 +21,17 @@ type toolDef struct {
 	description string
 	inputSchema map[string]any
 	call        func(s *Server, args map[string]any) (string, error)
+}
+
+// worktreeRow is one entry from GET /api/v1/worktrees. Path and
+// HasRunningTurn are unused by resolveTarget today but are included so the
+// type can be reused as-is by later cross-repo tooling.
+type worktreeRow struct {
+	ID             int    `json:"id"`
+	RepoName       string `json:"repo_name"`
+	Branch         string `json:"branch"`
+	Path           string `json:"path"`
+	HasRunningTurn bool   `json:"has_running_turn"`
 }
 
 func builtinTools() map[string]toolDef {
@@ -190,6 +203,61 @@ func (s *Server) restJSON(method, path string, body []byte) (string, error) {
 		return "", fmt.Errorf("rest %s %s: status %d: %s", method, path, resp.StatusCode, string(b))
 	}
 	return string(b), nil
+}
+
+// resolveTarget maps a target repo name (and optional branch) to a local
+// review handle by filtering the instance-wide worktrees list. owner is
+// always "local" (review threads are local-worktree only).
+func (s *Server) resolveTarget(repo, branch string) (string, string, int, error) {
+	body, err := s.restJSON("GET", "/api/v1/worktrees", nil)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("list worktrees: %w", err)
+	}
+	var wl struct {
+		Worktrees []worktreeRow `json:"worktrees"`
+	}
+	if err := json.Unmarshal([]byte(body), &wl); err != nil {
+		return "", "", 0, fmt.Errorf("parse worktrees: %w", err)
+	}
+	var matches []worktreeRow
+	repoSet := map[string]bool{}
+	for _, w := range wl.Worktrees {
+		repoSet[w.RepoName] = true
+		if w.RepoName == repo {
+			matches = append(matches, w)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return "", "", 0, fmt.Errorf("no local repo named %q; available: %s", repo, sortedKeys(repoSet))
+	case 1:
+		m := matches[0]
+		if branch != "" && m.Branch != branch {
+			return "", "", 0, fmt.Errorf("repo %q is on branch %q, not %q", repo, m.Branch, branch)
+		}
+		return "local", m.RepoName, m.ID, nil
+	default:
+		branches := make([]string, 0, len(matches))
+		for _, m := range matches {
+			if branch != "" && m.Branch == branch {
+				return "local", m.RepoName, m.ID, nil
+			}
+			branches = append(branches, m.Branch)
+		}
+		if branch == "" {
+			return "", "", 0, fmt.Errorf("repo %q has multiple worktrees (branches: %s); pass \"branch\"", repo, strings.Join(branches, ", "))
+		}
+		return "", "", 0, fmt.Errorf("repo %q has no worktree on branch %q (branches: %s)", repo, branch, strings.Join(branches, ", "))
+	}
+}
+
+func sortedKeys(m map[string]bool) string {
+	ks := make([]string, 0, len(m))
+	for k := range m {
+		ks = append(ks, k)
+	}
+	sort.Strings(ks)
+	return strings.Join(ks, ", ")
 }
 
 func filterThread(listJSON string, id int64) (string, error) {
