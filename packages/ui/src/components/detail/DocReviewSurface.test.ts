@@ -210,7 +210,11 @@ describe("DocReviewSurface", () => {
 
 describe("DocReviewSurface uncommitted-lines highlight", () => {
   function stubDiffResponse(matchPath: string) {
-    return vi.fn(async () => ({
+    // Typed to match the global `fetch` signature so `.mock.calls` resolves
+    // to `Parameters<typeof fetch>[]` (an untyped `vi.fn(async () => (...))`
+    // infers a zero-arg signature, making calls[0]?.[0] a TS2493 tuple-index
+    // error against `[][]`).
+    return vi.fn<typeof fetch>(async () => ({
       ok: true,
       status: 200,
       json: async () => ({
