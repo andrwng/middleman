@@ -213,6 +213,37 @@ func builtinTools() map[string]toolDef {
 				return resp, nil
 			},
 		},
+		"list_repos": {
+			name: "list_repos",
+			description: "List the local repos/worktrees you can target for review (repo, branch, path). " +
+				"Pass a row's repo (and branch, if the repo appears more than once) as the repo/branch " +
+				"args of the other tools to act on a different local repo.",
+			inputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+			call: func(s *Server, _ map[string]any) (string, error) {
+				body, err := s.restJSON("GET", "/api/v1/worktrees", nil)
+				if err != nil {
+					return "", err
+				}
+				var wl struct {
+					Worktrees []worktreeRow `json:"worktrees"`
+				}
+				if err := json.Unmarshal([]byte(body), &wl); err != nil {
+					return "", fmt.Errorf("parse worktrees: %w", err)
+				}
+				type row struct {
+					Repo           string `json:"repo"`
+					Branch         string `json:"branch"`
+					Path           string `json:"path"`
+					HasRunningTurn bool   `json:"has_running_turn"`
+				}
+				rows := make([]row, 0, len(wl.Worktrees))
+				for _, w := range wl.Worktrees {
+					rows = append(rows, row{w.RepoName, w.Branch, w.Path, w.HasRunningTurn})
+				}
+				out, _ := json.Marshal(map[string]any{"repos": rows})
+				return string(out), nil
+			},
+		},
 	}
 }
 

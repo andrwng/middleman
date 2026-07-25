@@ -114,6 +114,7 @@ func TestToolListIncludesAllTools(t *testing.T) {
 	require.True(t, names["reply_to_thread"])
 	require.True(t, names["get_pull"])
 	require.True(t, names["start_thread"])
+	require.True(t, names["list_repos"])
 }
 
 func TestUnresolvedHandleReturnsClearToolError(t *testing.T) {
@@ -370,4 +371,35 @@ func TestNoRepoWhenUnresolvedStillErrors(t *testing.T) {
 	_, err := s.tools["list_threads"].call(s, map[string]any{})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "no review for cwd")
+}
+
+func TestListReposEnumeratesWorktrees(t *testing.T) {
+	worktrees := `{"worktrees":[
+		{"id":7,"repo_owner":"local","repo_name":"alpha","branch":"main","path":"/w/alpha","has_running_turn":false},
+		{"id":8,"repo_owner":"local","repo_name":"beta","branch":"feat","path":"/w/beta","has_running_turn":true}
+	]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/worktrees", r.URL.Path)
+		_, _ = w.Write([]byte(worktrees))
+	}))
+	defer srv.Close()
+	s := New(Config{ServerName: "middleman", BaseURL: srv.URL})
+	out, err := s.tools["list_repos"].call(s, map[string]any{})
+	require.NoError(t, err)
+	require.Contains(t, out, `"repo":"alpha"`)
+	require.Contains(t, out, `"repo":"beta"`)
+	require.Contains(t, out, `"branch":"feat"`)
+	require.Contains(t, out, `"has_running_turn":true`)
+}
+
+func TestListReposWorksWhenUnresolved(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"worktrees":[]}`))
+	}))
+	defer srv.Close()
+	// Even with an unresolved default handle, discovery must work.
+	s := New(Config{ServerName: "middleman", BaseURL: srv.URL, Unresolved: "no review for cwd"})
+	out, err := s.tools["list_repos"].call(s, map[string]any{})
+	require.NoError(t, err)
+	require.Contains(t, out, `"repos"`)
 }
