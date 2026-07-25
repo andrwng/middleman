@@ -64,6 +64,12 @@ required to *address* a different registered local repo.
   behavior. No existing call changes.
 - Same capabilities cross-repo as in-repo — full parity: read threads, read a thread, reply
   to a thread, create a thread, read pull metadata.
+- Additionally, `list_threads` gains an optional `path` argument that scopes the result to a
+  single file: the returned threads are filtered to those whose `path` matches (client-side,
+  the same way `get_thread` filters the list by id). This composes with `repo`/`branch`
+  (e.g. "the comments on `x.go` in repo B"). No server change — the list endpoint already
+  returns every thread carrying its `path`. `path` is only on `list_threads` (`start_thread`
+  already takes a path; `get_thread`/`reply_to_thread` are by id).
 
 ### 2. New discovery tool `list_repos`
 
@@ -123,6 +129,8 @@ injected Claude allow-list (`sessions.go:331`) adds `list_repos`.
   symmetric with `/local/resolve`; deferred — the MCP-side filter is smaller and the data
   is already exposed.)
 - `get_pull` is included in the cross-repo set (context parity).
+- `list_threads` also takes an optional `path` to file-scope the result (client-side filter,
+  no server change). (User-approved 2026-07-24.)
 - In-app sessions get the same tools (uniform); default target unchanged.
 - Backward-compatible: no `repo` arg → identical to today.
 
@@ -156,6 +164,8 @@ injected Claude allow-list (`sessions.go:331`) adds `list_repos`.
 - **Go unit** (`internal/mcp`): `resolveTarget` — 0/1/N worktree matches, branch
   match/mismatch, ambiguous-no-branch, not-found (table-driven, against a stubbed
   `/worktrees` payload via the `mcp.Config.httpDoer` seam).
+- **Go unit** (`internal/mcp`): `list_threads` with a `path` arg filters the returned threads
+  to that file; omitting `path` returns all (backward-compat).
 - **Go e2e** (`internal/mcp` against a real server + a multi-repo test DB seeded with 2+
   local repos/worktrees): `list_repos` lists all; `list_threads` / `start_thread` /
   `reply_to_thread` with `repo` / `branch` act on repo B while the server is bound to repo
