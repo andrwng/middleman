@@ -150,9 +150,10 @@ injected Claude allow-list (`sessions.go:331`) adds `list_repos`.
 
 - **Ambiguous repo** (multiple worktrees, no `branch`) → error listing the branches.
 - **repo / branch not found** → error listing valid repos (or that repo's branches).
-- **Two worktrees of one repo on the same branch** (rare) → resolution is still ambiguous;
-  the error includes the paths. Addressing by path is a possible future disambiguator (out
-  of scope now).
+- **Two worktrees of one repo on the same branch** (rare — git refuses to check out one branch
+  in two worktrees, so this is practically unreachable) → the resolver returns the first match
+  for that branch. Path-based disambiguation is deferred (see Open questions), so this case is
+  not treated as an error.
 - **Default handle unresolved** (agent in an unregistered dir) → calls **with** an explicit
   `repo` still work; calls **without** one return the existing unresolved error;
   `list_repos` always works.
