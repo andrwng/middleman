@@ -48,13 +48,24 @@ func builtinTools() map[string]toolDef {
 		"list_threads": {
 			name:        "list_threads",
 			description: "List the review threads for the current review (path, line, side, status, comments).",
-			inputSchema: map[string]any{"type": "object", "properties": map[string]any{"repo": repoProp, "branch": branchProp}},
+			inputSchema: map[string]any{"type": "object", "properties": map[string]any{
+				"repo":   repoProp,
+				"branch": branchProp,
+				"path":   map[string]any{"type": "string", "description": "Filter the threads to a single file by its repo-relative path."},
+			}},
 			call: func(s *Server, args map[string]any) (string, error) {
 				owner, name, number, err := s.effectiveHandle(args)
 				if err != nil {
 					return "", err
 				}
-				return s.restJSON("GET", s.reviewPath(owner, name, number, "/review-threads"), nil)
+				out, err := s.restJSON("GET", s.reviewPath(owner, name, number, "/review-threads"), nil)
+				if err != nil {
+					return "", err
+				}
+				if p, _ := args["path"].(string); p != "" {
+					return filterThreadsByPath(out, p)
+				}
+				return out, nil
 			},
 		},
 		"get_thread": {
@@ -322,6 +333,26 @@ func filterThread(listJSON string, id int64) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("thread %d not found", id)
+}
+
+func filterThreadsByPath(listJSON, path string) (string, error) {
+	var parsed struct {
+		Threads []json.RawMessage `json:"threads"`
+	}
+	if err := json.Unmarshal([]byte(listJSON), &parsed); err != nil {
+		return "", err
+	}
+	kept := make([]json.RawMessage, 0, len(parsed.Threads))
+	for _, raw := range parsed.Threads {
+		var probe struct {
+			Path string `json:"path"`
+		}
+		if json.Unmarshal(raw, &probe) == nil && probe.Path == path {
+			kept = append(kept, raw)
+		}
+	}
+	out, _ := json.Marshal(map[string]any{"threads": kept})
+	return string(out), nil
 }
 
 func intArg(args map[string]any, key string) (int64, error) {

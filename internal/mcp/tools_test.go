@@ -331,6 +331,24 @@ func TestListThreadsDefaultHandleUnchanged(t *testing.T) {
 	require.Equal(t, "/api/v1/repos/local/alpha/pulls/7/review-threads", path) // unchanged
 }
 
+func TestListThreadsPathFilter(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"threads":[{"id":1,"path":"a.go","line":1},{"id":2,"path":"b.go","line":2},{"id":3,"path":"a.go","line":9}]}`))
+	}))
+	defer srv.Close()
+	s := New(Config{ServerName: "middleman", BaseURL: srv.URL, ReviewOwner: "local", ReviewName: "demo", ReviewNumber: 7})
+
+	out, err := s.tools["list_threads"].call(s, map[string]any{"path": "a.go"})
+	require.NoError(t, err)
+	require.Contains(t, out, `"id":1`)
+	require.Contains(t, out, `"id":3`)
+	require.NotContains(t, out, `"id":2`)
+
+	all, err := s.tools["list_threads"].call(s, map[string]any{}) // no path -> all
+	require.NoError(t, err)
+	require.Contains(t, all, `"id":2`)
+}
+
 func TestExplicitRepoWorksWhenDefaultUnresolved(t *testing.T) {
 	worktrees := `{"worktrees":[{"id":8,"repo_owner":"local","repo_name":"beta","branch":"feat","path":"/w/beta"}]}`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
