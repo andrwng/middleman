@@ -472,6 +472,22 @@ export async function mockApi(page: Page): Promise<void> {
       return;
     }
 
+    // Working-tree-vs-HEAD diff — fetched by DocReviewSurface to compute
+    // per-line "uncommitted" highlighting for the open doc
+    // (RenderedMarkdownView's uncommittedLines prop -> .rmd-uncommitted
+    // on the matching .rmd-anchor span). Defaults to no added lines for
+    // any file so every other doc-review test's rendering is unaffected;
+    // the "uncommitted highlight" tests below override this route
+    // per-test via page.route() to inject (or explicitly withhold) an
+    // added line for README.md.
+    const diffMatch = pathname.match(
+      /^\/api\/v1\/repos\/([^/]+)\/([^/]+)\/pulls\/(\d+)\/diff$/,
+    );
+    if (method === "GET" && diffMatch) {
+      await fulfillJson(route, { stale: false, whitespace_only_count: 0, files: [] });
+      return;
+    }
+
     // Review threads for local worktree — stateful in-memory store: GET
     // lists whatever has been created so far; POST appends threads built
     // from the request's drafts, preserving path/side/line/start_line/

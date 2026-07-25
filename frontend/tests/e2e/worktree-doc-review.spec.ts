@@ -513,3 +513,57 @@ test("doc review: submitting from one doc only sends that doc's comment", async 
   await expect(page.locator(".pending")).toHaveCount(1);
   await expect(page.locator(".comment-gutter .review-thread")).toHaveCount(0);
 });
+
+// The working-tree-vs-HEAD diff route the doc pane fetches to compute
+// per-line "uncommitted" highlighting. mockApi.ts defaults this route to
+// an empty diff (no added lines for any file); each test below overrides
+// it via page.route() so its diff expectations are self-contained and
+// don't depend on — or leak into — any other test in this spec.
+const diffRoute = `**/api/v1/repos/${LOCAL_OWNER}/${LOCAL_REPO}/pulls/${LOCAL_ID}/diff*`;
+
+test("doc view: an uncommitted (working-tree-added) line's anchor is highlighted", async ({ page }) => {
+  // Source line 3 of the mocked README.md content ("some text here") is a
+  // plain, single-line paragraph outside any list/table, so it renders as
+  // exactly one unambiguous .rmd-anchor[data-anchor-line="3"] span.
+  await page.route(diffRoute, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        stale: false,
+        whitespace_only_count: 0,
+        files: [
+          {
+            path: "README.md",
+            hunks: [{ lines: [{ type: "add", new_num: 3 }] }],
+          },
+        ],
+      }),
+    });
+  });
+
+  await page.goto(docRoute);
+  await expect(page.locator(".rmd-body")).toContainText("Hello");
+
+  await expect(
+    page.locator('.rmd-anchor[data-anchor-line="3"]').first(),
+  ).toHaveClass(/rmd-uncommitted/);
+});
+
+test("doc view: a fully committed doc has no uncommitted highlight", async ({ page }) => {
+  // Explicit no-added-lines diff response for README.md — mirrors the
+  // shared mock's default, but scoped here so this test's intent (nothing
+  // highlighted when there's nothing uncommitted) is self-contained.
+  await page.route(diffRoute, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ stale: false, whitespace_only_count: 0, files: [] }),
+    });
+  });
+
+  await page.goto(docRoute);
+  await expect(page.locator(".rmd-body")).toContainText("Hello");
+
+  await expect(page.locator(".rmd-uncommitted")).toHaveCount(0);
+});
