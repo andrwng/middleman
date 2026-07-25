@@ -37,13 +37,24 @@ type worktreeRow struct {
 func builtinTools() map[string]toolDef {
 	intSchema := map[string]any{"type": "integer"}
 	strSchema := map[string]any{"type": "string"}
+	// repoProp/branchProp are leaf value-schemas (read-only after
+	// construction, never mutated), so they're safe to share across tools.
+	// The enclosing `properties` maps below are NOT shared — each tool gets
+	// its own map literal so a later edit to one can't silently mutate
+	// another (Go maps are references).
+	repoProp := map[string]any{"type": "string", "description": "Target a different local repo by name (default: the current repo). Use list_repos to discover repos."}
+	branchProp := map[string]any{"type": "string", "description": "Disambiguate when the target repo has more than one active worktree."}
 	return map[string]toolDef{
 		"list_threads": {
 			name:        "list_threads",
 			description: "List the review threads for the current review (path, line, side, status, comments).",
-			inputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
-			call: func(s *Server, _ map[string]any) (string, error) {
-				return s.restJSON("GET", s.reviewPath("/review-threads"), nil)
+			inputSchema: map[string]any{"type": "object", "properties": map[string]any{"repo": repoProp, "branch": branchProp}},
+			call: func(s *Server, args map[string]any) (string, error) {
+				owner, name, number, err := s.effectiveHandle(args)
+				if err != nil {
+					return "", err
+				}
+				return s.restJSON("GET", s.reviewPath(owner, name, number, "/review-threads"), nil)
 			},
 		},
 		"get_thread": {
@@ -51,15 +62,19 @@ func builtinTools() map[string]toolDef {
 			description: "Get a single review thread (with its comments) by id.",
 			inputSchema: map[string]any{
 				"type": "object", "required": []string{"thread_id"},
-				"properties": map[string]any{"thread_id": intSchema},
+				"properties": map[string]any{"thread_id": intSchema, "repo": repoProp, "branch": branchProp},
 			},
 			call: func(s *Server, args map[string]any) (string, error) {
 				id, err := intArg(args, "thread_id")
 				if err != nil {
 					return "", err
 				}
+				owner, name, number, err := s.effectiveHandle(args)
+				if err != nil {
+					return "", err
+				}
 				// No single-thread GET endpoint; filter from the list.
-				all, err := s.restJSON("GET", s.reviewPath("/review-threads"), nil)
+				all, err := s.restJSON("GET", s.reviewPath(owner, name, number, "/review-threads"), nil)
 				if err != nil {
 					return "", err
 				}
@@ -71,7 +86,7 @@ func builtinTools() map[string]toolDef {
 			description: "Post a reply comment (authored by the agent) to a review thread.",
 			inputSchema: map[string]any{
 				"type": "object", "required": []string{"thread_id", "body"},
-				"properties": map[string]any{"thread_id": intSchema, "body": strSchema},
+				"properties": map[string]any{"thread_id": intSchema, "body": strSchema, "repo": repoProp, "branch": branchProp},
 			},
 			call: func(s *Server, args map[string]any) (string, error) {
 				id, err := intArg(args, "thread_id")
@@ -82,16 +97,24 @@ func builtinTools() map[string]toolDef {
 				if body == "" {
 					return "", fmt.Errorf("body is required")
 				}
+				owner, name, number, err := s.effectiveHandle(args)
+				if err != nil {
+					return "", err
+				}
 				payload, _ := json.Marshal(map[string]any{"body": body, "author": "agent"})
-				return s.restJSON("POST", s.reviewPath(fmt.Sprintf("/review-threads/%d/comments", id)), payload)
+				return s.restJSON("POST", s.reviewPath(owner, name, number, fmt.Sprintf("/review-threads/%d/comments", id)), payload)
 			},
 		},
 		"get_pull": {
 			name:        "get_pull",
 			description: "Get the pull/review detail (title, head/base branch + SHAs) so you can diff the exact range under review yourself.",
-			inputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
-			call: func(s *Server, _ map[string]any) (string, error) {
-				return s.restJSON("GET", s.reviewPath(""), nil)
+			inputSchema: map[string]any{"type": "object", "properties": map[string]any{"repo": repoProp, "branch": branchProp}},
+			call: func(s *Server, args map[string]any) (string, error) {
+				owner, name, number, err := s.effectiveHandle(args)
+				if err != nil {
+					return "", err
+				}
+				return s.restJSON("GET", s.reviewPath(owner, name, number, ""), nil)
 			},
 		},
 		"start_thread": {
@@ -109,6 +132,8 @@ func builtinTools() map[string]toolDef {
 					"body":       strSchema,
 					"start_line": map[string]any{"type": "integer", "minimum": 1},
 					"commit_sha": strSchema,
+					"repo":       repoProp,
+					"branch":     branchProp,
 				},
 			},
 			call: func(s *Server, args map[string]any) (string, error) {
@@ -128,6 +153,10 @@ func builtinTools() map[string]toolDef {
 				if body == "" {
 					return "", fmt.Errorf("body is required")
 				}
+				owner, name, number, err := s.effectiveHandle(args)
+				if err != nil {
+					return "", err
+				}
 				commitSHA, _ := args["commit_sha"].(string)
 				// commit_sha may be "" — the server resolves it to the
 				// worktree's live HEAD via git rev-parse, so we forward as-is.
@@ -145,7 +174,7 @@ func builtinTools() map[string]toolDef {
 					"mode":    "",
 					"threads": []any{draft},
 				})
-				resp, err := s.restJSON("POST", s.reviewPath("/review-threads"), payload)
+				resp, err := s.restJSON("POST", s.reviewPath(owner, name, number, "/review-threads"), payload)
 				if err != nil {
 					return "", err
 				}
@@ -176,9 +205,26 @@ func builtinTools() map[string]toolDef {
 	}
 }
 
-func (s *Server) reviewPath(suffix string) string {
+func (s *Server) reviewPath(owner, name string, number int, suffix string) string {
 	// middleman mounts its REST API under /api/v1; --base-url is the server root.
-	return fmt.Sprintf("/api/v1/repos/%s/%s/pulls/%d%s", s.cfg.ReviewOwner, s.cfg.ReviewName, s.cfg.ReviewNumber, suffix)
+	return fmt.Sprintf("/api/v1/repos/%s/%s/pulls/%d%s", owner, name, number, suffix)
+}
+
+// effectiveHandle returns the review handle a tool call operates on: an
+// explicit {repo[,branch]} resolves via resolveTarget; otherwise the
+// server's bound default. A default-fallback when the default is
+// unresolved is the only case that errors here (an explicit repo bypasses
+// it, so an agent in an unregistered dir can still target a known repo).
+func (s *Server) effectiveHandle(args map[string]any) (string, string, int, error) {
+	repo, _ := args["repo"].(string)
+	branch, _ := args["branch"].(string)
+	if repo == "" {
+		if s.cfg.Unresolved != "" {
+			return "", "", 0, fmt.Errorf("%s", s.cfg.Unresolved)
+		}
+		return s.cfg.ReviewOwner, s.cfg.ReviewName, s.cfg.ReviewNumber, nil
+	}
+	return s.resolveTarget(repo, branch)
 }
 
 func (s *Server) restJSON(method, path string, body []byte) (string, error) {
@@ -307,12 +353,6 @@ func (s *Server) toolList() []map[string]any {
 
 func (s *Server) handleToolCall(ctx context.Context, w io.Writer, req rpcRequest) error {
 	_ = ctx
-	if s.cfg.Unresolved != "" {
-		return s.writeResult(w, req.ID, map[string]any{
-			"content": []map[string]any{{"type": "text", "text": s.cfg.Unresolved}},
-			"isError": true,
-		})
-	}
 	var p struct {
 		Name      string         `json:"name"`
 		Arguments map[string]any `json:"arguments"`

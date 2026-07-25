@@ -297,3 +297,59 @@ func TestResolveTargetWorktreesFetchError(t *testing.T) {
 	_, _, _, err := s.resolveTarget("alpha", "")
 	require.Error(t, err)
 }
+
+func TestListThreadsCrossRepo(t *testing.T) {
+	worktrees := `{"worktrees":[{"id":8,"repo_owner":"local","repo_name":"beta","branch":"feat","path":"/w/beta"}]}`
+	var threadsPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/worktrees" {
+			_, _ = w.Write([]byte(worktrees))
+			return
+		}
+		threadsPath = r.URL.Path
+		_, _ = w.Write([]byte(`{"threads":[{"id":1,"path":"z.go"}]}`))
+	}))
+	defer srv.Close()
+	// Server is bound to repo "alpha"/7, but the call targets "beta".
+	s := New(Config{ServerName: "middleman", BaseURL: srv.URL, ReviewOwner: "local", ReviewName: "alpha", ReviewNumber: 7})
+	out, err := s.tools["list_threads"].call(s, map[string]any{"repo": "beta"})
+	require.NoError(t, err)
+	require.Equal(t, "/api/v1/repos/local/beta/pulls/8/review-threads", threadsPath)
+	require.Contains(t, out, "z.go")
+}
+
+func TestListThreadsDefaultHandleUnchanged(t *testing.T) {
+	var path string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		_, _ = w.Write([]byte(`{"threads":[]}`))
+	}))
+	defer srv.Close()
+	s := New(Config{ServerName: "middleman", BaseURL: srv.URL, ReviewOwner: "local", ReviewName: "alpha", ReviewNumber: 7})
+	_, err := s.tools["list_threads"].call(s, map[string]any{}) // no repo
+	require.NoError(t, err)
+	require.Equal(t, "/api/v1/repos/local/alpha/pulls/7/review-threads", path) // unchanged
+}
+
+func TestExplicitRepoWorksWhenDefaultUnresolved(t *testing.T) {
+	worktrees := `{"worktrees":[{"id":8,"repo_owner":"local","repo_name":"beta","branch":"feat","path":"/w/beta"}]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/worktrees" {
+			_, _ = w.Write([]byte(worktrees))
+			return
+		}
+		_, _ = w.Write([]byte(`{"threads":[]}`))
+	}))
+	defer srv.Close()
+	// Unresolved default, but an explicit repo must still work.
+	s := New(Config{ServerName: "middleman", BaseURL: srv.URL, Unresolved: "no review for cwd"})
+	_, err := s.tools["list_threads"].call(s, map[string]any{"repo": "beta"})
+	require.NoError(t, err)
+}
+
+func TestNoRepoWhenUnresolvedStillErrors(t *testing.T) {
+	s := New(Config{ServerName: "middleman", BaseURL: "http://127.0.0.1:0", Unresolved: "no review for cwd"})
+	_, err := s.tools["list_threads"].call(s, map[string]any{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "no review for cwd")
+}
