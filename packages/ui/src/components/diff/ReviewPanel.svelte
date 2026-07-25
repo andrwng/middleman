@@ -7,10 +7,11 @@
     owner: string;
     name: string;
     number: number;
+    scopePath?: string;
     onclose: () => void;
   }
 
-  const { owner, name, number, onclose }: Props = $props();
+  const { owner, name, number, scopePath, onclose }: Props = $props();
 
   const { diff: diffStore, pulls: pullsStore, reviewThreads: reviewThreadsStore } = getStores();
   const client = getClient();
@@ -23,6 +24,12 @@
   // we still read live for comment deletion/adds but the body/event
   // come from draft state continuously.
   const draft = $derived(diffStore.getDraft());
+
+  // Comments this panel operates on: the whole bucket, or one doc's
+  // subset when scoped to a single doc pane. When scopePath is unset
+  // this is the SAME reference as draft.comments (no filter/copy), so
+  // the diff view's behavior stays byte-for-byte unchanged.
+  const scoped = $derived(scopePath ? draft.comments.filter((c) => c.path === scopePath) : draft.comments);
 
   let submitting = $state(false);
   let errorMsg = $state<string | null>(null);
@@ -83,7 +90,7 @@
       // are not used here (the discuss/apply agent + mode picker land
       // in Phase 2). Reply-drafts (inReplyTo) are not part of the local
       // flow — replies are added directly on a thread card.
-      const drafts = draft.comments
+      const drafts = scoped
         .filter((c) => c.inReplyTo == null)
         .map((c) => ({
           path: c.path,
@@ -107,7 +114,8 @@
           errorMsg = reviewThreadsStore.getError() ?? "Failed to create review threads";
           return;
         }
-        diffStore.clearDraft();
+        if (scopePath) diffStore.clearDraftCommentsForPath(scopePath);
+        else diffStore.clearDraft();
         onclose();
       } finally {
         submitting = false;
@@ -180,7 +188,7 @@
     !submitting &&
       !(draft.event === "REQUEST_CHANGES" &&
         !draft.body.trim() &&
-        draft.comments.length === 0),
+        scoped.length === 0),
   );
 
   // Cmd/Ctrl+Enter in the summary textarea submits the review,
@@ -247,7 +255,7 @@
   // Group pending comments by file for a compact preview list.
   const commentsByPath = $derived.by(() => {
     const map = new Map<string, typeof draft.comments>();
-    for (const c of draft.comments) {
+    for (const c of scoped) {
       const arr = map.get(c.path) ?? [];
       arr.push(c);
       map.set(c.path, arr);
@@ -328,9 +336,9 @@
   </p>
   {/if}
 
-  {#if draft.comments.length > 0}
+  {#if scoped.length > 0}
     <div class="panel__preview">
-      <div class="panel__preview-title">{draft.comments.length} inline comment{draft.comments.length === 1 ? "" : "s"}</div>
+      <div class="panel__preview-title">{scoped.length} inline comment{scoped.length === 1 ? "" : "s"}</div>
       {#each commentsByPath as group (group.path)}
         <div class="preview-file">
           <div class="preview-file__path">{group.path}</div>

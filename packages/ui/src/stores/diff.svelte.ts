@@ -1164,6 +1164,16 @@ export function createDiffStore(opts: DiffStoreOptions) {
     saveDraftReviews(draftReviews);
   }
 
+  function clearDraftCommentsForPath(path: string): void {
+    const key = draftKey();
+    const existing = draftReviews[key];
+    if (!existing) return;
+    const next = existing.comments.filter((c) => c.path !== path);
+    if (next.length === existing.comments.length) return;
+    draftReviews = { ...draftReviews, [key]: { ...existing, comments: next } };
+    saveDraftReviews(draftReviews);
+  }
+
   function markCommitReviewed(sha: string): void {
     if (!currentOwner) return;
     const key = reviewedKey();
@@ -1387,6 +1397,7 @@ export function createDiffStore(opts: DiffStoreOptions) {
     ackEditRequest,
     getDraftCommentsForPath,
     clearDraft,
+    clearDraftCommentsForPath,
     loadCommits,
     loadPatchsets,
     getPatchsets,

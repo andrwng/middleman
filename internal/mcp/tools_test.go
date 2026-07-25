@@ -114,6 +114,7 @@ func TestToolListIncludesAllTools(t *testing.T) {
 	require.True(t, names["reply_to_thread"])
 	require.True(t, names["get_pull"])
 	require.True(t, names["start_thread"])
+	require.True(t, names["list_repos"])
 }
 
 func TestUnresolvedHandleReturnsClearToolError(t *testing.T) {
@@ -247,3 +248,158 @@ func TestStartThreadFallsBackWhenResponseHasNoThreads(t *testing.T) {
 }
 
 type recordedPost struct{ path, body string }
+
+func TestResolveTarget(t *testing.T) {
+	worktrees := `{"worktrees":[
+		{"id":7,"repo_owner":"local","repo_name":"alpha","branch":"main","path":"/w/alpha"},
+		{"id":8,"repo_owner":"local","repo_name":"beta","branch":"feat","path":"/w/beta-feat"},
+		{"id":9,"repo_owner":"local","repo_name":"beta","branch":"main","path":"/w/beta-main"}
+	]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/worktrees", r.URL.Path)
+		_, _ = w.Write([]byte(worktrees))
+	}))
+	defer srv.Close()
+	s := New(Config{ServerName: "middleman", BaseURL: srv.URL})
+
+	cases := []struct {
+		name, repo, branch string
+		wantName           string
+		wantNumber         int
+		wantErr            string // substring; "" => no error
+	}{
+		{"single match no branch", "alpha", "", "alpha", 7, ""},
+		{"single match right branch", "alpha", "main", "alpha", 7, ""},
+		{"single match wrong branch", "alpha", "nope", "", 0, "branch"},
+		{"multi match with branch", "beta", "feat", "beta", 8, ""},
+		{"multi match other branch", "beta", "main", "beta", 9, ""},
+		{"multi match no branch (ambiguous)", "beta", "", "", 0, "multiple worktrees"},
+		{"multi match unknown branch", "beta", "zzz", "", 0, "no worktree on branch"},
+		{"no such repo", "ghost", "", "", 0, "no local repo named"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			owner, name, number, err := s.resolveTarget(c.repo, c.branch)
+			if c.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), c.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, "local", owner)
+			assert.Equal(t, c.wantName, name)
+			assert.Equal(t, c.wantNumber, number)
+		})
+	}
+}
+
+func TestResolveTargetWorktreesFetchError(t *testing.T) {
+	s := New(Config{ServerName: "middleman", BaseURL: "http://127.0.0.1:0"})
+	_, _, _, err := s.resolveTarget("alpha", "")
+	require.Error(t, err)
+}
+
+func TestListThreadsCrossRepo(t *testing.T) {
+	worktrees := `{"worktrees":[{"id":8,"repo_owner":"local","repo_name":"beta","branch":"feat","path":"/w/beta"}]}`
+	var threadsPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/worktrees" {
+			_, _ = w.Write([]byte(worktrees))
+			return
+		}
+		threadsPath = r.URL.Path
+		_, _ = w.Write([]byte(`{"threads":[{"id":1,"path":"z.go"}]}`))
+	}))
+	defer srv.Close()
+	// Server is bound to repo "alpha"/7, but the call targets "beta".
+	s := New(Config{ServerName: "middleman", BaseURL: srv.URL, ReviewOwner: "local", ReviewName: "alpha", ReviewNumber: 7})
+	out, err := s.tools["list_threads"].call(s, map[string]any{"repo": "beta"})
+	require.NoError(t, err)
+	require.Equal(t, "/api/v1/repos/local/beta/pulls/8/review-threads", threadsPath)
+	require.Contains(t, out, "z.go")
+}
+
+func TestListThreadsDefaultHandleUnchanged(t *testing.T) {
+	var path string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		_, _ = w.Write([]byte(`{"threads":[]}`))
+	}))
+	defer srv.Close()
+	s := New(Config{ServerName: "middleman", BaseURL: srv.URL, ReviewOwner: "local", ReviewName: "alpha", ReviewNumber: 7})
+	_, err := s.tools["list_threads"].call(s, map[string]any{}) // no repo
+	require.NoError(t, err)
+	require.Equal(t, "/api/v1/repos/local/alpha/pulls/7/review-threads", path) // unchanged
+}
+
+func TestListThreadsPathFilter(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"threads":[{"id":1,"path":"a.go","line":1},{"id":2,"path":"b.go","line":2},{"id":3,"path":"a.go","line":9}]}`))
+	}))
+	defer srv.Close()
+	s := New(Config{ServerName: "middleman", BaseURL: srv.URL, ReviewOwner: "local", ReviewName: "demo", ReviewNumber: 7})
+
+	out, err := s.tools["list_threads"].call(s, map[string]any{"path": "a.go"})
+	require.NoError(t, err)
+	require.Contains(t, out, `"id":1`)
+	require.Contains(t, out, `"id":3`)
+	require.NotContains(t, out, `"id":2`)
+
+	all, err := s.tools["list_threads"].call(s, map[string]any{}) // no path -> all
+	require.NoError(t, err)
+	require.Contains(t, all, `"id":2`)
+}
+
+func TestExplicitRepoWorksWhenDefaultUnresolved(t *testing.T) {
+	worktrees := `{"worktrees":[{"id":8,"repo_owner":"local","repo_name":"beta","branch":"feat","path":"/w/beta"}]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/worktrees" {
+			_, _ = w.Write([]byte(worktrees))
+			return
+		}
+		_, _ = w.Write([]byte(`{"threads":[]}`))
+	}))
+	defer srv.Close()
+	// Unresolved default, but an explicit repo must still work.
+	s := New(Config{ServerName: "middleman", BaseURL: srv.URL, Unresolved: "no review for cwd"})
+	_, err := s.tools["list_threads"].call(s, map[string]any{"repo": "beta"})
+	require.NoError(t, err)
+}
+
+func TestNoRepoWhenUnresolvedStillErrors(t *testing.T) {
+	s := New(Config{ServerName: "middleman", BaseURL: "http://127.0.0.1:0", Unresolved: "no review for cwd"})
+	_, err := s.tools["list_threads"].call(s, map[string]any{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "no review for cwd")
+}
+
+func TestListReposEnumeratesWorktrees(t *testing.T) {
+	worktrees := `{"worktrees":[
+		{"id":7,"repo_owner":"local","repo_name":"alpha","branch":"main","path":"/w/alpha","has_running_turn":false},
+		{"id":8,"repo_owner":"local","repo_name":"beta","branch":"feat","path":"/w/beta","has_running_turn":true}
+	]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/worktrees", r.URL.Path)
+		_, _ = w.Write([]byte(worktrees))
+	}))
+	defer srv.Close()
+	s := New(Config{ServerName: "middleman", BaseURL: srv.URL})
+	out, err := s.tools["list_repos"].call(s, map[string]any{})
+	require.NoError(t, err)
+	require.Contains(t, out, `"repo":"alpha"`)
+	require.Contains(t, out, `"repo":"beta"`)
+	require.Contains(t, out, `"branch":"feat"`)
+	require.Contains(t, out, `"has_running_turn":true`)
+}
+
+func TestListReposWorksWhenUnresolved(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"worktrees":[]}`))
+	}))
+	defer srv.Close()
+	// Even with an unresolved default handle, discovery must work.
+	s := New(Config{ServerName: "middleman", BaseURL: srv.URL, Unresolved: "no review for cwd"})
+	out, err := s.tools["list_repos"].call(s, map[string]any{})
+	require.NoError(t, err)
+	require.Contains(t, out, `"repos"`)
+}

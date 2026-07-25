@@ -143,6 +143,25 @@ describe("ReviewThreadCard", () => {
     });
     expect(container.querySelector(".review-thread__sent-badge")).toBeNull();
   });
+
+  it('variant="gutter" adds the gutter modifier class to the card', () => {
+    const { container } = render(ReviewThreadCard, {
+      props: { thread: thread(), variant: "gutter" },
+    });
+    expect(container.querySelector(".review-thread--gutter")).toBeTruthy();
+  });
+
+  it("defaults to inline variant (no gutter class) when variant is omitted", () => {
+    const { container } = render(ReviewThreadCard, { props: { thread: thread() } });
+    expect(container.querySelector(".review-thread--gutter")).toBeNull();
+  });
+
+  it('variant="gutter" also applies to the hidden thread stub', () => {
+    const { container } = render(ReviewThreadCard, {
+      props: { thread: thread({ hidden: true }), variant: "gutter" },
+    });
+    expect(container.querySelector(".review-thread--gutter")).toBeTruthy();
+  });
 });
 
 describe("ReviewThreadCard — clicks are not blocked while session is busy", () => {

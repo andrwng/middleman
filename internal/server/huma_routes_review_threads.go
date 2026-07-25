@@ -232,18 +232,20 @@ func (s *Server) createReviewThreads(ctx context.Context, input *createReviewThr
 	branch := s.currentWorktreeBranch(ctx, w)
 
 	// Canonicalize every commit_sha to a full SHA. An empty value (an
-	// agent calling start_thread without one) resolves to live HEAD; a
-	// non-empty value (a short SHA from the agent's worktree prompt, or a
-	// full SHA from the UI) is peeled to its canonical form so stored
-	// threads compare equal to the full SHAs in the commit list and never
-	// render as spurious orphans. An empty value that won't resolve means
-	// the worktree's HEAD is broken (fatal); a non-empty value that won't
-	// resolve is kept verbatim — a genuinely bogus SHA legitimately reads
-	// as orphan rather than failing the whole create.
+	// agent calling start_thread without one) or the WORKING-TREE
+	// sentinel (a doc-pane comment anchored to the live worktree, not a
+	// commit) resolves to live HEAD; a non-empty, non-sentinel value (a
+	// short SHA from the agent's worktree prompt, or a full SHA from the
+	// UI) is peeled to its canonical form so stored threads compare equal
+	// to the full SHAs in the commit list and never render as spurious
+	// orphans. An unresolvable HEAD means the worktree is broken (fatal);
+	// a non-empty value that won't resolve is kept verbatim — a
+	// genuinely bogus SHA legitimately reads as orphan rather than
+	// failing the whole create.
 	var headSHA string
 	for i := range input.Body.Threads {
 		raw := input.Body.Threads[i].CommitSHA
-		if raw == "" {
+		if raw == "" || raw == worktrees.WorkingTreeSentinel {
 			if headSHA == "" {
 				sha, err := worktrees.ResolveCommitSHA(ctx, w.Path, "HEAD")
 				if err != nil {

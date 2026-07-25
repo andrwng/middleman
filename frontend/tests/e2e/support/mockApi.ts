@@ -238,6 +238,76 @@ function makeRateLimits() {
   };
 }
 
+// --- Review-threads mock state (stateful across GET/POST within a test) ---
+//
+// A module-scoped in-memory store so a thread created via POST is returned
+// by a subsequent GET, mirroring the real server. Reset at the top of
+// mockApi() so each test starts clean regardless of module/worker reuse
+// across the spec file. Field names are snake_case, matching
+// ReviewThreadDraft / ReviewThreadResponse in the generated API schema.
+
+interface ReviewThreadDraftCommentRecord {
+  author: "user" | "agent";
+  body: string;
+}
+
+interface ReviewThreadDraftRecord {
+  path: string;
+  side: "LEFT" | "RIGHT";
+  line: number;
+  start_line?: number;
+  commit_sha: string;
+  body: string;
+  comments?: ReviewThreadDraftCommentRecord[];
+}
+
+// One create-review-threads POST body, recorded verbatim so tests can
+// assert `mode` (persist-only vs act-immediately) and per-doc scope (which
+// paths were actually sent) without re-deriving it from the DOM.
+export interface CreateReviewThreadsRequestRecord {
+  mode?: "discuss-first" | "act-immediately" | "persist-only";
+  threads: ReviewThreadDraftRecord[];
+}
+
+interface ReviewThreadCommentRecord {
+  id: number;
+  author: "user" | "agent";
+  body: string;
+  created_at: string;
+  sent_to_agent: boolean;
+}
+
+export interface ReviewThreadRecord {
+  id: number;
+  path: string;
+  side: "LEFT" | "RIGHT";
+  line: number;
+  start_line?: number;
+  commit_sha: string;
+  status: "open" | "discussed" | "applied" | "resolved";
+  hidden: boolean;
+  writes_allowed: boolean;
+  created_at: string;
+  updated_at: string;
+  comments: ReviewThreadCommentRecord[];
+}
+
+let createdReviewThreads: ReviewThreadRecord[] = [];
+let reviewThreadsRequests: CreateReviewThreadsRequestRecord[] = [];
+let nextReviewThreadId = 1;
+let nextReviewCommentId = 1;
+
+// Read back every create-threads POST body sent this test.
+export function getReviewThreadsRequests(): CreateReviewThreadsRequestRecord[] {
+  return reviewThreadsRequests;
+}
+
+// Read back the thread list the mock is currently serving (i.e. what a
+// subsequent GET would return) — used to assert a thread was persisted.
+export function getCreatedReviewThreads(): ReviewThreadRecord[] {
+  return createdReviewThreads;
+}
+
 async function fulfillJson(route: Route, body: unknown, status = 200): Promise<void> {
   await route.fulfill({
     status,
@@ -247,6 +317,13 @@ async function fulfillJson(route: Route, body: unknown, status = 200): Promise<v
 }
 
 export async function mockApi(page: Page): Promise<void> {
+  // Reset the review-threads mock state so each test starts clean,
+  // regardless of module/worker reuse across the spec file.
+  createdReviewThreads = [];
+  reviewThreadsRequests = [];
+  nextReviewThreadId = 1;
+  nextReviewCommentId = 1;
+
   // Deep-clone so mutations (e.g. PATCH) don't leak between tests.
   // Append the local-worktree pull so it appears in the sidebar list and
   // the singlePrMatch handler can find it by owner/name/number.
@@ -395,12 +472,57 @@ export async function mockApi(page: Page): Promise<void> {
       return;
     }
 
-    // Review threads for local worktree (empty list — no pre-existing threads).
+    // Review threads for local worktree — stateful in-memory store: GET
+    // lists whatever has been created so far; POST appends threads built
+    // from the request's drafts, preserving path/side/line/start_line/
+    // commit_sha so each thread anchors to the same doc block the draft
+    // was made on.
     const reviewThreadsMatch = pathname.match(
       /^\/api\/v1\/repos\/local\/[^/]+\/pulls\/\d+\/review-threads$/,
     );
     if (method === "GET" && reviewThreadsMatch) {
-      await fulfillJson(route, { threads: [] });
+      await fulfillJson(route, { threads: createdReviewThreads });
+      return;
+    }
+    if (method === "POST" && reviewThreadsMatch) {
+      const body = JSON.parse(
+        (await route.request().postData()) ?? "{}",
+      ) as CreateReviewThreadsRequestRecord;
+      reviewThreadsRequests.push(body);
+      const now = new Date().toISOString();
+      for (const draft of body.threads ?? []) {
+        const comments: ReviewThreadCommentRecord[] = [
+          {
+            id: nextReviewCommentId++,
+            author: "user",
+            body: draft.body,
+            created_at: now,
+            sent_to_agent: false,
+          },
+          ...(draft.comments ?? []).map((c) => ({
+            id: nextReviewCommentId++,
+            author: c.author,
+            body: c.body,
+            created_at: now,
+            sent_to_agent: false,
+          })),
+        ];
+        createdReviewThreads.push({
+          id: nextReviewThreadId++,
+          path: draft.path,
+          side: draft.side,
+          line: draft.line,
+          ...(draft.start_line != null ? { start_line: draft.start_line } : {}),
+          commit_sha: draft.commit_sha,
+          status: "open",
+          hidden: false,
+          writes_allowed: true,
+          created_at: now,
+          updated_at: now,
+          comments,
+        });
+      }
+      await fulfillJson(route, { threads: createdReviewThreads });
       return;
     }
 
@@ -416,6 +538,23 @@ export async function mockApi(page: Page): Promise<void> {
     // AI sessions endpoint (used by aiStore.start).
     if (method === "GET" && pathname === "/api/v1/ai/sessions") {
       await fulfillJson(route, { sessions: [] });
+      return;
+    }
+
+    // Worktree session — minimal idle stub so an act-immediately review
+    // submit doesn't 404 if anything ever reads session state. Not
+    // exercised by the doc-pane submit flow today (only
+    // WorktreeConversation's mount calls loadSession, and the doc-review
+    // tests never visit the Activity tab that renders it) — mocked
+    // defensively so this path is covered regardless.
+    const sessionMatch = pathname.match(
+      /^\/api\/v1\/repos\/[^/]+\/[^/]+\/pulls\/\d+\/session$/,
+    );
+    if (method === "GET" && sessionMatch) {
+      await fulfillJson(route, {
+        session: { id: 0, status: "idle", started_at: "", last_activity_at: "" },
+        turns: [],
+      });
       return;
     }
 

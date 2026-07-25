@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import RenderedMarkdownView from "../diff/RenderedMarkdownView.svelte";
+  import ReviewPanel from "../diff/ReviewPanel.svelte";
   import { WORKING_TREE_SENTINEL } from "../../utils/worktreeSentinel.js";
   import { getNavigate, getStores } from "../../context.js";
 
@@ -15,6 +16,13 @@
 
   const navigate = getNavigate();
   const { ai: aiStore, diff: diffStore, reviewThreads: reviewThreadsStore } = getStores();
+
+  let reviewPanelOpen = $state(false);
+
+  // Per-doc pending draft comment count, shown on the Review button so
+  // a reviewer can tell at a glance whether this doc has anything to
+  // submit without leaving the doc pane.
+  const pendingCount = $derived(diffStore.getDraftCommentsForPath(path).length);
 
   // In-app navigation uses an unprefixed path; navigate() applies the base
   // prefix internally.
@@ -78,6 +86,14 @@
       ← Review
     </button>
     <span class="doc-path">{path}</span>
+    <button
+      class="doc-review"
+      disabled={pendingCount === 0}
+      title={pendingCount === 0 ? "No pending comments on this doc" : "Finish review for this doc"}
+      onclick={() => (reviewPanelOpen = true)}
+    >
+      Review ({pendingCount})
+    </button>
     <a
       class="doc-newtab"
       href={newTabHref}
@@ -102,6 +118,10 @@
     />
   </div>
 </div>
+
+{#if reviewPanelOpen}
+  <ReviewPanel {owner} {name} {number} scopePath={path} onclose={() => (reviewPanelOpen = false)} />
+{/if}
 
 <style>
   .doc-surface {
@@ -140,6 +160,24 @@
   .doc-back:hover {
     color: var(--text-primary);
     background: var(--bg-surface-hover);
+  }
+
+  .doc-review {
+    font-size: 12px;
+    color: var(--text-secondary);
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    transition: color 0.1s, background 0.1s;
+  }
+
+  .doc-review:hover:not(:disabled) {
+    color: var(--text-primary);
+    background: var(--bg-surface-hover);
+  }
+
+  .doc-review:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .doc-newtab {

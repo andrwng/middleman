@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/svelte";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import DocReviewSurface from "./DocReviewSurface.svelte";
 import RenderedMarkdownView from "../diff/RenderedMarkdownView.svelte";
 import { STORES_KEY, NAVIGATE_KEY } from "../../context.js";
@@ -7,6 +7,7 @@ import { createDiffStore } from "../../stores/diff.svelte.js";
 import { createAIStore } from "../../stores/ai.svelte.js";
 import { createDetailStore } from "../../stores/detail.svelte.js";
 import { createReviewThreadsStore } from "../../stores/reviewThreads.svelte.js";
+import { WORKING_TREE_SENTINEL } from "../../utils/worktreeSentinel.js";
 import type { MiddlemanClient } from "../../types.js";
 
 // RenderedMarkdownView fetches the blob inline; stub it out.
@@ -54,6 +55,10 @@ function renderSurface(docPath = "docs/README.md") {
   return { ...result, navigateFn, stores };
 }
 
+beforeEach(() => {
+  localStorage.clear();
+});
+
 afterEach(() => {
   cleanup();
 });
@@ -61,14 +66,16 @@ afterEach(() => {
 describe("DocReviewSurface", () => {
   it("renders a back affordance linking to the files review route", () => {
     renderSurface();
-    // There should be a back button/link to the /files route.
-    const back = screen.getByRole("button", { name: /review/i });
+    // There should be a back button/link to the /files route. Matched by
+    // exact name: the new per-doc "Review (N)" button also contains
+    // "review" and would otherwise collide with a /review/i regex match.
+    const back = screen.getByRole("button", { name: "← Review" });
     expect(back).toBeTruthy();
   });
 
   it("clicking the back affordance navigates to the review route without basePath prefix", () => {
     const { navigateFn } = renderSurface();
-    const back = screen.getByRole("button", { name: /review/i });
+    const back = screen.getByRole("button", { name: "← Review" });
     back.click();
     expect(navigateFn).toHaveBeenCalledWith(
       "/pulls/local/demo/42/files",
@@ -150,5 +157,53 @@ describe("DocReviewSurface", () => {
     cleanup();
 
     expect(stores2.diff.setActivePR).toHaveBeenLastCalledWith("", "", 0);
+  });
+
+  it("disables the Review button when there are no pending comments on this doc", () => {
+    renderSurface("docs/README.md");
+    const btn = screen.getByRole("button", { name: "Review (0)" }) as HTMLButtonElement;
+    expect(btn).toBeTruthy();
+    expect(btn.disabled).toBe(true);
+  });
+
+  it("shows a Review button with the per-doc pending count and opens the scoped panel", async () => {
+    const docPath = "docs/README.md";
+    const stores = makeStores();
+    // Seed a real draft comment on this doc, on the same store instance
+    // the component will use, before mounting: the draft key is derived
+    // from owner/name/number, so setActivePR must be called first with
+    // the same identity the component mounts with.
+    stores.diff.setActivePR("local", "demo", 42);
+    stores.diff.addDraftComment({
+      path: docPath,
+      line: 1,
+      side: "RIGHT",
+      commitSha: WORKING_TREE_SENTINEL,
+      body: "x",
+    });
+
+    const navigateFn = vi.fn();
+    render(DocReviewSurface, {
+      props: {
+        owner: "local",
+        name: "demo",
+        number: 42,
+        path: docPath,
+        basePath: "/",
+      },
+      context: new Map<symbol, unknown>([
+        [STORES_KEY, stores],
+        [NAVIGATE_KEY, navigateFn],
+      ]),
+    });
+
+    const btn = screen.getByRole("button", { name: "Review (1)" }) as HTMLButtonElement;
+    expect(btn).toBeTruthy();
+    expect(btn.disabled).toBe(false);
+    expect(screen.queryByRole("dialog", { name: "Finish review" })).toBeNull();
+
+    await fireEvent.click(btn);
+
+    expect(screen.getByRole("dialog", { name: "Finish review" })).toBeTruthy();
   });
 });
