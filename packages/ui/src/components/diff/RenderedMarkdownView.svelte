@@ -64,6 +64,10 @@
     // set, relative markdown links are rewritten to open in the doc view.
     docHref?: (targetPath: string) => string;
     openDoc?: (targetPath: string, fragment?: string) => void;
+    // Source lines (1-based, RIGHT/new side) that differ from HEAD — i.e. not
+    // yet committed. When set, each rendered per-line anchor span whose line
+    // is a member gets a highlight class (see the dedicated $effect below).
+    uncommittedLines?: Set<number>;
   }
 
   const {
@@ -76,6 +80,7 @@
     commentLayout = "inline",
     docHref,
     openDoc,
+    uncommittedLines,
   }: Props = $props();
 
   const {
@@ -957,6 +962,23 @@
     };
   });
 
+  // Line-level uncommitted highlight: mark each source-line anchor span whose
+  // line is uncommitted (added/modified vs HEAD). Re-runs after (re)render
+  // (touch `doc`) and when the set changes. Independent of the block-level
+  // .rmd-changed (hunks) path above — that marks whole blocks from diff
+  // hunks; this marks individual .rmd-anchor spans from uncommittedLines.
+  $effect(() => {
+    if (!bodyEl) return;
+    const _ = doc; // re-run after the {@html} render replaces the spans
+    const lines = uncommittedLines;
+    const spans = bodyEl.querySelectorAll<HTMLElement>(".rmd-anchor[data-anchor-line]");
+    for (const span of spans) {
+      const n = Number(span.dataset.anchorLine);
+      if (lines && lines.has(n)) span.classList.add("rmd-uncommitted");
+      else span.classList.remove("rmd-uncommitted");
+    }
+  });
+
   // Re-runs whenever activeBlockIdx changes or the DOM layout changes
   // (e.g., after the card-injection $effect inserts .rmd-thread-wrap
   // nodes that shift block offsets). The open-composer functions above
@@ -1301,6 +1323,18 @@
   .rmd-body :global(.rmd-block--linked) {
     background: color-mix(in srgb, var(--text-muted) 12%, transparent);
     border-radius: 0 3px 3px 0;
+  }
+
+  /* Uncommitted-line highlight — applied imperatively (per-anchor-span, not
+     per-block) by the dedicated $effect above. THE one-spot visual-treatment
+     swap point: replace the background/border-radius below with e.g.
+     text-decoration:underline or a border-left to change the look — no
+     logic/test change needed. Distinct from .rmd-changed's green (that's the
+     block-level diff-hunk marker); green is reused here since both signal
+     "added/modified" content, just at different granularity. */
+  .rmd-body :global(.rmd-uncommitted) {
+    background: color-mix(in srgb, var(--accent-green) 16%, transparent);
+    border-radius: 2px;
   }
 
   /* Mermaid diagrams: the rendered SVG replaces the source <pre> after mount. */

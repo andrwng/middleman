@@ -1073,4 +1073,65 @@ describe("RenderedMarkdownView", () => {
     expect(anchors[0]?.getAttribute("data-anchor-line")).toBe("1");
     expect(anchors[1]?.getAttribute("data-anchor-line")).toBe("2");
   });
+
+  // Line-level uncommitted-text highlight (uncommittedLines prop). This is a
+  // distinct, line-level mechanism from the block-level .rmd-changed (hunks)
+  // marker exercised throughout the tests above; it marks per-source-line
+  // .rmd-anchor spans directly by line-number membership in the set.
+  //
+  // Fixture: "# Title\n\ncommitted para\n\nedited para\n" ->
+  // heading on source line 1, "committed para" on line 3, "edited para" on
+  // line 5 (verified against marked's lexer token boundaries).
+  const UNCOMMITTED_MD = "# Title\n\ncommitted para\n\nedited para\n";
+
+  it("(uncommitted) marks the uncommitted line's anchor span, leaving a committed line's span unmarked", async () => {
+    const stores = makeStores();
+    stores.diff.setActivePR("local", "demo", 1);
+
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ content: UNCOMMITTED_MD, truncated: false }),
+    }) as unknown as Response);
+
+    const { container } = render(RenderedMarkdownView, {
+      props: {
+        owner: "local",
+        name: "demo",
+        number: 1,
+        path: "doc.md",
+        sha: "abc",
+        hunks: [],
+        uncommittedLines: new Set([5]),
+      },
+      context: new Map([[STORES_KEY, stores]]),
+    });
+    await settle();
+
+    // "edited para" (line 5) is uncommitted -> marked.
+    const marked = container.querySelector('.rmd-anchor[data-anchor-line="5"]');
+    expect(marked?.classList.contains("rmd-uncommitted")).toBe(true);
+    // "committed para" (line 3) is not in the set -> not marked.
+    const other = container.querySelector('.rmd-anchor[data-anchor-line="3"]');
+    expect(other?.classList.contains("rmd-uncommitted")).toBe(false);
+  });
+
+  it("(uncommitted) with no uncommittedLines prop, no anchor span is marked", async () => {
+    const stores = makeStores();
+    stores.diff.setActivePR("local", "demo", 1);
+
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ content: UNCOMMITTED_MD, truncated: false }),
+    }) as unknown as Response);
+
+    // No uncommittedLines prop at all (default undefined).
+    const { container } = renderViewWithStores(stores);
+    await settle();
+
+    // Sanity: the anchors did render.
+    expect(container.querySelectorAll(".rmd-anchor").length).toBeGreaterThan(0);
+    expect(container.querySelector(".rmd-uncommitted")).toBeNull();
+  });
 });
