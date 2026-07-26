@@ -221,6 +221,44 @@ test("comment gutter: gutter container present and composer opens in gutter on h
   await expect(headingBlock).toHaveClass(/rmd-block--commented/);
 });
 
+test("comment gutter: a comment on an abutting block renders exactly one card", async ({ page }) => {
+  // The shared README fixture separates blocks with blank lines, so its blocks
+  // never abut. Serve, for this test only, a doc whose heading is directly
+  // followed by a paragraph with NO blank line between them — the two blocks
+  // abut at the boundary line. A comment on the heading used to be stored with
+  // the block's exclusive end line (== the paragraph's start line), so it
+  // matched BOTH blocks and rendered twice, once under each. It must render
+  // exactly once. (page.route added here wins LIFO over the mockApi blob route.)
+  await page.route(
+    `**/api/v1/repos/${LOCAL_OWNER}/${LOCAL_REPO}/pulls/${LOCAL_ID}/blob*`,
+    async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          content: "# Tight heading\nadjacent paragraph\n",
+          truncated: false,
+        }),
+      });
+    },
+  );
+  // Clear any leftover draft state from prior runs.
+  await page.addInitScript(() => {
+    for (const k of Object.keys(localStorage)) {
+      if (k.startsWith("diff-draft")) localStorage.removeItem(k);
+    }
+  });
+
+  await page.goto(docRoute);
+  await expect(page.locator(".rmd-body")).toContainText("Tight heading");
+
+  // Comment on the heading block (which abuts the paragraph) and save.
+  await seedHeadingDraft(page, "abutting-block probe");
+
+  // Exactly one gutter card — not duplicated across the two abutting blocks.
+  await expect(page.locator('[data-gutter-key^="block:"]')).toHaveCount(1);
+});
+
 test("comment gutter: hovering a card highlights its source block", async ({ page }) => {
   await page.addInitScript(() => {
     for (const k of Object.keys(localStorage)) {

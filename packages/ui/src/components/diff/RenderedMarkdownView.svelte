@@ -388,7 +388,13 @@
   }
 
   function openComposerForBlock(start: number, end: number): void {
-    rangeSnapshot = { startLine: start, endLine: end, side: renderedSide };
+    // (start, end) is the block's half-open [start, end) source-line range.
+    // The persisted anchor endLine must be the block's last real line
+    // (end - 1, inclusive), because anchorOverlapsBlock treats the anchor as
+    // inclusive — storing the raw exclusive end would make the anchor also
+    // match the next abutting block and double-render the card. The key and
+    // findBlockIdx below intentionally keep the raw half-open end.
+    rangeSnapshot = { startLine: start, endLine: end - 1, side: renderedSide };
     openComposerKey = `${end}:${renderedSide}`;
     activeBlockIdx = findBlockIdx(start, end);
     // Compute composerTop synchronously so the composer renders already
@@ -422,7 +428,9 @@
   let askSubmitting = $state(false);
 
   function openAskForBlock(start: number, end: number): void {
-    rangeSnapshot = { startLine: start, endLine: end, side: renderedSide };
+    // Half-open [start, end) -> inclusive anchor endLine (end - 1); see
+    // openComposerForBlock for why the raw exclusive end would double-match.
+    rangeSnapshot = { startLine: start, endLine: end - 1, side: renderedSide };
     openAskKey = `${end}:${renderedSide}`;
     askError = null;
     activeBlockIdx = findBlockIdx(start, end);
@@ -770,6 +778,14 @@
 
     const newGutterEntries: GutterEntry[] = [];
 
+    // A card whose anchor spans a block boundary — or was persisted by the old
+    // off-by-one write path (endLine == the next block's start) — can match
+    // more than one block. Render each card only in the FIRST block it matches;
+    // because blocks are walked in source order, that is its start block. This
+    // keeps a card from appearing twice in the gutter/inline column and also
+    // heals rows already stored with the boundary anchor.
+    const seenCardKeys = new Set<string>();
+
     const children = Array.from(bodyEl.children) as HTMLElement[];
     for (let i = 0; i < children.length; i++) {
       const el = children[i]!;
@@ -814,7 +830,11 @@
       actions.appendChild(askBtn);
       el.appendChild(actions);
 
-      const cards = cardsForRange(blockStart, blockEnd);
+      const cards = cardsForRange(blockStart, blockEnd).filter((c) => {
+        if (seenCardKeys.has(c.key)) return false;
+        seenCardKeys.add(c.key);
+        return true;
+      });
 
       if (useGutter) {
         // Gutter mode: mark blocks that have cards (colored by kind — blue for
