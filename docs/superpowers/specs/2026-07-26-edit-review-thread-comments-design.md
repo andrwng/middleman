@@ -75,9 +75,14 @@ could mislead).
   `author = 'user'` guard is enforced in SQL so an agent comment can never be
   edited even if the id is valid.
 
-### 2. Server — `PATCH .../review-threads/{thread_id}/comments/{comment_id}`
+### 2. Server — `POST .../review-threads/{thread_id}/comments/{comment_id}/edit`
 
-- Register `huma.Patch(api, "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/comments/{comment_id}", s.editReviewThreadComment)`.
+- Register `huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/comments/{comment_id}/edit", s.editReviewThreadComment)`.
+  POST (not PATCH) keeps the edit consistent with the existing all-POST mutation
+  routes (`resolve`/`hide`/`ask`/`apply` are all `POST …/{thread_id}/{action}`);
+  no new REST verb enters the API. The edit still persists server-side — the
+  comment lives in SQLite — but that server touch is one small POST handler; the
+  substance of the feature is the card UI.
 - Input: path `{owner, name, number, thread_id, comment_id}` + body `{ body string }`.
 - Handler `editReviewThreadComment`:
   1. Resolve the MR (same owner/name/number → id path the other handlers use).
@@ -104,7 +109,7 @@ async function editComment(
 ): Promise<boolean>
 ```
 
-Mirrors `addComment`: `client.PATCH(".../comments/{comment_id}", { params:{ path:{ owner, name, number, thread_id: threadID, comment_id: commentID } }, body:{ body } })`;
+Mirrors `addComment`: `client.POST(".../comments/{comment_id}/edit", { params:{ path:{ owner, name, number, thread_id: threadID, comment_id: commentID } }, body:{ body } })`;
 on success `upsert(data)` (the returned updated thread) and return `true`; on
 error set `error` and return `false`. Export it from the store object.
 
@@ -147,7 +152,7 @@ error set `error` and return `false`. Export it from the store object.
 
 1. Reviewer clicks Edit on their comment → card enters edit mode for that
    `c.id`, textarea prefilled with `c.body`.
-2. Save → `editComment(threadID, commentID, text)` → `PATCH …/comments/{id}`.
+2. Save → `editComment(threadID, commentID, text)` → `POST …/comments/{id}/edit`.
 3. Server validates (non-empty, user-authored) → `UpdateReviewThreadComment`
    sets `body` + `edited_at` → returns the updated thread.
 4. Store `upsert`s the thread → the card re-renders the comment with the new
@@ -185,7 +190,7 @@ error set `error` and return `false`. Export it from the store object.
   by `c.id`); `upsert` only refreshes the rendered bodies of comments not in edit
   mode.
 - **Comment deleted out from under an open editor** (thread deleted) → the card
-  unmounts; the pending PATCH, if any, resolves to an error handled fail-soft.
+  unmounts; the pending edit request, if any, resolves to an error handled fail-soft.
 - **Markdown body** → same `renderMarkdown` path as today once collapsed.
 
 ## Testing
@@ -194,11 +199,11 @@ error set `error` and return `false`. Export it from the store object.
   `body` + a non-null `edited_at`; updating a non-existent id or an `agent`
   comment updates 0 rows / returns the not-found sentinel; `ListReviewThreadComments`
   round-trips `edited_at`.
-- **Server e2e** (generated client, real SQLite): PATCH a user comment → 200,
-  body changed, `edited_at` populated in the returned thread; PATCH an agent
-  comment → 404, body unchanged; PATCH empty body → 422; PATCH unknown
+- **Server e2e** (generated client, real SQLite): edit a user comment → 200,
+  body changed, `edited_at` populated in the returned thread; edit an agent
+  comment → 404, body unchanged; edit with an empty body → 422; edit an unknown
   comment_id → 404.
-- **Store** (vitest): `editComment` PATCHes and `upsert`s the returned thread on
+- **Store** (vitest): `editComment` POSTs the edit and `upsert`s the returned thread on
   success; sets `error` and returns `false` on failure.
 - **Card** (vitest): Edit affordance shows only on `author === "user"` comments;
   entering edit mode prefills the textarea; Save calls `editComment` and renders
@@ -206,7 +211,7 @@ error set `error` and return `false`. Export it from the store object.
   unchanged.
 - **Playwright** (extend `worktree-doc-review.spec.ts`): create/persist a review
   thread in the gutter, edit its comment, assert the body updates and "(edited)"
-  appears; the mock review-threads store must honor the PATCH.
+  appears; the mock review-threads store must honor the edit POST.
 - **Green bars:** `go test ./... -short`, `make frontend-check` 0/0, vitest,
   doc-review e2e.
 
