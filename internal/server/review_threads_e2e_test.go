@@ -352,7 +352,10 @@ func TestAPIReviewThreadCommentEdit(t *testing.T) {
 	createResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(
 		ctx, "local", "demo", num,
 		generated.CreateReviewThreadsInputBody{
-			Threads: &[]generated.ReviewThreadDraft{{Path: "a.go", Side: "RIGHT", Line: 12, CommitSha: "abc", Body: "original"}},
+			Threads: &[]generated.ReviewThreadDraft{
+				{Path: "a.go", Side: "RIGHT", Line: 12, CommitSha: "abc", Body: "original"},
+				{Path: "b.go", Side: "RIGHT", Line: 5, CommitSha: "abc", Body: "other thread root"},
+			},
 		},
 	)
 	require.NoError(err)
@@ -360,12 +363,19 @@ func TestAPIReviewThreadCommentEdit(t *testing.T) {
 	require.NotNil(createResp.JSON200)
 	require.NotNil(createResp.JSON200.Threads)
 	created := *createResp.JSON200.Threads
-	require.Len(created, 1)
+	require.Len(created, 2)
 	threadID := created[0].Id
 	require.NotNil(created[0].Comments)
 	require.Len(*created[0].Comments, 1)
 	userCommentID := (*created[0].Comments)[0].Id
 	assert.Nil((*created[0].Comments)[0].EditedAt, "a freshly created comment has no edited_at")
+
+	// A second thread on the same MR, used below to prove a comment_id from
+	// a different thread is rejected even though it's a valid user comment.
+	threadBID := created[1].Id
+	require.NotNil(created[1].Comments)
+	require.Len(*created[1].Comments, 1)
+	commentFromThreadB := (*created[1].Comments)[0].Id
 
 	// Reply as the agent so we have a non-editable comment to test against.
 	agent := "agent"
@@ -442,6 +452,34 @@ func TestAPIReviewThreadCommentEdit(t *testing.T) {
 	)
 	require.NoError(err)
 	assert.Equal(http.StatusNotFound, unknownResp.StatusCode())
+
+	// A valid user comment_id that belongs to a DIFFERENT thread is rejected:
+	// pairing threadID (thread A) with commentFromThreadB must 404, not edit
+	// the other thread's comment.
+	wrongThreadResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsByThreadIdCommentsByCommentIdEditWithResponse(
+		ctx, "local", "demo", num, threadID, commentFromThreadB,
+		generated.EditReviewThreadCommentInputBody{Body: "hijack via wrong thread"},
+	)
+	require.NoError(err)
+	assert.Equal(http.StatusNotFound, wrongThreadResp.StatusCode())
+
+	// Thread B's comment body must be unchanged.
+	listResp2, err := client.HTTP.GetReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(ctx, "local", "demo", num)
+	require.NoError(err)
+	require.Equal(http.StatusOK, listResp2.StatusCode())
+	require.NotNil(listResp2.JSON200.Threads)
+	var threadBBody string
+	for _, th := range *listResp2.JSON200.Threads {
+		if th.Id != threadBID || th.Comments == nil {
+			continue
+		}
+		for _, c := range *th.Comments {
+			if c.Id == commentFromThreadB {
+				threadBBody = c.Body
+			}
+		}
+	}
+	assert.Equal("other thread root", threadBBody)
 }
 
 // TestAPIReviewThreadAskEngagesAgentAndMarksComment verifies the /ask

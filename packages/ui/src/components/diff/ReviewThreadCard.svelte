@@ -210,7 +210,7 @@
               <button
                 type="button"
                 class="review-thread__send"
-                disabled={savingEdit || !editText.trim() || editText.trim() === c.body}
+                disabled={savingEdit || !editText.trim() || editText.trim() === c.body.trim()}
                 onclick={() => void saveEdit(c.id)}
               >Save</button>
               <button

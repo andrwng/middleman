@@ -380,7 +380,7 @@ func TestUpdateReviewThreadComment(t *testing.T) {
 	userCommentID := seeded[0].ID
 
 	// --- edit the user comment ---
-	updated, err := d.UpdateReviewThreadComment(ctx, userCommentID, "edited body")
+	updated, err := d.UpdateReviewThreadComment(ctx, threadID, userCommentID, "edited body")
 	require.NoError(t, err)
 	assert.Equal("edited body", updated.Body)
 	assert.NotNil(updated.EditedAt)
@@ -399,13 +399,31 @@ func TestUpdateReviewThreadComment(t *testing.T) {
 	}
 
 	// --- agent comments are not editable ---
-	_, err = d.UpdateReviewThreadComment(ctx, agent.ID, "hijack")
+	_, err = d.UpdateReviewThreadComment(ctx, threadID, agent.ID, "hijack")
 	assert.ErrorIs(err, ErrReviewThreadCommentNotEditable)
 	got, err := d.getReviewThreadComment(ctx, agent.ID)
 	require.NoError(t, err)
 	assert.Equal("agent body", got.Body)
 
+	// --- wrong-thread scoping: a valid user comment_id from a DIFFERENT
+	// thread must not match threadA, even though it passes author='user' ---
+	threadsB, err := d.CreateReviewThreads(ctx, mrID, []NewReviewThread{
+		{Path: "b.go", Side: "RIGHT", Line: 2, CommitSHA: "abc", Body: "root b"},
+	})
+	require.NoError(t, err)
+	threadBID := threadsB[0].ID
+	seededB, err := d.ListReviewThreadComments(ctx, threadBID)
+	require.NoError(t, err)
+	require.Len(t, seededB, 1)
+	commentB := seededB[0]
+
+	_, err = d.UpdateReviewThreadComment(ctx, threadID, commentB.ID, "hijack via wrong thread")
+	require.ErrorIs(t, err, ErrReviewThreadCommentNotEditable)
+	gotB, err := d.getReviewThreadComment(ctx, commentB.ID)
+	require.NoError(t, err)
+	assert.Equal("root b", gotB.Body)
+
 	// --- unknown id ---
-	_, err = d.UpdateReviewThreadComment(ctx, 999999, "nope")
+	_, err = d.UpdateReviewThreadComment(ctx, threadID, 999999, "nope")
 	assert.ErrorIs(err, ErrReviewThreadCommentNotEditable)
 }

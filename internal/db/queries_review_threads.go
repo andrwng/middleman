@@ -262,13 +262,15 @@ func (d *DB) AddReviewThreadComment(ctx context.Context, threadID int64, author,
 var ErrReviewThreadCommentNotEditable = errors.New("review thread comment not found or not editable")
 
 // UpdateReviewThreadComment rewrites a user comment's body and stamps edited_at.
-// Only author='user' rows are editable; agent replies are read-only, so a mismatch
-// updates zero rows and returns ErrReviewThreadCommentNotEditable.
-func (d *DB) UpdateReviewThreadComment(ctx context.Context, commentID int64, newBody string) (ReviewThreadComment, error) {
+// Scoped to both commentID and threadID so a comment_id belonging to a
+// different thread never matches, even if it's a valid user comment; only
+// author='user' rows are editable, so an agent reply is read-only too. Either
+// mismatch updates zero rows and returns ErrReviewThreadCommentNotEditable.
+func (d *DB) UpdateReviewThreadComment(ctx context.Context, threadID int64, commentID int64, newBody string) (ReviewThreadComment, error) {
 	res, err := d.rw.ExecContext(ctx, `
 		UPDATE middleman_review_thread_comments
 		   SET body = ?, edited_at = datetime('now')
-		 WHERE id = ? AND author = 'user'`, newBody, commentID)
+		 WHERE id = ? AND thread_id = ? AND author = 'user'`, newBody, commentID, threadID)
 	if err != nil {
 		return ReviewThreadComment{}, fmt.Errorf("update comment: %w", err)
 	}

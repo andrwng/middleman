@@ -402,7 +402,7 @@ func (s *Server) editReviewThreadComment(ctx context.Context, input *editReviewT
 	if _, err := s.resolveThreadForMR(ctx, input.Owner, input.Name, input.Number, input.ThreadID); err != nil {
 		return nil, err
 	}
-	if _, err := s.db.UpdateReviewThreadComment(ctx, input.CommentID, input.Body.Body); err != nil {
+	if _, err := s.db.UpdateReviewThreadComment(ctx, input.ThreadID, input.CommentID, input.Body.Body); err != nil {
 		if errors.Is(err, db.ErrReviewThreadCommentNotEditable) {
 			return nil, huma.Error404NotFound("no editable comment with that id")
 		}
