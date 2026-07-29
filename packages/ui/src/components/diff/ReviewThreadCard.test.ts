@@ -59,6 +59,21 @@ describe("ReviewThreadCard", () => {
     expect(queryByText("rename this")).toBeNull(); // body not shown while hidden
   });
 
+  it("the hidden stub shows the thread status (resolved)", () => {
+    const { getByText } = render(ReviewThreadCard, {
+      props: { thread: thread({ hidden: true, status: "resolved" }) },
+    });
+    expect(getByText(/hidden/i)).toBeTruthy();
+    expect(getByText("resolved")).toBeTruthy();
+  });
+
+  it("the hidden stub reflects a still-open thread's status", () => {
+    const { getByText } = render(ReviewThreadCard, {
+      props: { thread: thread({ hidden: true, status: "open" }) },
+    });
+    expect(getByText("open")).toBeTruthy();
+  });
+
   it("shows Apply for open/discussed threads and calls the store", async () => {
     const { getByTitle } = render(ReviewThreadCard, { props: { thread: thread({ status: "discussed" }) } });
     await fireEvent.click(getByTitle("Apply this thread's change"));

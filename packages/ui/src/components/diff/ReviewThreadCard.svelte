@@ -120,6 +120,7 @@
 {#if thread.hidden}
   <div class="review-thread review-thread--hidden" class:review-thread--gutter={variant === "gutter"}>
     <span class="review-thread__hidden-label">Hidden thread</span>
+    <span class="review-thread__status">{thread.status}</span>
     <button
       type="button"
       class="review-thread__unhide"
