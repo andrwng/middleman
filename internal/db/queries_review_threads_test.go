@@ -400,7 +400,7 @@ func TestUpdateReviewThreadComment(t *testing.T) {
 
 	// --- agent comments are not editable ---
 	_, err = d.UpdateReviewThreadComment(ctx, threadID, agent.ID, "hijack")
-	assert.ErrorIs(err, ErrReviewThreadCommentNotEditable)
+	require.ErrorIs(t, err, ErrReviewThreadCommentNotEditable)
 	got, err := d.getReviewThreadComment(ctx, agent.ID)
 	require.NoError(t, err)
 	assert.Equal("agent body", got.Body)
