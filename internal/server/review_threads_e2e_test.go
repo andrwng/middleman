@@ -337,6 +337,113 @@ func TestAPIReviewThreadDelete(t *testing.T) {
 	require.Equal(http.StatusNotFound, delAgain.StatusCode())
 }
 
+// TestAPIReviewThreadCommentEdit verifies the .../comments/{comment_id}/edit
+// sub-action: a reviewer can rewrite their own comment's body (stamping
+// edited_at), while an agent comment, an empty body, and an unknown comment
+// id are all rejected.
+func TestAPIReviewThreadCommentEdit(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+	srv, database := setupTestServer(t)
+	client := setupTestClient(t, srv)
+	ctx := context.Background()
+	num := seedReviewWorktree(t, database)
+
+	createResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(
+		ctx, "local", "demo", num,
+		generated.CreateReviewThreadsInputBody{
+			Threads: &[]generated.ReviewThreadDraft{{Path: "a.go", Side: "RIGHT", Line: 12, CommitSha: "abc", Body: "original"}},
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, createResp.StatusCode())
+	require.NotNil(createResp.JSON200)
+	require.NotNil(createResp.JSON200.Threads)
+	created := *createResp.JSON200.Threads
+	require.Len(created, 1)
+	threadID := created[0].Id
+	require.NotNil(created[0].Comments)
+	require.Len(*created[0].Comments, 1)
+	userCommentID := (*created[0].Comments)[0].Id
+	assert.Nil((*created[0].Comments)[0].EditedAt, "a freshly created comment has no edited_at")
+
+	// Reply as the agent so we have a non-editable comment to test against.
+	agent := "agent"
+	replyResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsByThreadIdCommentsWithResponse(
+		ctx, "local", "demo", num, threadID,
+		generated.AddReviewThreadCommentInputBody{Body: "agent reply", Author: &agent},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, replyResp.StatusCode())
+	require.NotNil(replyResp.JSON200.Comments)
+	require.Len(*replyResp.JSON200.Comments, 2)
+	agentCommentID := (*replyResp.JSON200.Comments)[1].Id
+
+	// --- happy path: edit the user's own comment ---
+	editResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsByThreadIdCommentsByCommentIdEditWithResponse(
+		ctx, "local", "demo", num, threadID, userCommentID,
+		generated.EditReviewThreadCommentInputBody{Body: "reworded"},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, editResp.StatusCode())
+	require.NotNil(editResp.JSON200)
+	require.NotNil(editResp.JSON200.Comments)
+	var edited *generated.ReviewThreadCommentResponse
+	for i, c := range *editResp.JSON200.Comments {
+		if c.Id == userCommentID {
+			edited = &(*editResp.JSON200.Comments)[i]
+		}
+	}
+	require.NotNil(edited, "edited comment should still be present in the reloaded thread")
+	assert.Equal("reworded", edited.Body)
+	require.NotNil(edited.EditedAt)
+	assert.NotEmpty(*edited.EditedAt)
+
+	// --- rejections ---
+
+	// Editing an agent comment is not allowed (read-only).
+	agentEditResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsByThreadIdCommentsByCommentIdEditWithResponse(
+		ctx, "local", "demo", num, threadID, agentCommentID,
+		generated.EditReviewThreadCommentInputBody{Body: "x"},
+	)
+	require.NoError(err)
+	assert.Equal(http.StatusNotFound, agentEditResp.StatusCode())
+
+	// The agent comment's body must be unchanged.
+	listResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(ctx, "local", "demo", num)
+	require.NoError(err)
+	require.Equal(http.StatusOK, listResp.StatusCode())
+	require.NotNil(listResp.JSON200.Threads)
+	var agentBody string
+	for _, th := range *listResp.JSON200.Threads {
+		if th.Id != threadID || th.Comments == nil {
+			continue
+		}
+		for _, c := range *th.Comments {
+			if c.Id == agentCommentID {
+				agentBody = c.Body
+			}
+		}
+	}
+	assert.Equal("agent reply", agentBody)
+
+	// Empty/whitespace-only body is rejected.
+	emptyResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsByThreadIdCommentsByCommentIdEditWithResponse(
+		ctx, "local", "demo", num, threadID, userCommentID,
+		generated.EditReviewThreadCommentInputBody{Body: "   "},
+	)
+	require.NoError(err)
+	assert.Equal(http.StatusUnprocessableEntity, emptyResp.StatusCode())
+
+	// Unknown comment id is rejected.
+	unknownResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsByThreadIdCommentsByCommentIdEditWithResponse(
+		ctx, "local", "demo", num, threadID, 999999,
+		generated.EditReviewThreadCommentInputBody{Body: "x"},
+	)
+	require.NoError(err)
+	assert.Equal(http.StatusNotFound, unknownResp.StatusCode())
+}
+
 // TestAPIReviewThreadAskEngagesAgentAndMarksComment verifies the /ask
 // endpoint persists the reviewer's comment, kicks off a steer turn, and
 // marks the persisted comment sent_to_agent.

@@ -802,6 +802,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/comments/{comment_id}/edit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post repos by owner by name pulls by number review threads by thread ID comments by comment ID edit */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-review-threads-by-thread-id-comments-by-comment-id-edit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/discuss": {
         parameters: {
             query?: never;
@@ -1697,6 +1714,15 @@ export interface components {
             body?: string;
             title?: string;
         };
+        EditReviewThreadCommentInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/EditReviewThreadCommentInputBody.json
+             */
+            readonly $schema?: string;
+            body: string;
+        };
         ErrorDetail: {
             /** @description Where the error occurred, e.g. 'body.items[3].tags' or 'path.thing-id' */
             location?: string;
@@ -2321,6 +2347,8 @@ export interface components {
             body: string;
             /** @description UTC RFC3339 timestamp */
             created_at: string;
+            /** @description UTC RFC3339 timestamp; set when the comment was edited */
+            edited_at?: string;
             /** Format: int64 */
             id: number;
             /** @description true if this comment was sent to the agent (an Ask) */
@@ -4657,6 +4685,45 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AddReviewThreadCommentInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewThreadResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-review-threads-by-thread-id-comments-by-comment-id-edit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+                thread_id: number;
+                comment_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditReviewThreadCommentInputBody"];
             };
         };
         responses: {

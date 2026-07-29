@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -20,11 +21,12 @@ import (
 // synthetic merge request.
 
 type reviewThreadCommentResponse struct {
-	ID          int64  `json:"id"`
-	Author      string `json:"author" doc:"user | agent"`
-	Body        string `json:"body"`
-	SentToAgent bool   `json:"sent_to_agent" doc:"true if this comment was sent to the agent (an Ask)"`
-	CreatedAt   string `json:"created_at" doc:"UTC RFC3339 timestamp"`
+	ID          int64   `json:"id"`
+	Author      string  `json:"author" doc:"user | agent"`
+	Body        string  `json:"body"`
+	SentToAgent bool    `json:"sent_to_agent" doc:"true if this comment was sent to the agent (an Ask)"`
+	CreatedAt   string  `json:"created_at" doc:"UTC RFC3339 timestamp"`
+	EditedAt    *string `json:"edited_at,omitempty" doc:"UTC RFC3339 timestamp; set when the comment was edited"`
 }
 
 type reviewThreadResponse struct {
@@ -103,6 +105,17 @@ type addReviewThreadCommentInput struct {
 	}
 }
 
+type editReviewThreadCommentInput struct {
+	Owner     string `path:"owner"`
+	Name      string `path:"name"`
+	Number    int    `path:"number"`
+	ThreadID  int64  `path:"thread_id"`
+	CommentID int64  `path:"comment_id"`
+	Body      struct {
+		Body string `json:"body"`
+	}
+}
+
 type askReviewThreadInput struct {
 	Owner    string `path:"owner"`
 	Name     string `path:"name"`
@@ -128,6 +141,7 @@ func (s *Server) registerReviewThreadRoutes(api huma.API) {
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/review-threads", s.listReviewThreads)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review-threads", s.createReviewThreads)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/comments", s.addReviewThreadComment)
+	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/comments/{comment_id}/edit", s.editReviewThreadComment)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/ask", s.askReviewThread)
 	huma.Delete(api, "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}", s.deleteReviewThread)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/hide", s.hideLocalReviewThread)
@@ -152,19 +166,31 @@ func (s *Server) loadReviewThreadsResponse(ctx context.Context, mrID int64, bran
 	}
 	byThread := map[int64][]reviewThreadCommentResponse{}
 	for _, c := range comments {
-		byThread[c.ThreadID] = append(byThread[c.ThreadID], reviewThreadCommentResponse{
-			ID:          c.ID,
-			Author:      c.Author,
-			Body:        c.Body,
-			SentToAgent: c.SentToAgent,
-			CreatedAt:   c.CreatedAt.UTC().Format(time.RFC3339),
-		})
+		byThread[c.ThreadID] = append(byThread[c.ThreadID], toReviewThreadCommentResponse(c))
 	}
 	out := make([]reviewThreadResponse, 0, len(threads))
 	for _, t := range threads {
 		out = append(out, toReviewThreadResponse(t, byThread[t.ID]))
 	}
 	return out, nil
+}
+
+// toReviewThreadCommentResponse maps a DB comment row to its API response
+// shape. Shared by loadReviewThreadsResponse and oneReviewThreadOutput so
+// the edited_at mapping lives in one place.
+func toReviewThreadCommentResponse(c db.ReviewThreadComment) reviewThreadCommentResponse {
+	r := reviewThreadCommentResponse{
+		ID:          c.ID,
+		Author:      c.Author,
+		Body:        c.Body,
+		SentToAgent: c.SentToAgent,
+		CreatedAt:   c.CreatedAt.UTC().Format(time.RFC3339),
+	}
+	if c.EditedAt != nil {
+		s := c.EditedAt.UTC().Format(time.RFC3339)
+		r.EditedAt = &s
+	}
+	return r
 }
 
 func toReviewThreadResponse(t db.ReviewThread, comments []reviewThreadCommentResponse) reviewThreadResponse {
@@ -363,6 +389,28 @@ func (s *Server) addReviewThreadComment(ctx context.Context, input *addReviewThr
 	return s.oneReviewThreadOutput(ctx, input.ThreadID)
 }
 
+// editReviewThreadComment rewrites the body of one of the reviewer's own comments
+// and marks it edited. User comments only — agent replies are read-only (enforced
+// in SQL); editing does not re-send the comment to the agent.
+func (s *Server) editReviewThreadComment(ctx context.Context, input *editReviewThreadCommentInput) (*reviewThreadOutput, error) {
+	if !isLocalSource(input.Owner) {
+		return nil, huma.Error400BadRequest("review threads are local-worktree only")
+	}
+	if strings.TrimSpace(input.Body.Body) == "" {
+		return nil, huma.Error422UnprocessableEntity("comment body is required")
+	}
+	if _, err := s.resolveThreadForMR(ctx, input.Owner, input.Name, input.Number, input.ThreadID); err != nil {
+		return nil, err
+	}
+	if _, err := s.db.UpdateReviewThreadComment(ctx, input.CommentID, input.Body.Body); err != nil {
+		if errors.Is(err, db.ErrReviewThreadCommentNotEditable) {
+			return nil, huma.Error404NotFound("no editable comment with that id")
+		}
+		return nil, huma.Error500InternalServerError("edit comment: " + err.Error())
+	}
+	return s.oneReviewThreadOutput(ctx, input.ThreadID)
+}
+
 // askReviewThread persists the reviewer's comment, then enqueues a
 // read-only steer turn via the per-session FIFO. The comment is always
 // persisted and marked sent_to_agent once the turn is enqueued; the
@@ -483,13 +531,7 @@ func (s *Server) oneReviewThreadOutput(ctx context.Context, threadID int64) (*re
 	}
 	comments := make([]reviewThreadCommentResponse, 0, len(dbComments))
 	for _, c := range dbComments {
-		comments = append(comments, reviewThreadCommentResponse{
-			ID:          c.ID,
-			Author:      c.Author,
-			Body:        c.Body,
-			SentToAgent: c.SentToAgent,
-			CreatedAt:   c.CreatedAt.UTC().Format(time.RFC3339),
-		})
+		comments = append(comments, toReviewThreadCommentResponse(c))
 	}
 	out := &reviewThreadOutput{Body: toReviewThreadResponse(th, comments)}
 	return out, nil
