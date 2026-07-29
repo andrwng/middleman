@@ -446,6 +446,57 @@ test("doc review: save-only submit persists a thread and renders it in the gutte
   await expect(card.locator(".review-thread__badge")).toHaveText("Review");
 });
 
+test("doc review: editing a persisted comment updates its body and shows an (edited) marker", async ({ page }) => {
+  await page.addInitScript(() => {
+    for (const k of Object.keys(localStorage)) {
+      if (k.startsWith("diff-draft")) localStorage.removeItem(k);
+    }
+  });
+
+  await page.goto(docRoute);
+  await expect(page.locator(".rmd-body")).toContainText("Hello");
+
+  // Persist a thread whose root comment is authored by the user, via the
+  // same save-only submit flow as the test above.
+  await seedHeadingDraft(page, "does this still hold?");
+  const reviewBtn = page.getByRole("button", { name: /^Review \(\d+\)$/ });
+  await expect(reviewBtn).toHaveText("Review (1)");
+  await reviewBtn.click();
+
+  const panel = page.locator('[role="dialog"][aria-label="Finish review"]');
+  await expect(panel).toBeVisible();
+  await panel.locator(".panel__agent input[type=checkbox]").uncheck();
+  await panel.getByRole("button", { name: "Create review threads" }).click();
+  await expect(panel).toHaveCount(0);
+
+  const card = page.locator(".comment-gutter .review-thread");
+  await expect(card).toHaveCount(1);
+  await expect(card).toContainText("does this still hold?");
+
+  // Scope to the comment itself — the thread also renders a reply
+  // composer below the comment list that shares the `.review-thread__send`
+  // / `.review-thread__reply-input` classes with the edit controls.
+  const commentEl = card.locator(".review-thread__comment").first();
+  await expect(commentEl.locator(".review-thread__edited")).toHaveCount(0);
+
+  // Click Edit on the comment, change its text, and Save.
+  await commentEl.locator(".review-thread__edit-btn").click();
+  const editBox = commentEl.locator(".review-thread__reply-input");
+  await expect(editBox).toHaveValue("does this still hold?");
+  await editBox.fill("this no longer holds");
+
+  const saveBtn = commentEl.locator(".review-thread__send");
+  await expect(saveBtn).toBeEnabled();
+  await saveBtn.click();
+
+  // Edit mode exits, the rendered body reflects the new text, and the
+  // (edited) marker is now visible on this comment.
+  await expect(commentEl.locator(".review-thread__reply-input")).toHaveCount(0);
+  await expect(card).toContainText("this no longer holds");
+  await expect(card).not.toContainText("does this still hold?");
+  await expect(commentEl.locator(".review-thread__edited")).toBeVisible();
+});
+
 test("doc review: apply submit sends act-immediately and still renders the thread", async ({ page }) => {
   await page.addInitScript(() => {
     for (const k of Object.keys(localStorage)) {
