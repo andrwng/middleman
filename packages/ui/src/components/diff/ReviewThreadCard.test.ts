@@ -74,6 +74,30 @@ describe("ReviewThreadCard", () => {
     expect(getByText("open")).toBeTruthy();
   });
 
+  it("deletes a hidden thread from the stub after a confirm click", async () => {
+    const { getByText, getByTitle } = render(ReviewThreadCard, {
+      props: { thread: thread({ hidden: true }) },
+    });
+    const del = getByTitle("Delete this thread permanently");
+    await fireEvent.click(del);
+    expect(deleteThread).not.toHaveBeenCalled();
+    expect(getByText("Confirm?")).toBeTruthy();
+    await fireEvent.click(del);
+    expect(deleteThread).toHaveBeenCalledWith(5);
+  });
+
+  it("Show clears a pending delete confirm on the hidden stub", async () => {
+    const { getByText, getByTitle, queryByText } = render(ReviewThreadCard, {
+      props: { thread: thread({ hidden: true }) },
+    });
+    await fireEvent.click(getByTitle("Delete this thread permanently"));
+    expect(getByText("Confirm?")).toBeTruthy();
+    await fireEvent.click(getByText("Show"));
+    expect(queryByText("Confirm?")).toBeNull();
+    expect(getByText("Delete")).toBeTruthy();
+    expect(deleteThread).not.toHaveBeenCalled();
+  });
+
   it("shows Apply for open/discussed threads and calls the store", async () => {
     const { getByTitle } = render(ReviewThreadCard, { props: { thread: thread({ status: "discussed" }) } });
     await fireEvent.click(getByTitle("Apply this thread's change"));

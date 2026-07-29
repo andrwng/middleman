@@ -124,8 +124,17 @@
     <button
       type="button"
       class="review-thread__unhide"
-      onclick={() => void reviewThreads.unhide(thread.id)}
+      onclick={() => {
+        confirmingDelete = false;
+        void reviewThreads.unhide(thread.id);
+      }}
     >Show</button>
+    <button
+      type="button"
+      class="review-thread__unhide review-thread__unhide--delete"
+      title="Delete this thread permanently"
+      onclick={() => void onDelete()}
+    >{confirmingDelete ? "Confirm?" : "Delete"}</button>
   </div>
 {:else}
   <div class="review-thread" class:review-thread--gutter={variant === "gutter"}>
@@ -297,6 +306,11 @@
   .review-thread__unhide:hover {
     background: var(--bg-surface-hover);
     color: var(--text-primary);
+  }
+
+  .review-thread__unhide--delete:hover {
+    color: var(--accent-red);
+    border-color: var(--accent-red);
   }
 
   .review-thread__header {
