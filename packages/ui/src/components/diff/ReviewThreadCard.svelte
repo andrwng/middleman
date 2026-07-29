@@ -19,6 +19,30 @@
   let confirmingDelete = $state(false);
   const canApply = $derived(thread.status === "open" || thread.status === "discussed");
 
+  let editingId = $state<number | null>(null);
+  let editText = $state("");
+  let savingEdit = $state(false);
+
+  function startEdit(c: { id: number; body: string }): void {
+    editingId = c.id;
+    editText = c.body;
+  }
+  function cancelEdit(): void {
+    editingId = null;
+    editText = "";
+  }
+  async function saveEdit(commentId: number): Promise<void> {
+    const text = editText.trim();
+    if (!text || savingEdit) return;
+    savingEdit = true;
+    try {
+      const ok = await reviewThreads.editComment(thread.id, commentId, text);
+      if (ok) { editingId = null; editText = ""; }
+    } finally {
+      savingEdit = false;
+    }
+  }
+
   // "asking…" feedback: a Discuss turn carries no message comment to
   // badge (unlike Ask Claude), so surface an in-thread indicator from the
   // moment Discuss is pressed until the agent's reply lands (or the turn
@@ -163,10 +187,44 @@
           {#if c.author === "user" && c.sent_to_agent}
             <span class="review-thread__sent-badge" title="Sent to Claude">asked</span>
           {/if}
+          {#if c.edited_at}
+            <span class="review-thread__edited" title="Edited after posting">(edited)</span>
+          {/if}
+          {#if c.author === "user" && editingId !== c.id}
+            <button
+              type="button"
+              class="review-thread__edit-btn"
+              title="Edit this comment"
+              onclick={() => startEdit(c)}
+            >Edit</button>
+          {/if}
         </span>
-        <div class="review-thread__body markdown-body">
-          {@html renderMarkdown(c.body, undefined)}
-        </div>
+        {#if editingId === c.id}
+          <div class="review-thread__edit">
+            <textarea
+              bind:value={editText}
+              class="review-thread__reply-input"
+              rows="2"
+            ></textarea>
+            <div class="review-thread__edit-actions">
+              <button
+                type="button"
+                class="review-thread__send"
+                disabled={savingEdit || !editText.trim() || editText.trim() === c.body}
+                onclick={() => void saveEdit(c.id)}
+              >Save</button>
+              <button
+                type="button"
+                class="review-thread__action"
+                onclick={cancelEdit}
+              >Cancel</button>
+            </div>
+          </div>
+        {:else}
+          <div class="review-thread__body markdown-body">
+            {@html renderMarkdown(c.body, undefined)}
+          </div>
+        {/if}
       </div>
     {/each}
 
@@ -386,6 +444,40 @@
   .review-thread__ask {
     border-color: var(--accent-amber);
     background: var(--accent-amber);
+  }
+
+  .review-thread__edited {
+    display: inline-block;
+    margin-left: 6px;
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+  }
+
+  .review-thread__edit-btn {
+    margin-left: 6px;
+    font-size: 10px;
+    padding: 0 6px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-muted);
+    background: var(--bg-inset);
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+  .review-thread__edit-btn:hover {
+    background: var(--bg-surface-hover);
+    color: var(--text-primary);
+  }
+
+  .review-thread__edit {
+    margin-top: 4px;
+  }
+  .review-thread__edit-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 6px;
   }
 
   .review-thread__sent-badge {

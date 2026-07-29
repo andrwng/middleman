@@ -9,11 +9,14 @@ const deleteThread = vi.fn(async () => true);
 const ask = vi.fn(async () => true);
 const discuss = vi.fn(async () => true);
 const unresolve = vi.fn(async () => true);
+const editComment = vi.fn(async () => true);
 let running = false;
 
 vi.mock("../../context.js", () => ({
   getStores: () => ({
-    reviewThreads: { resolve, unresolve, hide, unhide: vi.fn(), addComment, apply, deleteThread, ask, discuss },
+    reviewThreads: {
+      resolve, unresolve, hide, unhide: vi.fn(), addComment, apply, deleteThread, ask, discuss, editComment,
+    },
     worktreeSession: { hasRunningTurn: () => running },
   }),
 }));
@@ -161,6 +164,104 @@ describe("ReviewThreadCard", () => {
       props: { thread: thread({ hidden: true }), variant: "gutter" },
     });
     expect(container.querySelector(".review-thread--gutter")).toBeTruthy();
+  });
+
+  it("shows an Edit control on the user's own comment", () => {
+    const { getByTitle } = render(ReviewThreadCard, { props: { thread: thread() } });
+    expect(getByTitle("Edit this comment")).toBeTruthy();
+  });
+
+  it("does not show an Edit control on agent comments", () => {
+    const { queryByTitle } = render(ReviewThreadCard, {
+      props: {
+        thread: thread({ comments: [{ id: 2, author: "agent", body: "agreed", created_at: "" }] }),
+      },
+    });
+    expect(queryByTitle("Edit this comment")).toBeNull();
+  });
+
+  it("clicking Edit shows a prefilled textarea with Save disabled until the text changes", async () => {
+    const { getByTitle, getByDisplayValue, getByText } = render(ReviewThreadCard, { props: { thread: thread() } });
+    await fireEvent.click(getByTitle("Edit this comment"));
+    const box = getByDisplayValue("rename this") as HTMLTextAreaElement;
+    const save = getByText("Save") as HTMLButtonElement;
+    expect(save.disabled).toBe(true); // unchanged from original body
+    await fireEvent.input(box, { target: { value: "" } });
+    expect(save.disabled).toBe(true); // empty
+    await fireEvent.input(box, { target: { value: "renamed please" } });
+    expect(save.disabled).toBe(false);
+  });
+
+  it("Save calls editComment and leaves edit mode on success", async () => {
+    const { getByTitle, getByDisplayValue, getByText, queryByText } = render(ReviewThreadCard, {
+      props: { thread: thread() },
+    });
+    await fireEvent.click(getByTitle("Edit this comment"));
+    const box = getByDisplayValue("rename this") as HTMLTextAreaElement;
+    await fireEvent.input(box, { target: { value: "renamed please" } });
+    await fireEvent.click(getByText("Save"));
+    expect(editComment).toHaveBeenCalledWith(5, 1, "renamed please");
+    expect(queryByText("Save")).toBeNull(); // edit mode exited
+  });
+
+  it("Cancel restores the rendered body without calling the store", async () => {
+    const { getByTitle, getByDisplayValue, getByText, queryByText } = render(ReviewThreadCard, {
+      props: { thread: thread() },
+    });
+    await fireEvent.click(getByTitle("Edit this comment"));
+    const box = getByDisplayValue("rename this") as HTMLTextAreaElement;
+    await fireEvent.input(box, { target: { value: "discard me" } });
+    await fireEvent.click(getByText("Cancel"));
+    expect(editComment).not.toHaveBeenCalled();
+    expect(queryByText("Save")).toBeNull(); // edit mode exited
+    expect(getByText("rename this")).toBeTruthy(); // original body still rendered
+  });
+
+  it("a failed save stays in edit mode with the typed text intact", async () => {
+    editComment.mockResolvedValueOnce(false);
+    const { getByTitle, getByDisplayValue, getByText } = render(ReviewThreadCard, {
+      props: { thread: thread() },
+    });
+    await fireEvent.click(getByTitle("Edit this comment"));
+    const box = getByDisplayValue("rename this") as HTMLTextAreaElement;
+    await fireEvent.input(box, { target: { value: "renamed please" } });
+    await fireEvent.click(getByText("Save"));
+    expect(editComment).toHaveBeenCalledWith(5, 1, "renamed please");
+    expect(getByText("Save")).toBeTruthy(); // still in edit mode, fail-soft
+    expect(getByDisplayValue("renamed please")).toBeTruthy(); // typed text preserved
+  });
+
+  it("only one comment can be in edit mode at a time", async () => {
+    const { getAllByTitle, getByDisplayValue, queryByDisplayValue } = render(ReviewThreadCard, {
+      props: {
+        thread: thread({
+          comments: [
+            { id: 1, author: "user", body: "first", created_at: "" },
+            { id: 2, author: "user", body: "second", created_at: "" },
+          ],
+        }),
+      },
+    });
+    const [editFirst, editSecond] = getAllByTitle("Edit this comment");
+    await fireEvent.click(editFirst!);
+    expect(getByDisplayValue("first")).toBeTruthy();
+    await fireEvent.click(editSecond!);
+    expect(queryByDisplayValue("first")).toBeNull(); // first comment's editor closed
+    expect(getByDisplayValue("second")).toBeTruthy(); // now editing the second instead
+  });
+
+  it("renders the (edited) marker only for comments with edited_at set", () => {
+    const { container } = render(ReviewThreadCard, {
+      props: {
+        thread: thread({
+          comments: [
+            { id: 1, author: "user", body: "rename this", edited_at: "2026-07-28T00:00:00Z", created_at: "" },
+            { id: 2, author: "agent", body: "agreed", created_at: "" },
+          ],
+        }),
+      },
+    });
+    expect(container.querySelectorAll(".review-thread__edited")).toHaveLength(1);
   });
 });
 
