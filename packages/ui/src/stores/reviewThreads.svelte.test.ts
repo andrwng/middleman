@@ -243,4 +243,33 @@ describe("reviewThreads store", () => {
     );
     expect(store.getThreads()[0]!.comments?.[0]?.sent_to_agent).toBe(true);
   });
+
+  it("editComment posts to the edit endpoint and upserts the returned thread", async () => {
+    const post = vi.fn(async () => ({
+      data: thread({ comments: [{ id: 1, author: "user", body: "new", edited_at: "2026-07-28T00:00:00Z", created_at: "" }] }),
+      error: undefined,
+    }));
+    const store = createReviewThreadsStore({ client: stubClient({ POST: post }) });
+    await store.load("local", "demo", 7);
+    const ok = await store.editComment(1, 1, "new");
+    expect(ok).toBe(true);
+    expect(post).toHaveBeenCalledWith(
+      "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/comments/{comment_id}/edit",
+      {
+        params: { path: { owner: "local", name: "demo", number: 7, thread_id: 1, comment_id: 1 } },
+        body: { body: "new" },
+      },
+    );
+    expect(store.getThreads()[0]!.comments?.[0]?.body).toBe("new");
+    expect(store.getThreads()[0]!.comments?.[0]?.edited_at).toBe("2026-07-28T00:00:00Z");
+  });
+
+  it("editComment surfaces errors and returns false", async () => {
+    const post = vi.fn(async () => ({ data: undefined, error: { detail: "cannot edit" } }));
+    const store = createReviewThreadsStore({ client: stubClient({ POST: post }) });
+    await store.load("local", "demo", 7);
+    const ok = await store.editComment(1, 1, "new");
+    expect(ok).toBe(false);
+    expect(store.getError()).toBe("cannot edit");
+  });
 });

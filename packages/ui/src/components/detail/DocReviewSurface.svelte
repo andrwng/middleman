@@ -19,6 +19,12 @@
 
   let reviewPanelOpen = $state(false);
 
+  // Source lines (1-based, RIGHT/new side) that differ from HEAD — i.e. not
+  // yet committed — for the currently open doc. Populated by the diff-fetch
+  // effect below and passed to RenderedMarkdownView so it can highlight the
+  // matching per-line anchor spans.
+  let uncommittedLines = $state<Set<number>>(new Set());
+
   // Per-doc pending draft comment count, shown on the Review button so
   // a reviewer can tell at a glance whether this doc has anything to
   // submit without leaving the doc pane.
@@ -78,6 +84,42 @@
       diffStore.setActivePR("", "", 0);
     };
   });
+
+  // Fetch the working-tree-vs-HEAD diff and collect the open doc's added/
+  // modified line numbers (type=="add" -> new_num). Re-runs when the open
+  // doc changes. Fails soft: any error or non-ok response just leaves
+  // uncommittedLines empty rather than blocking the doc from rendering.
+  $effect(() => {
+    const p = path;
+    const [o, n, num] = [owner, name, number];
+    let cancelled = false;
+    void (async () => {
+      try {
+        const url =
+          `/api/v1/repos/${encodeURIComponent(o)}/${encodeURIComponent(n)}` +
+          `/pulls/${num}/diff?commit=${encodeURIComponent(WORKING_TREE_SENTINEL)}`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`diff ${res.status}`);
+        const data = (await res.json()) as {
+          files?: Array<{
+            path: string;
+            hunks?: Array<{ lines?: Array<{ type: string; new_num?: number }> }>;
+          }>;
+        };
+        const file = data.files?.find((f) => f.path === p);
+        const s = new Set<number>();
+        for (const h of file?.hunks ?? [])
+          for (const ln of h.lines ?? [])
+            if (ln.type === "add" && ln.new_num != null) s.add(ln.new_num);
+        if (!cancelled) uncommittedLines = s;
+      } catch {
+        if (!cancelled) uncommittedLines = new Set();
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  });
 </script>
 
 <div class="doc-surface">
@@ -112,6 +154,7 @@
       {path}
       sha={WORKING_TREE_SENTINEL}
       hunks={[]}
+      {uncommittedLines}
       commentLayout="gutter"
       docHref={docHrefFor}
       {openDoc}

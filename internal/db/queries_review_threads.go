@@ -34,7 +34,8 @@ type ReviewThreadComment struct {
 	Body        string
 	TurnID      *int64 // nullable; worktree_session_turns.id for agent replies
 	CreatedAt   time.Time
-	SentToAgent bool // true if this comment was an "Ask Claude" reply sent to the agent
+	SentToAgent bool       // true if this comment was an "Ask Claude" reply sent to the agent
+	EditedAt    *time.Time // nil until the user edits the body; set to the edit time
 }
 
 // NewReviewThread describes a thread anchor plus the reviewer's root
@@ -255,9 +256,37 @@ func (d *DB) AddReviewThreadComment(ctx context.Context, threadID int64, author,
 	return d.getReviewThreadComment(ctx, id)
 }
 
+// ErrReviewThreadCommentNotEditable is returned by UpdateReviewThreadComment when
+// no user-authored comment with the given id exists — either a bad id or an agent
+// reply, which is read-only.
+var ErrReviewThreadCommentNotEditable = errors.New("review thread comment not found or not editable")
+
+// UpdateReviewThreadComment rewrites a user comment's body and stamps edited_at.
+// Scoped to both commentID and threadID so a comment_id belonging to a
+// different thread never matches, even if it's a valid user comment; only
+// author='user' rows are editable, so an agent reply is read-only too. Either
+// mismatch updates zero rows and returns ErrReviewThreadCommentNotEditable.
+func (d *DB) UpdateReviewThreadComment(ctx context.Context, threadID int64, commentID int64, newBody string) (ReviewThreadComment, error) {
+	res, err := d.rw.ExecContext(ctx, `
+		UPDATE middleman_review_thread_comments
+		   SET body = ?, edited_at = datetime('now')
+		 WHERE id = ? AND thread_id = ? AND author = 'user'`, newBody, commentID, threadID)
+	if err != nil {
+		return ReviewThreadComment{}, fmt.Errorf("update comment: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return ReviewThreadComment{}, fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		return ReviewThreadComment{}, ErrReviewThreadCommentNotEditable
+	}
+	return d.getReviewThreadComment(ctx, commentID)
+}
+
 func (d *DB) getReviewThreadComment(ctx context.Context, id int64) (ReviewThreadComment, error) {
 	return scanReviewThreadComment(d.ro.QueryRowContext(ctx, `
-		SELECT id, thread_id, author, body, turn_id, created_at, sent_to_agent
+		SELECT id, thread_id, author, body, turn_id, created_at, sent_to_agent, edited_at
 		  FROM middleman_review_thread_comments WHERE id = ?`, id))
 }
 
@@ -265,7 +294,7 @@ func (d *DB) getReviewThreadComment(ctx context.Context, id int64) (ReviewThread
 // threads, oldest-first by id. The handler groups them by thread_id.
 func (d *DB) ListReviewThreadCommentsForMR(ctx context.Context, mrID int64) ([]ReviewThreadComment, error) {
 	rows, err := d.ro.QueryContext(ctx, `
-		SELECT c.id, c.thread_id, c.author, c.body, c.turn_id, c.created_at, c.sent_to_agent
+		SELECT c.id, c.thread_id, c.author, c.body, c.turn_id, c.created_at, c.sent_to_agent, c.edited_at
 		  FROM middleman_review_thread_comments c
 		  JOIN middleman_review_threads t ON t.id = c.thread_id
 		 WHERE t.mr_id = ?
@@ -289,7 +318,7 @@ func (d *DB) ListReviewThreadCommentsForMR(ctx context.Context, mrID int64) ([]R
 // oldest-first by id.
 func (d *DB) ListReviewThreadComments(ctx context.Context, threadID int64) ([]ReviewThreadComment, error) {
 	rows, err := d.ro.QueryContext(ctx, `
-		SELECT id, thread_id, author, body, turn_id, created_at, sent_to_agent
+		SELECT id, thread_id, author, body, turn_id, created_at, sent_to_agent, edited_at
 		  FROM middleman_review_thread_comments
 		 WHERE thread_id = ?
 		 ORDER BY id ASC`, threadID)
@@ -369,7 +398,7 @@ func (d *DB) ListUnsentUserComments(
 	ctx context.Context, threadID int64,
 ) ([]ReviewThreadComment, error) {
 	rows, err := d.ReadDB().QueryContext(ctx, `
-		SELECT id, thread_id, author, body, turn_id, created_at, sent_to_agent
+		SELECT id, thread_id, author, body, turn_id, created_at, sent_to_agent, edited_at
 		  FROM middleman_review_thread_comments
 		 WHERE thread_id = ?
 		   AND author = 'user'
@@ -397,7 +426,8 @@ func scanReviewThreadComment(row scanner) (ReviewThreadComment, error) {
 	var c ReviewThreadComment
 	var turnID sql.NullInt64
 	var sentToAgent int64
-	err := row.Scan(&c.ID, &c.ThreadID, &c.Author, &c.Body, &turnID, &c.CreatedAt, &sentToAgent)
+	var editedAt sql.NullTime
+	err := row.Scan(&c.ID, &c.ThreadID, &c.Author, &c.Body, &turnID, &c.CreatedAt, &sentToAgent, &editedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ReviewThreadComment{}, err
@@ -406,6 +436,9 @@ func scanReviewThreadComment(row scanner) (ReviewThreadComment, error) {
 	}
 	if turnID.Valid {
 		c.TurnID = &turnID.Int64
+	}
+	if editedAt.Valid {
+		c.EditedAt = &editedAt.Time
 	}
 	c.SentToAgent = sentToAgent != 0
 	return c, nil

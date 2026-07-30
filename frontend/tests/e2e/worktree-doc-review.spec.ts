@@ -221,6 +221,44 @@ test("comment gutter: gutter container present and composer opens in gutter on h
   await expect(headingBlock).toHaveClass(/rmd-block--commented/);
 });
 
+test("comment gutter: a comment on an abutting block renders exactly one card", async ({ page }) => {
+  // The shared README fixture separates blocks with blank lines, so its blocks
+  // never abut. Serve, for this test only, a doc whose heading is directly
+  // followed by a paragraph with NO blank line between them — the two blocks
+  // abut at the boundary line. A comment on the heading used to be stored with
+  // the block's exclusive end line (== the paragraph's start line), so it
+  // matched BOTH blocks and rendered twice, once under each. It must render
+  // exactly once. (page.route added here wins LIFO over the mockApi blob route.)
+  await page.route(
+    `**/api/v1/repos/${LOCAL_OWNER}/${LOCAL_REPO}/pulls/${LOCAL_ID}/blob*`,
+    async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          content: "# Tight heading\nadjacent paragraph\n",
+          truncated: false,
+        }),
+      });
+    },
+  );
+  // Clear any leftover draft state from prior runs.
+  await page.addInitScript(() => {
+    for (const k of Object.keys(localStorage)) {
+      if (k.startsWith("diff-draft")) localStorage.removeItem(k);
+    }
+  });
+
+  await page.goto(docRoute);
+  await expect(page.locator(".rmd-body")).toContainText("Tight heading");
+
+  // Comment on the heading block (which abuts the paragraph) and save.
+  await seedHeadingDraft(page, "abutting-block probe");
+
+  // Exactly one gutter card — not duplicated across the two abutting blocks.
+  await expect(page.locator('[data-gutter-key^="block:"]')).toHaveCount(1);
+});
+
 test("comment gutter: hovering a card highlights its source block", async ({ page }) => {
   await page.addInitScript(() => {
     for (const k of Object.keys(localStorage)) {
@@ -408,6 +446,57 @@ test("doc review: save-only submit persists a thread and renders it in the gutte
   await expect(card.locator(".review-thread__badge")).toHaveText("Review");
 });
 
+test("doc review: editing a persisted comment updates its body and shows an (edited) marker", async ({ page }) => {
+  await page.addInitScript(() => {
+    for (const k of Object.keys(localStorage)) {
+      if (k.startsWith("diff-draft")) localStorage.removeItem(k);
+    }
+  });
+
+  await page.goto(docRoute);
+  await expect(page.locator(".rmd-body")).toContainText("Hello");
+
+  // Persist a thread whose root comment is authored by the user, via the
+  // same save-only submit flow as the test above.
+  await seedHeadingDraft(page, "does this still hold?");
+  const reviewBtn = page.getByRole("button", { name: /^Review \(\d+\)$/ });
+  await expect(reviewBtn).toHaveText("Review (1)");
+  await reviewBtn.click();
+
+  const panel = page.locator('[role="dialog"][aria-label="Finish review"]');
+  await expect(panel).toBeVisible();
+  await panel.locator(".panel__agent input[type=checkbox]").uncheck();
+  await panel.getByRole("button", { name: "Create review threads" }).click();
+  await expect(panel).toHaveCount(0);
+
+  const card = page.locator(".comment-gutter .review-thread");
+  await expect(card).toHaveCount(1);
+  await expect(card).toContainText("does this still hold?");
+
+  // Scope to the comment itself — the thread also renders a reply
+  // composer below the comment list that shares the `.review-thread__send`
+  // / `.review-thread__reply-input` classes with the edit controls.
+  const commentEl = card.locator(".review-thread__comment").first();
+  await expect(commentEl.locator(".review-thread__edited")).toHaveCount(0);
+
+  // Click Edit on the comment, change its text, and Save.
+  await commentEl.locator(".review-thread__edit-btn").click();
+  const editBox = commentEl.locator(".review-thread__reply-input");
+  await expect(editBox).toHaveValue("does this still hold?");
+  await editBox.fill("this no longer holds");
+
+  const saveBtn = commentEl.locator(".review-thread__send");
+  await expect(saveBtn).toBeEnabled();
+  await saveBtn.click();
+
+  // Edit mode exits, the rendered body reflects the new text, and the
+  // (edited) marker is now visible on this comment.
+  await expect(commentEl.locator(".review-thread__reply-input")).toHaveCount(0);
+  await expect(card).toContainText("this no longer holds");
+  await expect(card).not.toContainText("does this still hold?");
+  await expect(commentEl.locator(".review-thread__edited")).toBeVisible();
+});
+
 test("doc review: apply submit sends act-immediately and still renders the thread", async ({ page }) => {
   await page.addInitScript(() => {
     for (const k of Object.keys(localStorage)) {
@@ -512,4 +601,58 @@ test("doc review: submitting from one doc only sends that doc's comment", async 
   await expect(page.getByRole("button", { name: /^Review \(\d+\)$/ })).toHaveText("Review (1)");
   await expect(page.locator(".pending")).toHaveCount(1);
   await expect(page.locator(".comment-gutter .review-thread")).toHaveCount(0);
+});
+
+// The working-tree-vs-HEAD diff route the doc pane fetches to compute
+// per-line "uncommitted" highlighting. mockApi.ts defaults this route to
+// an empty diff (no added lines for any file); each test below overrides
+// it via page.route() so its diff expectations are self-contained and
+// don't depend on — or leak into — any other test in this spec.
+const diffRoute = `**/api/v1/repos/${LOCAL_OWNER}/${LOCAL_REPO}/pulls/${LOCAL_ID}/diff*`;
+
+test("doc view: an uncommitted (working-tree-added) line's anchor is highlighted", async ({ page }) => {
+  // Source line 3 of the mocked README.md content ("some text here") is a
+  // plain, single-line paragraph outside any list/table, so it renders as
+  // exactly one unambiguous .rmd-anchor[data-anchor-line="3"] span.
+  await page.route(diffRoute, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        stale: false,
+        whitespace_only_count: 0,
+        files: [
+          {
+            path: "README.md",
+            hunks: [{ lines: [{ type: "add", new_num: 3 }] }],
+          },
+        ],
+      }),
+    });
+  });
+
+  await page.goto(docRoute);
+  await expect(page.locator(".rmd-body")).toContainText("Hello");
+
+  await expect(
+    page.locator('.rmd-anchor[data-anchor-line="3"]').first(),
+  ).toHaveClass(/rmd-uncommitted/);
+});
+
+test("doc view: a fully committed doc has no uncommitted highlight", async ({ page }) => {
+  // Explicit no-added-lines diff response for README.md — mirrors the
+  // shared mock's default, but scoped here so this test's intent (nothing
+  // highlighted when there's nothing uncommitted) is self-contained.
+  await page.route(diffRoute, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ stale: false, whitespace_only_count: 0, files: [] }),
+    });
+  });
+
+  await page.goto(docRoute);
+  await expect(page.locator(".rmd-body")).toContainText("Hello");
+
+  await expect(page.locator(".rmd-uncommitted")).toHaveCount(0);
 });

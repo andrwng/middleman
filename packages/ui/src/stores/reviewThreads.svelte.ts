@@ -151,6 +151,27 @@ export function createReviewThreadsStore(opts: ReviewThreadsStoreOptions) {
     }
   }
 
+  async function editComment(
+    threadID: number, commentID: number, body: string,
+  ): Promise<boolean> {
+    error = null;
+    try {
+      const { data, error: err } = await client.POST(
+        "/repos/{owner}/{name}/pulls/{number}/review-threads/{thread_id}/comments/{comment_id}/edit",
+        {
+          params: { path: { owner, name, number, thread_id: threadID, comment_id: commentID } },
+          body: { body },
+        },
+      );
+      if (err) throw new Error(detail(err, "failed to edit comment"));
+      if (data) upsert(data);
+      return true;
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+      return false;
+    }
+  }
+
   async function resolve(threadID: number): Promise<boolean> {
     error = null;
     try {
@@ -329,7 +350,7 @@ export function createReviewThreadsStore(opts: ReviewThreadsStoreOptions) {
 
   return {
     getThreads, getThreadsAtAnchor, isLoading, getError,
-    load, createThreads, addComment, hide, unhide, resolve, unresolve,
+    load, createThreads, addComment, editComment, hide, unhide, resolve, unresolve,
     apply, discuss, applyAll, ask, deleteThread, refresh, clear,
   };
 }

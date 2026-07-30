@@ -64,6 +64,10 @@
     // set, relative markdown links are rewritten to open in the doc view.
     docHref?: (targetPath: string) => string;
     openDoc?: (targetPath: string, fragment?: string) => void;
+    // Source lines (1-based, RIGHT/new side) that differ from HEAD — i.e. not
+    // yet committed. When set, each rendered per-line anchor span whose line
+    // is a member gets a highlight class (see the dedicated $effect below).
+    uncommittedLines?: Set<number>;
   }
 
   const {
@@ -76,6 +80,7 @@
     commentLayout = "inline",
     docHref,
     openDoc,
+    uncommittedLines,
   }: Props = $props();
 
   const {
@@ -383,7 +388,13 @@
   }
 
   function openComposerForBlock(start: number, end: number): void {
-    rangeSnapshot = { startLine: start, endLine: end, side: renderedSide };
+    // (start, end) is the block's half-open [start, end) source-line range.
+    // The persisted anchor endLine must be the block's last real line
+    // (end - 1, inclusive), because anchorOverlapsBlock treats the anchor as
+    // inclusive — storing the raw exclusive end would make the anchor also
+    // match the next abutting block and double-render the card. The key and
+    // findBlockIdx below intentionally keep the raw half-open end.
+    rangeSnapshot = { startLine: start, endLine: end - 1, side: renderedSide };
     openComposerKey = `${end}:${renderedSide}`;
     activeBlockIdx = findBlockIdx(start, end);
     // Compute composerTop synchronously so the composer renders already
@@ -417,7 +428,9 @@
   let askSubmitting = $state(false);
 
   function openAskForBlock(start: number, end: number): void {
-    rangeSnapshot = { startLine: start, endLine: end, side: renderedSide };
+    // Half-open [start, end) -> inclusive anchor endLine (end - 1); see
+    // openComposerForBlock for why the raw exclusive end would double-match.
+    rangeSnapshot = { startLine: start, endLine: end - 1, side: renderedSide };
     openAskKey = `${end}:${renderedSide}`;
     askError = null;
     activeBlockIdx = findBlockIdx(start, end);
@@ -765,6 +778,14 @@
 
     const newGutterEntries: GutterEntry[] = [];
 
+    // A card whose anchor spans a block boundary — or was persisted by the old
+    // off-by-one write path (endLine == the next block's start) — can match
+    // more than one block. Render each card only in the FIRST block it matches;
+    // because blocks are walked in source order, that is its start block. This
+    // keeps a card from appearing twice in the gutter/inline column and also
+    // heals rows already stored with the boundary anchor.
+    const seenCardKeys = new Set<string>();
+
     const children = Array.from(bodyEl.children) as HTMLElement[];
     for (let i = 0; i < children.length; i++) {
       const el = children[i]!;
@@ -809,7 +830,11 @@
       actions.appendChild(askBtn);
       el.appendChild(actions);
 
-      const cards = cardsForRange(blockStart, blockEnd);
+      const cards = cardsForRange(blockStart, blockEnd).filter((c) => {
+        if (seenCardKeys.has(c.key)) return false;
+        seenCardKeys.add(c.key);
+        return true;
+      });
 
       if (useGutter) {
         // Gutter mode: mark blocks that have cards (colored by kind — blue for
@@ -955,6 +980,23 @@
       for (const inst of mountedInstances) unmount(inst);
       mountedInstances.clear();
     };
+  });
+
+  // Line-level uncommitted highlight: mark each source-line anchor span whose
+  // line is uncommitted (added/modified vs HEAD). Re-runs after (re)render
+  // (touch `doc`) and when the set changes. Independent of the block-level
+  // .rmd-changed (hunks) path above — that marks whole blocks from diff
+  // hunks; this marks individual .rmd-anchor spans from uncommittedLines.
+  $effect(() => {
+    if (!bodyEl) return;
+    const _ = doc; // re-run after the {@html} render replaces the spans
+    const lines = uncommittedLines;
+    const spans = bodyEl.querySelectorAll<HTMLElement>(".rmd-anchor[data-anchor-line]");
+    for (const span of spans) {
+      const n = Number(span.dataset.anchorLine);
+      if (lines && lines.has(n)) span.classList.add("rmd-uncommitted");
+      else span.classList.remove("rmd-uncommitted");
+    }
   });
 
   // Re-runs whenever activeBlockIdx changes or the DOM layout changes
@@ -1301,6 +1343,18 @@
   .rmd-body :global(.rmd-block--linked) {
     background: color-mix(in srgb, var(--text-muted) 12%, transparent);
     border-radius: 0 3px 3px 0;
+  }
+
+  /* Uncommitted-line highlight — applied imperatively (per-anchor-span, not
+     per-block) by the dedicated $effect above. THE one-spot visual-treatment
+     swap point: replace the background/border-radius below with e.g.
+     text-decoration:underline or a border-left to change the look — no
+     logic/test change needed. Distinct from .rmd-changed's green (that's the
+     block-level diff-hunk marker); green is reused here since both signal
+     "added/modified" content, just at different granularity. */
+  .rmd-body :global(.rmd-uncommitted) {
+    background: color-mix(in srgb, var(--accent-green) 16%, transparent);
+    border-radius: 2px;
   }
 
   /* Mermaid diagrams: the rendered SVG replaces the source <pre> after mount. */

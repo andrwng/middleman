@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import DocReviewSurface from "./DocReviewSurface.svelte";
 import RenderedMarkdownView from "../diff/RenderedMarkdownView.svelte";
 import { STORES_KEY, NAVIGATE_KEY } from "../../context.js";
@@ -205,5 +205,109 @@ describe("DocReviewSurface", () => {
     await fireEvent.click(btn);
 
     expect(screen.getByRole("dialog", { name: "Finish review" })).toBeTruthy();
+  });
+});
+
+describe("DocReviewSurface uncommitted-lines highlight", () => {
+  function stubDiffResponse(matchPath: string) {
+    // Typed to match the global `fetch` signature so `.mock.calls` resolves
+    // to `Parameters<typeof fetch>[]` (an untyped `vi.fn(async () => (...))`
+    // infers a zero-arg signature, making calls[0]?.[0] a TS2493 tuple-index
+    // error against `[][]`).
+    return vi.fn<typeof fetch>(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        files: [
+          {
+            path: matchPath,
+            hunks: [
+              {
+                lines: [
+                  { type: "context", new_num: 2 },
+                  { type: "add", new_num: 3 },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    }) as unknown as Response);
+  }
+
+  function lastRenderedMarkdownViewProps(): Record<string, unknown> {
+    const call = vi.mocked(RenderedMarkdownView).mock.calls.at(-1);
+    return (call?.[1] ?? {}) as Record<string, unknown>;
+  }
+
+  it("fetches the working-tree diff and passes the added line numbers as uncommittedLines", async () => {
+    const fetchMock = stubDiffResponse("docs/README.md");
+    globalThis.fetch = fetchMock;
+
+    renderSurface("docs/README.md");
+
+    await waitFor(() => {
+      const set = lastRenderedMarkdownViewProps()["uncommittedLines"] as Set<number>;
+      expect(set.has(3)).toBe(true);
+    });
+
+    const set = lastRenderedMarkdownViewProps()["uncommittedLines"] as Set<number>;
+    expect(set.has(2)).toBe(false);
+
+    // The mocked fetch also observes the unrelated ai-threads poll that
+    // DocReviewSurface's onMount triggers via aiStore.start(); isolate the
+    // diff-specific call before asserting on its URL.
+    const diffCalls = fetchMock.mock.calls.filter(([input]) =>
+      String(input).includes("/diff?commit="),
+    );
+    expect(diffCalls).toHaveLength(1);
+    const calledUrl = String(diffCalls[0]?.[0] ?? "");
+    expect(calledUrl).toContain("/repos/local/demo/pulls/42/diff");
+    expect(calledUrl).toContain(`commit=${encodeURIComponent(WORKING_TREE_SENTINEL)}`);
+  });
+
+  it("does not surface added lines belonging to a different file's diff entry", async () => {
+    globalThis.fetch = stubDiffResponse("docs/other.md");
+
+    renderSurface("docs/README.md");
+
+    await waitFor(() => {
+      expect(vi.mocked(RenderedMarkdownView).mock.calls.length).toBeGreaterThan(0);
+    });
+    // Give the fetch effect a chance to resolve before asserting the
+    // negative — there is nothing to poll toward when the expected state
+    // is "still empty".
+    await new Promise((r) => setTimeout(r, 0));
+    const set = lastRenderedMarkdownViewProps()["uncommittedLines"] as Set<number>;
+    expect(set.size).toBe(0);
+  });
+
+  it("fails soft to an empty uncommittedLines set when the diff fetch rejects", async () => {
+    globalThis.fetch = vi.fn(async () => {
+      throw new Error("network down");
+    }) as unknown as typeof fetch;
+
+    const { container } = renderSurface("docs/README.md");
+
+    await waitFor(() => {
+      const set = lastRenderedMarkdownViewProps()["uncommittedLines"] as Set<number>;
+      expect(set.size).toBe(0);
+    });
+    // Fail-soft means the doc still renders normally.
+    expect(container.textContent).toContain("docs/README.md");
+  });
+
+  it("fails soft to an empty uncommittedLines set when the diff fetch responds non-ok", async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: false,
+      status: 500,
+    }) as unknown as Response);
+
+    renderSurface("docs/README.md");
+
+    await waitFor(() => {
+      const set = lastRenderedMarkdownViewProps()["uncommittedLines"] as Set<number>;
+      expect(set.size).toBe(0);
+    });
   });
 });

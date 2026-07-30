@@ -275,6 +275,7 @@ interface ReviewThreadCommentRecord {
   body: string;
   created_at: string;
   sent_to_agent: boolean;
+  edited_at?: string;
 }
 
 export interface ReviewThreadRecord {
@@ -296,6 +297,11 @@ let createdReviewThreads: ReviewThreadRecord[] = [];
 let reviewThreadsRequests: CreateReviewThreadsRequestRecord[] = [];
 let nextReviewThreadId = 1;
 let nextReviewCommentId = 1;
+
+// Fixed RFC3339 timestamp stamped onto a comment's edited_at by the edit
+// handler below. Any non-empty value satisfies the UI's `{#if c.edited_at}`
+// truthiness check; tests don't assert the specific value.
+const EDITED_AT_FIXED = "2026-06-02T12:00:00Z";
 
 // Read back every create-threads POST body sent this test.
 export function getReviewThreadsRequests(): CreateReviewThreadsRequestRecord[] {
@@ -472,6 +478,22 @@ export async function mockApi(page: Page): Promise<void> {
       return;
     }
 
+    // Working-tree-vs-HEAD diff — fetched by DocReviewSurface to compute
+    // per-line "uncommitted" highlighting for the open doc
+    // (RenderedMarkdownView's uncommittedLines prop -> .rmd-uncommitted
+    // on the matching .rmd-anchor span). Defaults to no added lines for
+    // any file so every other doc-review test's rendering is unaffected;
+    // the "uncommitted highlight" tests below override this route
+    // per-test via page.route() to inject (or explicitly withhold) an
+    // added line for README.md.
+    const diffMatch = pathname.match(
+      /^\/api\/v1\/repos\/([^/]+)\/([^/]+)\/pulls\/(\d+)\/diff$/,
+    );
+    if (method === "GET" && diffMatch) {
+      await fulfillJson(route, { stale: false, whitespace_only_count: 0, files: [] });
+      return;
+    }
+
     // Review threads for local worktree — stateful in-memory store: GET
     // lists whatever has been created so far; POST appends threads built
     // from the request's drafts, preserving path/side/line/start_line/
@@ -523,6 +545,36 @@ export async function mockApi(page: Page): Promise<void> {
         });
       }
       await fulfillJson(route, { threads: createdReviewThreads });
+      return;
+    }
+
+    // Edit a persisted comment's body — stateful, mirroring the real
+    // POST .../comments/{comment_id}/edit sub-action (never PATCH). Finds
+    // the thread by id, finds the comment by comment_id, sets its body
+    // and a fixed edited_at, and returns the bare updated thread — the
+    // same shape createReviewThreads returns per-thread, matching
+    // reviewThreadOutput (NOT wrapped in {threads: [...]}), since the
+    // store's editComment does `if (data) upsert(data)`. Matched before
+    // any more general review-threads/comments handler so this more
+    // specific /comments/{comment_id}/edit route always wins.
+    const editCommentMatch = pathname.match(
+      /^\/api\/v1\/repos\/local\/[^/]+\/pulls\/\d+\/review-threads\/(\d+)\/comments\/(\d+)\/edit$/,
+    );
+    if (method === "POST" && editCommentMatch) {
+      const threadId = parseInt(editCommentMatch[1]!, 10);
+      const commentId = parseInt(editCommentMatch[2]!, 10);
+      const thread = createdReviewThreads.find((t) => t.id === threadId);
+      const comment = thread?.comments.find((c) => c.id === commentId);
+      if (!thread || !comment) {
+        await fulfillJson(route, { error: "Not found" }, 404);
+        return;
+      }
+      const body = JSON.parse(
+        (await route.request().postData()) ?? "{}",
+      ) as { body: string };
+      comment.body = body.body;
+      comment.edited_at = EDITED_AT_FIXED;
+      await fulfillJson(route, thread);
       return;
     }
 
