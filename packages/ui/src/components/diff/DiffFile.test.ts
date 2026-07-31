@@ -152,6 +152,11 @@ describe("DiffFile", () => {
     expect(screen.queryByText(/^(Copied|Renamed) from/)).toBeNull();
   });
 
+  it("shows no label for a modified file even when old_path differs (status-gated)", () => {
+    renderDiffFile(makeFile({ status: "modified", path: "src/foo.ts", old_path: "src/other.ts" }));
+    expect(screen.queryByText(/^(Copied|Renamed) from/)).toBeNull();
+  });
+
   it("renders file content when not collapsed", () => {
     renderDiffFile(makeFile());
 
