@@ -131,6 +131,27 @@ describe("DiffFile", () => {
     cleanup();
   });
 
+  it("labels a copied file with its copy source", () => {
+    renderDiffFile(makeFile({
+      status: "copied",
+      path: "src/v/kafka/protocol/consumer_group_describe.h",
+      old_path: "src/v/kafka/protocol/describe_redpanda_roles.h",
+    }));
+    expect(
+      screen.getByText("Copied from src/v/kafka/protocol/describe_redpanda_roles.h"),
+    ).toBeTruthy();
+  });
+
+  it("labels a renamed file with its old path", () => {
+    renderDiffFile(makeFile({ status: "renamed", path: "src/new.ts", old_path: "src/old.ts" }));
+    expect(screen.getByText("Renamed from src/old.ts")).toBeTruthy();
+  });
+
+  it("shows no copy/rename label for a plain modified file", () => {
+    renderDiffFile(makeFile());
+    expect(screen.queryByText(/^(Copied|Renamed) from/)).toBeNull();
+  });
+
   it("renders file content when not collapsed", () => {
     renderDiffFile(makeFile());
 

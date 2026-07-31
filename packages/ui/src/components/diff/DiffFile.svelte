@@ -570,10 +570,18 @@
   }
 
   function displayPath(f: DiffFileType): string {
-    if (f.status === "renamed" && f.old_path !== f.path) {
-      return `${f.old_path} -> ${f.path}`;
-    }
     return f.path;
+  }
+
+  // A "Copied from …" / "Renamed from …" provenance label for git-detected
+  // copies and renames, so a similar-but-new file reads as what it is instead
+  // of a mysterious partial diff against its source. Empty for other statuses.
+  function provenanceLabel(f: DiffFileType): string {
+    if (f.old_path && f.old_path !== f.path) {
+      if (f.status === "copied") return `Copied from ${f.old_path}`;
+      if (f.status === "renamed") return `Renamed from ${f.old_path}`;
+    }
+    return "";
   }
 </script>
 
@@ -623,8 +631,13 @@
       <svg class="collapse-chevron" class:collapse-chevron--collapsed={collapsed} width="12" height="12" viewBox="0 0 12 12" fill="none">
         <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
-      <span class="file-path" class:file-path--deleted={file.status === "deleted"}>
-        {displayPath(file)}
+      <span class="file-id">
+        <span class="file-path" class:file-path--deleted={file.status === "deleted"}>
+          {displayPath(file)}
+        </span>
+        {#if provenanceLabel(file)}
+          <span class="file-provenance">{provenanceLabel(file)}</span>
+        {/if}
       </span>
       <span class="file-stats">
         <span class="stat" class:stat--add={file.additions > 0} class:stat--dim={file.additions === 0}>+{file.additions}</span>
@@ -1131,11 +1144,17 @@
     transform: rotate(-90deg);
   }
 
+  .file-id {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
   .file-path {
     font-family: var(--font-mono);
     font-size: 12px;
     color: var(--diff-text);
-    flex: 1;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1147,6 +1166,19 @@
 
   .file-path--deleted {
     text-decoration: line-through;
+  }
+
+  /* Copy/rename provenance shown under the filename (see provenanceLabel).
+     Muted + sans so it reads as metadata, not part of the path. */
+  .file-provenance {
+    font-family: var(--font-sans);
+    font-size: 11px;
+    color: var(--text-muted);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    user-select: text;
   }
 
   .file-stats {
