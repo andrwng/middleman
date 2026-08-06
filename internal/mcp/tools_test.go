@@ -52,11 +52,17 @@ func TestListThreadsProxiesGet(t *testing.T) {
 func TestThreadToolsStripWritesAllowed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if r.Method == http.MethodGet {
+		switch {
+		case r.Method == http.MethodGet:
+			// list_threads, and get_thread (filtered from the list)
 			_, _ = w.Write([]byte(`{"threads":[{"id":1,"path":"a.go","line":12,"status":"open","writes_allowed":false,"comments":[]}]}`))
-			return
+		case strings.HasSuffix(r.URL.Path, "/comments"):
+			// reply_to_thread -> updated single thread
+			_, _ = w.Write([]byte(`{"id":1,"path":"a.go","status":"discussed","writes_allowed":false,"comments":[{"id":9,"author":"agent","body":"ok"}]}`))
+		default:
+			// start_thread create -> thread list (it picks the max-id row)
+			_, _ = w.Write([]byte(`{"threads":[{"id":2,"path":"b.go","line":3,"status":"open","writes_allowed":false,"comments":[]}]}`))
 		}
-		_, _ = w.Write([]byte(`{"id":1,"path":"a.go","status":"discussed","writes_allowed":false,"comments":[{"id":9,"author":"agent","body":"ok"}]}`))
 	}))
 	defer srv.Close()
 	s := New(Config{ServerName: "middleman", BaseURL: srv.URL, ReviewOwner: "local", ReviewName: "demo", ReviewNumber: 7})
@@ -70,10 +76,21 @@ func TestThreadToolsStripWritesAllowed(t *testing.T) {
 	one, err := s.tools["get_thread"].call(s, map[string]any{"thread_id": float64(1)})
 	require.NoError(t, err)
 	assert.NotContains(one, "writes_allowed")
+	assert.Contains(one, "a.go")
 
 	reply, err := s.tools["reply_to_thread"].call(s, map[string]any{"thread_id": float64(1), "body": "ok"})
 	require.NoError(t, err)
 	assert.NotContains(reply, "writes_allowed")
+	assert.Contains(reply, "ok")
+
+	// start_thread has three return points (list, best-of-list, fallback) — the
+	// most branch-heavy of the four, so cover it explicitly.
+	started, err := s.tools["start_thread"].call(s, map[string]any{
+		"path": "b.go", "side": "RIGHT", "line": float64(3), "body": "flag this",
+	})
+	require.NoError(t, err)
+	assert.NotContains(started, "writes_allowed")
+	assert.Contains(started, "b.go") // the created thread is still returned
 }
 
 // tools/call end-to-end through the JSON-RPC layer.
