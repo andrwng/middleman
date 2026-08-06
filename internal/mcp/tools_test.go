@@ -46,6 +46,36 @@ func TestListThreadsProxiesGet(t *testing.T) {
 	require.Contains(t, out, "a.go")
 }
 
+// writes_allowed is an in-app Apply-gate (status=="applied"); it is always
+// false for MCP-driven agents and misreads as "you may not edit." The thread
+// tools must strip it from what agents receive.
+func TestThreadToolsStripWritesAllowed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"threads":[{"id":1,"path":"a.go","line":12,"status":"open","writes_allowed":false,"comments":[]}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":1,"path":"a.go","status":"discussed","writes_allowed":false,"comments":[{"id":9,"author":"agent","body":"ok"}]}`))
+	}))
+	defer srv.Close()
+	s := New(Config{ServerName: "middleman", BaseURL: srv.URL, ReviewOwner: "local", ReviewName: "demo", ReviewNumber: 7})
+	assert := assert.New(t)
+
+	list, err := s.tools["list_threads"].call(s, map[string]any{})
+	require.NoError(t, err)
+	assert.NotContains(list, "writes_allowed")
+	assert.Contains(list, "a.go") // still returns the thread itself
+
+	one, err := s.tools["get_thread"].call(s, map[string]any{"thread_id": float64(1)})
+	require.NoError(t, err)
+	assert.NotContains(one, "writes_allowed")
+
+	reply, err := s.tools["reply_to_thread"].call(s, map[string]any{"thread_id": float64(1), "body": "ok"})
+	require.NoError(t, err)
+	assert.NotContains(reply, "writes_allowed")
+}
+
 // tools/call end-to-end through the JSON-RPC layer.
 func TestToolsCallDispatch(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
