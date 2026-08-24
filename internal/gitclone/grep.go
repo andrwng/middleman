@@ -2,6 +2,10 @@ package gitclone
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"os/exec"
 	"strconv"
 	"strings"
 )
@@ -215,4 +219,34 @@ func hasDefinitionKeyword(before string) bool {
 		}
 	}
 	return false
+}
+
+// GrepSymbol returns every word-boundary occurrence of symbol in the
+// tree at sha. The match is a fixed string (never a regex) and
+// case-sensitive; binary files are skipped. Hits come back
+// unclassified — callers classify only the ones they keep.
+//
+// A revision is required because the clone is bare and has no working
+// tree. `git grep` exits 1 when nothing matched, which is a normal
+// empty result rather than a failure.
+func (m *Manager) GrepSymbol(
+	ctx context.Context, host, owner, name, sha, symbol string,
+) ([]SymbolHit, error) {
+	clonePath := m.ClonePath(host, owner, name)
+	out, err := m.git(ctx, host, clonePath,
+		"grep", "-n", "-z", "-w", "-F", "-I", "--no-color", "-e", symbol, sha)
+	if err != nil {
+		if isNoMatch(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("git grep %q at %s: %w", symbol, sha, err)
+	}
+	return ParseGrepZ(out, sha+":"), nil
+}
+
+// isNoMatch reports whether a git-grep failure is just "nothing
+// matched" (exit status 1) rather than a real error.
+func isNoMatch(err error) bool {
+	var ee *exec.ExitError
+	return errors.As(err, &ee) && ee.ExitCode() == 1
 }
