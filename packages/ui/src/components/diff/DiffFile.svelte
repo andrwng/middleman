@@ -2,8 +2,15 @@
   import { onMount } from "svelte";
   import type { DiffFile as DiffFileType, DiffHunk } from "../../api/types.js";
   import { getStores } from "../../context.js";
+  import { isSymbolQuery } from "../../stores/symbolRefs.svelte.js";
 
-  const { diff: diffStore, ai: aiStore, detail: detailStore, reviewThreads: reviewThreadsStore } = getStores();
+  const {
+    diff: diffStore,
+    ai: aiStore,
+    detail: detailStore,
+    reviewThreads: reviewThreadsStore,
+    symbolRefs: symbolRefsStore,
+  } = getStores();
   import { tokenizeLineDual, langFromPath, type DualToken } from "../../utils/highlight.js";
   import { pairHunk } from "../../utils/diffPairing.js";
   import DiffLineComponent from "./DiffLine.svelte";
@@ -137,6 +144,16 @@
   // selection exists.
   let liveSelection = $state<{ startLine: number; endLine: number; side: "LEFT" | "RIGHT" } | null>(null);
 
+  // liveSymbolSelection tracks a single-line selection that looks like
+  // a searchable symbol (see computeSymbolSelection below). It is the
+  // single-line counterpart to liveSelection: computeSelectionRange
+  // requires the two selection ends to land on DIFFERENT lines (see
+  // its trailing `a === f` check), so a double-click word selection —
+  // which is inherently single-line — never populates liveSelection.
+  // Kept as a separate field rather than widening liveSelection so
+  // Comment/Ask's existing multi-line-only visibility is untouched.
+  let liveSymbolSelection = $state<{ text: string; side: "LEFT" | "RIGHT" } | null>(null);
+
   // rangeSnapshot is the range we'll anchor the next comment/question
   // to. snapshotRangeFor copies liveSelection into it at click time.
   let rangeSnapshot = $state<{ startLine: number; endLine: number; side: "LEFT" | "RIGHT" } | null>(null);
@@ -145,6 +162,7 @@
     if (typeof document === "undefined") return;
     const handler = (): void => {
       liveSelection = computeSelectionRange();
+      liveSymbolSelection = computeSymbolSelection();
     };
     document.addEventListener("selectionchange", handler);
     return () => document.removeEventListener("selectionchange", handler);
@@ -171,6 +189,34 @@
     if (!Number.isFinite(a) || !Number.isFinite(f) || a === f) return null;
     const [startLine, endLine] = a < f ? [a, f] : [f, a];
     return { startLine, endLine, side: aSide };
+  }
+
+  // computeSymbolSelection is the single-line sibling of
+  // computeSelectionRange above. Rather than compare the two ends'
+  // line/side VALUES (which would also accept two different lines
+  // that happen to share a line number, e.g. old_num 2 on the LEFT
+  // and new_num 2 on the RIGHT), it requires both ends to resolve to
+  // the SAME .line-wrap element — the strongest available proof that
+  // the selection is confined to one line on one side. Returns the
+  // trimmed selected text so callers never have to re-trim it.
+  function computeSymbolSelection(): { text: string; side: "LEFT" | "RIGHT" } | null {
+    if (typeof window === "undefined") return null;
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0) return null;
+    if (!fileEl) return null;
+
+    const anchorWrap = nearestLineWrap(sel.anchorNode);
+    const focusWrap = nearestLineWrap(sel.focusNode);
+    if (!anchorWrap || !focusWrap) return null;
+    if (!fileEl.contains(anchorWrap)) return null;
+    if (anchorWrap !== focusWrap) return null;
+
+    const side = anchorWrap.dataset.anchorSide;
+    if (side !== "LEFT" && side !== "RIGHT") return null;
+
+    const text = sel.toString().trim();
+    if (!isSymbolQuery(text)) return null;
+    return { text, side };
   }
 
   function snapshotRangeFor(side: "LEFT" | "RIGHT"): void {
@@ -236,7 +282,7 @@
   let toolbarLeft = $state(0);
 
   function updateToolbarPosition(): void {
-    if (typeof window === "undefined" || !liveSelection) return;
+    if (typeof window === "undefined" || (!liveSelection && !liveSymbolSelection)) return;
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0) return;
     const rect = sel.getRangeAt(0).getBoundingClientRect();
@@ -246,9 +292,9 @@
   }
 
   $effect(() => {
-    // Reposition whenever liveSelection changes. `liveSelection`
-    // gates the effect so we only run when it's actually set.
-    if (liveSelection) updateToolbarPosition();
+    // Reposition whenever either selection kind changes. The check
+    // gates the effect so we only run when one is actually set.
+    if (liveSelection || liveSymbolSelection) updateToolbarPosition();
   });
 
   function openComposerFromToolbar(): void {
@@ -266,6 +312,19 @@
     selectionSnapshot = selText.trim() || null;
     askError = null;
     openAsk = `${liveSelection.endLine}:${liveSelection.side}`;
+  }
+
+  // searchSymbolFromToolbar fires the Refs affordance: it hands the
+  // selected symbol to the symbolRefs store, which greps the PR for
+  // other occurrences. The gutter that renders the results is a later
+  // task — this only triggers the search. currentCommitSha() is the
+  // new-side SHA of the current diff scope, matching hunk new_num
+  // numbering, so the line numbers the server returns line up with
+  // what's on screen.
+  function searchSymbolFromToolbar(): void {
+    const sym = liveSymbolSelection?.text ?? "";
+    if (!isSymbolQuery(sym)) return;
+    void symbolRefsStore.search(owner, name, number, currentCommitSha(), sym);
   }
 
   function nearestLineWrap(node: Node | null): HTMLElement | null {
@@ -585,7 +644,7 @@
   }
 </script>
 
-{#if liveSelection}
+{#if liveSelection || liveSymbolSelection}
   <div
     class="selection-toolbar"
     style="top: {toolbarTop}px; left: {toolbarLeft}px"
@@ -594,28 +653,44 @@
     tabindex="-1"
     aria-label="Selection actions"
   >
-    <span class="selection-toolbar__label">
-      Lines {liveSelection.startLine}–{liveSelection.endLine}
-    </span>
-    <button
-      type="button"
-      class="selection-toolbar__btn selection-toolbar__btn--comment"
-      onclick={openComposerFromToolbar}
-      title="Comment on the selected lines"
-    >
-      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M5 2V8M2 5H8" stroke-linecap="round" />
-      </svg>
-      Comment
-    </button>
-    <button
-      type="button"
-      class="selection-toolbar__btn selection-toolbar__btn--ask"
-      onclick={openAskFromToolbar}
-      title="Ask Claude about the selected lines"
-    >
-      ? Ask
-    </button>
+    {#if liveSelection}
+      <span class="selection-toolbar__label">
+        Lines {liveSelection.startLine}–{liveSelection.endLine}
+      </span>
+      <button
+        type="button"
+        class="selection-toolbar__btn selection-toolbar__btn--comment"
+        onclick={openComposerFromToolbar}
+        title="Comment on the selected lines"
+      >
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M5 2V8M2 5H8" stroke-linecap="round" />
+        </svg>
+        Comment
+      </button>
+      <button
+        type="button"
+        class="selection-toolbar__btn selection-toolbar__btn--ask"
+        onclick={openAskFromToolbar}
+        title="Ask Claude about the selected lines"
+      >
+        ? Ask
+      </button>
+    {/if}
+    {#if liveSymbolSelection}
+      <button
+        type="button"
+        class="selection-toolbar__btn selection-toolbar__btn--refs"
+        onclick={searchSymbolFromToolbar}
+        title="Find other references to this symbol"
+      >
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="4" cy="4" r="3" />
+          <path d="M6.5 6.5L9 9" stroke-linecap="round" />
+        </svg>
+        Refs
+      </button>
+    {/if}
   </div>
 {/if}
 
@@ -1405,6 +1480,10 @@
 
   .selection-toolbar__btn--ask {
     background: var(--accent-claude);
+  }
+
+  .selection-toolbar__btn--refs {
+    background: var(--accent-teal);
   }
 
   .selection-toolbar__btn:hover {
