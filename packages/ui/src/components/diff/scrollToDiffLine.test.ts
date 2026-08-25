@@ -78,6 +78,24 @@ describe("findDiffLineEl", () => {
 
     expect(findDiffLineEl({ path: "a/b[1].go", line: 7 })).toBe(wrap);
   });
+
+  // Known gap, not fixed here: escapeForSelector's fallback (used when
+  // CSS.escape is unavailable, as under jsdom) returns the path
+  // unescaped. A literal `\` is one of the two characters that are
+  // actually special inside a double-quoted attribute-selector value
+  // (the other is `"`) — under the fallback it's read as a CSS escape
+  // lead-in rather than a literal character, so the lookup silently
+  // fails to match (no exception, it just doesn't find the element). A
+  // literal `"` is worse: it terminates the selector's quoted string
+  // early and document.querySelector throws instead. Pinned as `.fails`
+  // so this starts failing loudly — telling us to update it — the day
+  // the fallback gets a real escaper.
+  it.fails("does not match a path with a literal backslash, under the fallback", () => {
+    const fileEl = makeDiffFile("a/b\\c.go");
+    const wrap = appendLineWrap(fileEl, 20, "RIGHT");
+
+    expect(findDiffLineEl({ path: "a/b\\c.go", line: 20 })).toBe(wrap);
+  });
 });
 
 function makeDeps(overrides: Partial<DiffJumpDeps> = {}): DiffJumpDeps {
@@ -131,9 +149,8 @@ describe("scrollToDiffLine", () => {
     const fileEl = makeDiffFile("a/b.go");
     // Nothing rendered yet — simulates a collapsed file. The toggle mock
     // stands in for Svelte mounting the line once the file expands.
-    let mounted: HTMLElement | null = null;
     const toggleFileCollapsed = vi.fn(() => {
-      mounted = appendLineWrap(fileEl, 10, "RIGHT");
+      appendLineWrap(fileEl, 10, "RIGHT");
     });
     const deps = makeDeps({
       isFileCollapsed: () => true,
@@ -144,6 +161,14 @@ describe("scrollToDiffLine", () => {
 
     expect(toggleFileCollapsed).toHaveBeenCalledWith("a/b.go");
     expect(outcome).toBe("line");
+    // Query at assertion time instead of capturing the mounted element in
+    // a closure variable: a `let` reassigned only inside the vi.fn()
+    // callback narrows to its initializer's type under TS's control-flow
+    // analysis, so a later `mounted?.scrollIntoView` read resolves to
+    // `never` and fails to typecheck. That's invisible to `make
+    // frontend-check` (which excludes test files) but real under a
+    // test-inclusive typecheck.
+    const mounted = findDiffLineEl({ path: "a/b.go", line: 10, side: "RIGHT" });
     expect(mounted).not.toBeNull();
     expect(mounted?.scrollIntoView).toHaveBeenCalled();
   });

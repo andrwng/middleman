@@ -390,6 +390,14 @@
   function newNumForTop(i: number): number {
     return gapNewStart + i;
   }
+  // oldNumForBottom/newNumForBottom are only ever used by top/middle
+  // regions today: expandBottom and requestExpandBottom (above) both
+  // return unconditionally for position === "bottom", so bottomLines/
+  // bottomCount never leave []/0 there — a bottom region's revealed
+  // lines render exclusively through the newNumForTop path instead.
+  // DiffFile also passes lineCount={0} for bottom regions, so if those
+  // guards were ever lifted this formula (which reads lineCount) would
+  // need revisiting first.
   function oldNumForBottom(i: number): number {
     return gapOldStart + lineCount - bottomCount + i;
   }
