@@ -433,6 +433,8 @@ func (s *Server) getSymbolRefsLocal(
 	defer cancel()
 	hits, err := worktrees.GrepSymbol(gctx, w.Path, input.SHA, symbol)
 	if err != nil {
+		slog.ErrorContext(ctx, "symbol search failed",
+			"path", w.Path, "name", input.Name, "number", input.Number, "err", err)
 		return nil, huma.Error502BadGateway("symbol search failed")
 	}
 
