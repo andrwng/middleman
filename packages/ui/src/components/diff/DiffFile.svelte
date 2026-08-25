@@ -1489,10 +1489,44 @@
      Stays until superseded by another jump or cleared when the
      gutter closes. :global because the target can be a line
      revealed inside a CollapsedRegion, not just one of this file's
-     own .line-wrap elements. */
+     own .line-wrap elements -- in that case the class lands directly
+     on a bare .diff-line instead of a wrapping .line-wrap.
+
+     Painted as an ::after overlay rather than as background/box-shadow
+     on the highlighted element itself: DiffLine.svelte's .diff-line
+     sets an unconditional, opaque `background: var(--diff-bg)` (or
+     the add/del variant), and .diff-line is always a child of
+     whichever element carries this class -- .line-wrap wraps it in
+     the normal case, and in the CollapsedRegion case the class lands
+     on .diff-line itself, tying with its own same-specificity
+     background rule. Either way the opaque background wins on every
+     line, not just add/delete ones, so nothing painted as a
+     background on the ancestor/self ever shows through. An
+     absolutely-positioned overlay sidesteps the fight entirely by
+     painting in its own layer above the static content instead of
+     underneath it. */
   :global(.line-wrap--jump-highlight) {
-    background: color-mix(in srgb, var(--accent-teal) 18%, transparent);
-    box-shadow: inset 3px 0 0 0 var(--accent-teal);
+    /* Containing block for the ::after overlay below. .line-wrap
+       already declares this, so it's a no-op there; it's what makes
+       the bare-.diff-line (CollapsedRegion) case work too, instead of
+       inset: 0 resolving against a distant positioned ancestor (e.g.
+       the sticky file header) and escaping the line entirely. */
+    position: relative;
+  }
+
+  :global(.line-wrap--jump-highlight)::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    /* Strictly between .diff-line's own children -- unpositioned, so
+       always painted beneath any positioned, non-negative-z-indexed
+       box regardless of the exact value -- and .line-actions's
+       z-index: 1. Above the diff content, below the hover
+       comment/ask buttons so they stay legible over the tint. */
+    z-index: 0;
+    background: color-mix(in srgb, var(--accent-teal) 22%, transparent);
+    border-left: 3px solid var(--accent-teal);
+    pointer-events: none;
   }
 
   .line-actions {
