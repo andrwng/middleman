@@ -485,6 +485,44 @@ describe("CollapsedRegion reveal-and-jump (revealNewLine / onrevealed)", () => {
     expect(totalLines).toBe(2200 - 1000 + 1);
   });
 
+  it("a known-size gap target more than one chunk away converges over several capped fetches, each within the server's line-span cap", async () => {
+    const onrevealed = vi.fn();
+    const { container, diffStore } = renderRegion({
+      position: "middle",
+      lineCount: 5000,
+      gapNewStart: 100,
+      gapOldStart: 80,
+      // 1301 lines from the top edge (and far closer than the bottom
+      // edge, 3700 lines away) — over twice the 500-line chunk size,
+      // so a single uncapped request (the pre-fix behavior) can
+      // exceed the server's 2000-line hard cap for a large enough
+      // gap, and always takes more than one chunk here.
+      revealNewLine: 1400,
+      onrevealed,
+    });
+
+    await waitFor(() => {
+      expect(onrevealed).toHaveBeenCalledTimes(1);
+    });
+
+    const el = container.querySelector('[data-anchor-line="1400"][data-anchor-side="RIGHT"]');
+    expect(el).not.toBeNull();
+
+    // Converged over several requests rather than one all-or-nothing
+    // fetch — and critically, no individual fetch's span exceeded the
+    // chunk size. This is the assertion that catches the original bug:
+    // before the fix, this would have been a single (100, 1400) call,
+    // a 1301-line span a real large gap could push past the server's cap.
+    const calls = vi.mocked(diffStore.loadBlobRange).mock.calls;
+    expect(calls.length).toBeGreaterThan(1);
+    for (const [, , start, end] of calls) {
+      expect(end - start + 1).toBeLessThanOrEqual(500);
+    }
+    // The chunks tile the whole span with no gaps or overlaps.
+    const totalLines = calls.reduce((sum, [, , start, end]) => sum + (end - start + 1), 0);
+    expect(totalLines).toBe(1400 - 100 + 1);
+  });
+
   describe("window containment boundaries", () => {
     it("the first line of a window is treated as in-window (inclusive lower bound)", async () => {
       const onrevealed = vi.fn();

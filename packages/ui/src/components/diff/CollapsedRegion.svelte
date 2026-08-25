@@ -369,13 +369,17 @@
     }
 
     // Known-size gap: grow from whichever edge is nearer so the
-    // reveal costs as few lines as possible.
+    // reveal costs as few lines as possible. Chunk toward it the same
+    // way the "bottom" branch above does — the nearer-edge distance
+    // can still exceed the server's per-request cap for a large gap,
+    // and the effect re-runs on topCount/bottomCount changes so this
+    // converges over successive passes just like that branch.
     const needViaTop = target - (gapNewStart + topCount - 1);
     const needViaBottom = gapNewStart + lineCount - bottomCount - target;
     if (needViaTop <= needViaBottom) {
-      void expandTop(needViaTop);
+      void expandTop(Math.min(needViaTop, CHUNK));
     } else {
-      void expandBottom(needViaBottom);
+      void expandBottom(Math.min(needViaBottom, CHUNK));
     }
   });
 
