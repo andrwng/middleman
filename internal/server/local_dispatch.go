@@ -330,6 +330,14 @@ func (s *Server) getBlobRangeLocal(
 	if input.SHA == "" {
 		return nil, huma.Error400BadRequest("sha is required")
 	}
+	// Same defense as getSymbolRefs: sha reaches `git cat-file` as a
+	// positional revision argument (worktrees.BlobRange), so reject
+	// anything that isn't a hex object id or the working-tree sentinel
+	// before it gets there. Reuses symbolRefsSHA rather than a second
+	// copy of the pattern.
+	if input.SHA != worktrees.WorkingTreeSentinel && !symbolRefsSHA.MatchString(input.SHA) {
+		return nil, huma.Error400BadRequest("sha must be a hex object id")
+	}
 	if input.Start < 1 {
 		return nil, huma.Error400BadRequest("start must be >= 1")
 	}
@@ -366,6 +374,14 @@ func (s *Server) getBlobLocal(
 	}
 	if input.SHA == "" {
 		return nil, huma.Error400BadRequest("sha is required")
+	}
+	// Same defense as getSymbolRefs: sha reaches `git cat-file` as a
+	// positional revision argument (worktrees.Blob), so reject anything
+	// that isn't a hex object id or the working-tree sentinel before it
+	// gets there. Reuses symbolRefsSHA rather than a second copy of the
+	// pattern.
+	if input.SHA != worktrees.WorkingTreeSentinel && !symbolRefsSHA.MatchString(input.SHA) {
+		return nil, huma.Error400BadRequest("sha must be a hex object id")
 	}
 	w, err := s.resolveLocalWorktree(ctx, input.Name, input.Number)
 	if err != nil {
