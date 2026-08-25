@@ -202,6 +202,18 @@
     const anchorWrap = nearestLineWrap(sel.anchorNode);
     const focusWrap = nearestLineWrap(sel.focusNode);
     if (!anchorWrap || !focusWrap) return null;
+    // nearestLineWrap matches on dataset.anchorLine alone, which a
+    // revealed context line in a CollapsedRegion also carries (on a
+    // plain .diff-line, not a .line-wrap) so a symbol search can find
+    // it. But a Comment/Ask composer only ever renders inside the
+    // hunk loops below, keyed by a real .line-wrap's anchor — so a
+    // range that resolves to a revealed gap line on either end must
+    // not become a live selection, or the toolbar opens a composer
+    // that never mounts. computeSymbolSelection (below) intentionally
+    // has no such restriction: a single-line search from a revealed
+    // line works end to end and must keep working.
+    if (!anchorWrap.classList.contains("line-wrap")) return null;
+    if (!focusWrap.classList.contains("line-wrap")) return null;
     if (!fileEl.contains(anchorWrap) || !fileEl.contains(focusWrap)) return null;
 
     const aSide = anchorWrap.dataset.anchorSide;

@@ -401,3 +401,108 @@ describe("DiffFile reveal-and-jump: plumbs a store reveal target to its collapse
     expect(diffStore.getRevealTarget()).toEqual({ path: "some/other/file.ts", line: 10 });
   });
 });
+
+// A revealed context line (rendered by CollapsedRegion via DiffLine) carries
+// data-anchor-line/data-anchor-side just like a hunk's .line-wrap does, so
+// nearestLineWrap resolves it too — but no composer ever mounts for it (only
+// the hunk loops render composers). computeSelectionRange must therefore
+// reject any range touching one, while computeSymbolSelection (single-line
+// only) is unaffected: a symbol search anchored on a revealed line still
+// works end to end.
+describe("DiffFile selection toolbar: revealed context lines are not composer anchors", () => {
+  beforeEach(() => {
+    // jsdom: scrollIntoView is not implemented; unused by these tests but
+    // exercised transitively by the reveal machinery's finishing flash.
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  // Reveals new-side lines 6..10 in the bottom CollapsedRegion's gap in one
+  // pass (see the "hands the target to the containing region..." test above
+  // for the arithmetic) so a test can select among them.
+  async function revealBottomGapLines(
+    diffStore: ReturnType<typeof createDiffStore>,
+  ): Promise<void> {
+    vi.spyOn(diffStore, "loadBlobRange").mockImplementation(
+      (_path: string, _sha: string, start: number, end: number) =>
+        Promise.resolve(
+          Array.from({ length: Math.max(0, end - start + 1) }, (_, i) => `line ${start + i}`),
+        ),
+    );
+    diffStore.requestRevealLine("src/foo.ts", 10);
+    await tick();
+    await waitFor(() => {
+      expect(
+        document.querySelector('[data-anchor-line="10"][data-anchor-side="RIGHT"]'),
+      ).not.toBeNull();
+    });
+  }
+
+  it("shows no Comment/Ask toolbar for a selection spanning two revealed gap lines", async () => {
+    const { diffStore } = renderDiffFile(makeFile());
+    await revealBottomGapLines(diffStore);
+
+    const startWrap = document.querySelector<HTMLElement>(
+      '[data-anchor-line="7"][data-anchor-side="RIGHT"]',
+    );
+    const endWrap = document.querySelector<HTMLElement>(
+      '[data-anchor-line="9"][data-anchor-side="RIGHT"]',
+    );
+    expect(startWrap).toBeTruthy();
+    expect(endWrap).toBeTruthy();
+    // Both are revealed CollapsedRegion lines, neither a real .line-wrap.
+    expect(startWrap!.classList.contains("line-wrap")).toBe(false);
+    expect(endWrap!.classList.contains("line-wrap")).toBe(false);
+
+    stubSelection({ anchorNode: startWrap!, focusNode: endWrap!, text: "line 7\nline 8\nline 9" });
+    await fireSelectionChange();
+
+    expect(screen.queryByTitle("Comment on the selected lines")).toBeNull();
+    expect(screen.queryByTitle("Ask Claude about the selected lines")).toBeNull();
+  });
+
+  it("shows no Comment/Ask toolbar for a selection from a real hunk line into a revealed gap line", async () => {
+    // The worse variant: one end is a genuine .line-wrap and would pass a
+    // check that only inspected the anchor (or only the focus) end.
+    const { diffStore } = renderDiffFile(makeFile());
+    await revealBottomGapLines(diffStore);
+
+    const hunkWrap = document.querySelector<HTMLElement>(
+      '.line-wrap[data-anchor-line="1"][data-anchor-side="RIGHT"]',
+    );
+    const gapWrap = document.querySelector<HTMLElement>(
+      '[data-anchor-line="7"][data-anchor-side="RIGHT"]',
+    );
+    expect(hunkWrap).toBeTruthy();
+    expect(gapWrap).toBeTruthy();
+    expect(gapWrap!.classList.contains("line-wrap")).toBe(false);
+
+    stubSelection({ anchorNode: hunkWrap!, focusNode: gapWrap!, text: "line 1\n...\nline 7" });
+    await fireSelectionChange();
+
+    expect(screen.queryByTitle("Comment on the selected lines")).toBeNull();
+    expect(screen.queryByTitle("Ask Claude about the selected lines")).toBeNull();
+  });
+
+  it("still shows the Refs button for a single-line symbol selection on a revealed gap line", async () => {
+    const { diffStore } = renderDiffFile(makeFile());
+    await revealBottomGapLines(diffStore);
+
+    const gapWrap = document.querySelector<HTMLElement>(
+      '[data-anchor-line="8"][data-anchor-side="RIGHT"]',
+    );
+    expect(gapWrap).toBeTruthy();
+    expect(gapWrap!.classList.contains("line-wrap")).toBe(false);
+
+    stubSelection({ anchorNode: gapWrap!, focusNode: gapWrap!, text: "fooBar" });
+    await fireSelectionChange();
+
+    expect(screen.getByTitle("Find other references to this symbol")).toBeTruthy();
+    expect(screen.queryByTitle("Comment on the selected lines")).toBeNull();
+    expect(screen.queryByTitle("Ask Claude about the selected lines")).toBeNull();
+  });
+});
