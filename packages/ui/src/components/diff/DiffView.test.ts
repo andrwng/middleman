@@ -1,4 +1,4 @@
-import { cleanup, render } from "@testing-library/svelte";
+import { cleanup, render, waitFor } from "@testing-library/svelte";
 import { tick } from "svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { STORES_KEY } from "../../context.js";
@@ -31,6 +31,32 @@ function installFailingFetch(): void {
 
 function hit(overrides: Partial<SymbolHit> = {}): SymbolHit {
   return { path: "a.go", line: 1, text: "ref line", kind: "reference", ...overrides };
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+// Answers only the /commits endpoint (reading `sha` at call time, not
+// capture time, so a test can advance it to simulate a later commits
+// refresh); every other URL 404s, matching installFailingFetch's spirit
+// that this suite doesn't care about diff/file rendering.
+function installCommitsFetch(getSha: () => string): void {
+  globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
+    const url =
+      typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (url.includes("/commits")) {
+      return jsonResponse({
+        commits: [
+          { sha: getSha(), message: "head", author_name: "Alice", authored_at: "2026-01-01T00:00:00Z" },
+        ],
+      });
+    }
+    return jsonResponse({}, 404);
+  }) as unknown as typeof fetch;
 }
 
 // diffStore never calls client.GET (it loads via raw fetch, stubbed
@@ -126,6 +152,52 @@ describe("DiffView symbol-refs scope guard", () => {
     // and close the search the user is still looking at; watching the
     // derived string key must not.
     diffStore.selectCommit("sha-a");
+    await tick();
+
+    expect(symbolRefsStore.isActive()).toBe(true);
+  });
+
+  it("closes an active symbol search when the PR head advances while scope stays 'head' (a background sync, not a scope change)", async () => {
+    let headSha = "sha-head-1";
+    installCommitsFetch(() => headSha);
+
+    const { diffStore, symbolRefsStore } = renderDiffView();
+    await waitFor(() => {
+      expect(diffStore.getCurrentCommitSha()).toBe("sha-head-1");
+    });
+
+    await symbolRefsStore.search("acme", "widget", 7, "sha-head-1", "Foo");
+    expect(symbolRefsStore.isActive()).toBe(true);
+
+    // Simulate a background sync advancing the PR head: diffScopeKey
+    // maps every head-scope view to the same "head" string, so this
+    // never looks like a scope change -- only the resolved SHA moves.
+    headSha = "sha-head-2";
+    await diffStore.refresh();
+    await waitFor(() => {
+      expect(diffStore.getCurrentCommitSha()).toBe("sha-head-2");
+    });
+
+    await waitFor(() => {
+      expect(symbolRefsStore.isActive()).toBe(false);
+    });
+  });
+
+  it("does not close a search while the head SHA it was searched against is still current", async () => {
+    installCommitsFetch(() => "sha-head-1");
+
+    const { diffStore, symbolRefsStore } = renderDiffView();
+    await waitFor(() => {
+      expect(diffStore.getCurrentCommitSha()).toBe("sha-head-1");
+    });
+
+    await symbolRefsStore.search("acme", "widget", 7, "sha-head-1", "Foo");
+    expect(symbolRefsStore.isActive()).toBe(true);
+
+    // A refresh that resolves to the SAME head SHA (nothing actually
+    // changed) must not disturb the search the user is still looking at.
+    await diffStore.refresh();
+    await tick();
     await tick();
 
     expect(symbolRefsStore.isActive()).toBe(true);

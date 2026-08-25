@@ -36,6 +36,12 @@ export interface SymbolRefsStoreOptions {
 export function createSymbolRefsStore(opts: SymbolRefsStoreOptions) {
   const client = opts.client;
   let query = $state("");
+  // The SHA the current (or most recent) search was run against. Lets a
+  // caller notice when the diff scope's SHA has since moved out from
+  // under an active search -- e.g. a background sync advancing the PR
+  // head -- so the stale hits can be closed rather than left rendered
+  // against line numbers that no longer match.
+  let searchedSha = $state("");
   let hits = $state<SymbolHit[]>([]);
   let inPrTotal = $state(0);
   let outsidePrTotal = $state(0);
@@ -47,6 +53,9 @@ export function createSymbolRefsStore(opts: SymbolRefsStoreOptions) {
 
   function getQuery(): string {
     return query;
+  }
+  function getSearchedSha(): string {
+    return searchedSha;
   }
   function getHits(): SymbolHit[] {
     return hits;
@@ -85,6 +94,7 @@ export function createSymbolRefsStore(opts: SymbolRefsStoreOptions) {
     if (!isSymbolQuery(q)) return;
     const ticket = ++seq;
     query = q;
+    searchedSha = sha;
     status = "loading";
     errorMsg = null;
     hits = [];
@@ -112,6 +122,7 @@ export function createSymbolRefsStore(opts: SymbolRefsStoreOptions) {
   function close(): void {
     seq++;
     query = "";
+    searchedSha = "";
     hits = [];
     inPrTotal = 0;
     outsidePrTotal = 0;
@@ -121,7 +132,7 @@ export function createSymbolRefsStore(opts: SymbolRefsStoreOptions) {
   }
 
   return {
-    getQuery, getHits, getInPrTotal, getOutsidePrTotal, isTruncated,
+    getQuery, getSearchedSha, getHits, getInPrTotal, getOutsidePrTotal, isTruncated,
     getStatus, getError, isActive, search, close,
   };
 }

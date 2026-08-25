@@ -107,6 +107,12 @@
   const tabWidth = $derived(diffStore.getTabWidth());
   const scope = $derived(diffStore.getScope());
   const interdiff = $derived(diffStore.getInterdiff());
+  // Tracked alongside `scope` for the symbol-refs staleness watcher
+  // below: diffScopeKey collapses every head-scope view to the same
+  // "head" string, so a background sync that advances the PR head
+  // (refresh() re-fetches commits without changing scope.kind) needs
+  // its own signal, distinct from a genuine scope change.
+  const currentSha = $derived(diffStore.getCurrentCommitSha());
 
   function scrollToFile(path: string): void {
     if (!diffArea) return;
@@ -223,6 +229,16 @@
   // whichever shas/numbers that kind carries -- so two
   // structurally-identical scopes always produce the same string
   // regardless of object identity.
+  //
+  // The key alone misses one case: every head-scope view maps to the
+  // same "head" string, so a background sync that advances the PR head
+  // (diffStore.refresh() re-fetching commits) changes nothing the key
+  // can see, even though the rendered line numbers just shifted under
+  // an active search's feet. currentSha (tracked alongside the key)
+  // catches that: it's the same currentCommitSha() derivation DiffFile
+  // searched against, so comparing it to the store's own recorded
+  // searched-sha detects the drift regardless of whether scope.kind
+  // changed.
   function diffScopeKey(s: DiffScope): string {
     switch (s.kind) {
       case "head": return "head";
@@ -240,12 +256,20 @@
   let lastScopeKey: string | undefined;
   $effect(() => {
     const key = diffScopeKey(scope);
-    // isActive()/close() read and write the store's own `status` field.
-    // untrack keeps this effect from subscribing to it -- same gotcha,
-    // avoided here, as the one noted in WorktreeConversation.svelte --
-    // so closing a search doesn't turn around and re-trigger this effect.
+    const sha = currentSha;
+    // isActive()/getSearchedSha()/close() read and write the store's own
+    // state. untrack keeps this effect from subscribing to it -- same
+    // gotcha, avoided here, as the one noted in WorktreeConversation.svelte
+    // -- so closing a search doesn't turn around and re-trigger this effect.
     untrack(() => {
-      if (lastScopeKey !== undefined && key !== lastScopeKey && symbolRefsStore.isActive()) {
+      const scopeChanged = lastScopeKey !== undefined && key !== lastScopeKey;
+      const searchedSha = symbolRefsStore.getSearchedSha();
+      // "" on either side means "not known yet" (no search recorded, or
+      // commits mid-reload after e.g. refresh() nulls them out) rather
+      // than a real divergence -- wait for a definite new SHA to compare
+      // against instead of closing on the transient gap.
+      const shaDrifted = searchedSha !== "" && sha !== "" && searchedSha !== sha;
+      if (symbolRefsStore.isActive() && (scopeChanged || shaDrifted)) {
         symbolRefsStore.close();
       }
       lastScopeKey = key;

@@ -107,6 +107,35 @@ describe("symbolRefs store", () => {
     expect(store.isActive()).toBe(false);
     expect(store.getStatus()).toBe("idle");
     expect(store.getHits()).toEqual([]);
+    expect(store.getSearchedSha()).toBe("");
+  });
+
+  it("search records the sha it was searched against, and close() clears it", async () => {
+    const store = createSymbolRefsStore({
+      client: stubClient({
+        GET: vi.fn(async () => ({ data: makeResponse("Foo", [makeHit()]), error: undefined })),
+      }),
+    });
+
+    await store.search("acme", "widget", 7, "sha-1", "Foo");
+    expect(store.getSearchedSha()).toBe("sha-1");
+
+    store.close();
+    expect(store.getSearchedSha()).toBe("");
+  });
+
+  it("a later search against a different sha overwrites the recorded one", async () => {
+    const store = createSymbolRefsStore({
+      client: stubClient({
+        GET: vi.fn(async () => ({ data: makeResponse("Foo", [makeHit()]), error: undefined })),
+      }),
+    });
+
+    await store.search("acme", "widget", 7, "sha-1", "Foo");
+    expect(store.getSearchedSha()).toBe("sha-1");
+
+    await store.search("acme", "widget", 7, "sha-2", "Bar");
+    expect(store.getSearchedSha()).toBe("sha-2");
   });
 
   it("search loads then reports hits, totals, and truncated from the response", async () => {

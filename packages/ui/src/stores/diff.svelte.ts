@@ -784,6 +784,20 @@ export function createDiffStore(opts: DiffStoreOptions) {
     return commits;
   }
 
+  // The SHA new comments and symbol-ref searches anchor against: the
+  // single commit or range's newer end for those scopes, otherwise the
+  // newest commit in the currently loaded list (commits is
+  // newest-first), or "" if commits haven't loaded yet. Shared by
+  // DiffFile (per-file rendering) and DiffView (the symbol-refs
+  // staleness watcher) so both read the exact same derivation instead
+  // of each keeping their own copy of this scope/commits logic.
+  function getCurrentCommitSha(): string {
+    if (scope.kind === "commit") return scope.sha;
+    if (scope.kind === "range") return scope.toSha;
+    if (commits && commits.length > 0) return commits[0]!.sha;
+    return "";
+  }
+
   function isCommitsLoading(): boolean {
     return commitsLoading;
   }
@@ -1403,6 +1417,7 @@ export function createDiffStore(opts: DiffStoreOptions) {
     clearDiff,
     getScope,
     getCommits,
+    getCurrentCommitSha,
     isCommitsLoading,
     getCommitsError,
     getCommitIndex,
