@@ -372,10 +372,23 @@
   // new-side SHA of the current diff scope, matching hunk new_num
   // numbering, so the line numbers the server returns line up with
   // what's on screen.
+  //
+  // Unlike Comment/Ask, the search is the last thing this selection is
+  // needed for — those two intentionally keep the selection alive
+  // (rangeSnapshot backs their composer's range indicator), but the
+  // toolbar container's mousedown preventDefault (below) means nothing
+  // else will ever collapse it here. Read the symbol out first, then
+  // collapse the DOM selection so the existing selectionchange effect
+  // recomputes liveSelection/liveSymbolSelection to null and the
+  // floating toolbar — which has no other trigger to disappear — goes
+  // away along with the leftover text-selection highlight.
   function searchSymbolFromToolbar(): void {
     const sym = liveSymbolSelection ?? "";
     if (!isSymbolQuery(sym)) return;
     void symbolRefsStore.search(owner, name, number, currentCommitSha(), sym);
+    if (typeof window !== "undefined") {
+      window.getSelection()?.removeAllRanges();
+    }
   }
 
   function nearestLineWrap(node: Node | null): HTMLElement | null {

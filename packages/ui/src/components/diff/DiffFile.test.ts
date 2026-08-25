@@ -211,6 +211,7 @@ interface SelectionStub {
   focusNode: Node | null;
   toString(): string;
   getRangeAt(index: number): { getBoundingClientRect(): DOMRect };
+  removeAllRanges(): void;
 }
 
 // Drives a fake text selection: anchorNode/focusNode must be real nodes
@@ -220,7 +221,16 @@ interface SelectionStub {
 // return for that range — decoupled from actual DOM content because the
 // tokenizeLineDual mock above means rendered code lines carry no text
 // nodes to select from.
-function stubSelection(opts: { anchorNode: Node; focusNode: Node; text: string }): void {
+//
+// window.getSelection() is mocked to always return this same stub object,
+// so removeAllRanges() below is the exact function DiffFile calls. It
+// flips isCollapsed/rangeCount to what a real Selection reports once
+// collapsed, so a caller that re-fires selectionchange after calling it
+// sees the same "nothing selected" state a real browser would produce.
+// Returns the spy so a test can assert on call count.
+function stubSelection(
+  opts: { anchorNode: Node; focusNode: Node; text: string },
+): { removeAllRanges: ReturnType<typeof vi.fn> } {
   const rect: DOMRect = {
     bottom: 0, height: 0, left: 0, right: 0, top: 0, width: 0, x: 0, y: 0,
     toJSON: () => ({}),
@@ -232,8 +242,15 @@ function stubSelection(opts: { anchorNode: Node; focusNode: Node; text: string }
     focusNode: opts.focusNode,
     toString: () => opts.text,
     getRangeAt: () => ({ getBoundingClientRect: () => rect }),
+    removeAllRanges: () => {},
   };
+  const removeAllRanges = vi.fn(() => {
+    sel.isCollapsed = true;
+    sel.rangeCount = 0;
+  });
+  sel.removeAllRanges = removeAllRanges;
   vi.spyOn(window, "getSelection").mockReturnValue(sel as unknown as Selection);
+  return { removeAllRanges };
 }
 
 // DiffFile's own selectionchange listener runs synchronously off the
@@ -383,6 +400,33 @@ describe("DiffFile selection toolbar: Refs affordance", () => {
     await fireEvent.click(screen.getByTitle("Find other references to this symbol"));
 
     expect(searchSpy).toHaveBeenCalledWith(owner, "n", 1, "deadbeef", "fooBar");
+  });
+
+  it("collapses the selection after Refs is clicked, so the toolbar disappears", async () => {
+    const { diffStore, symbolRefsStore } = renderDiffFile(makeFile());
+    await diffStore.selectCommit("deadbeef");
+    vi.spyOn(symbolRefsStore, "search").mockResolvedValue(undefined);
+
+    const wrap = document.querySelector<HTMLElement>(
+      '.line-wrap[data-anchor-line="2"][data-anchor-side="LEFT"]',
+    );
+    const { removeAllRanges } = stubSelection({ anchorNode: wrap!, focusNode: wrap!, text: "fooBar" });
+    await fireSelectionChange();
+    expect(screen.getByTitle("Find other references to this symbol")).toBeTruthy();
+
+    await fireEvent.click(screen.getByTitle("Find other references to this symbol"));
+
+    expect(removeAllRanges).toHaveBeenCalledTimes(1);
+
+    // A real browser fires selectionchange as a side effect of
+    // removeAllRanges(); the stub Selection above doesn't wire DOM
+    // events on its own, so drive that side effect explicitly to
+    // prove the toolbar reacts to it the same way it would in
+    // production.
+    await fireSelectionChange();
+
+    expect(screen.queryByTitle("Find other references to this symbol")).toBeNull();
+    expect(screen.queryByRole("toolbar")).toBeNull();
   });
 });
 
