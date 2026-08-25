@@ -1,11 +1,19 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { getStores } from "../../context.js";
+  import { clampGutterWidth } from "./gutterStack.js";
 
-  const { diff: diffStore, ai: aiStore, brief: briefStore, reviewThreads: reviewThreadsStore } = getStores();
+  const {
+    diff: diffStore,
+    ai: aiStore,
+    brief: briefStore,
+    reviewThreads: reviewThreadsStore,
+    symbolRefs: symbolRefsStore,
+  } = getStores();
   import DiffToolbar from "./DiffToolbar.svelte";
   import DiffFileComponent from "./DiffFile.svelte";
   import ReviewPanel from "./ReviewPanel.svelte";
+  import SymbolRefsGutter from "./SymbolRefsGutter.svelte";
 
   interface Props {
     owner: string;
@@ -16,8 +24,56 @@
   const { owner, name, number }: Props = $props();
 
   let diffArea: HTMLDivElement | undefined = $state();
+  let diffAreaRow: HTMLDivElement | undefined = $state();
   let scrollRaf = 0;
   let reviewPanelOpen = $state(false);
+
+  // Symbol references gutter width — horizontally resizable, persisted
+  // across reloads. The drag handle lives here (not in the gutter
+  // component) because clampGutterWidth needs the row's own clientWidth.
+  const SYMBOL_REFS_GUTTER_WIDTH_KEY = "symbol-refs-gutter-width";
+  const DEFAULT_SYMBOL_REFS_GUTTER_WIDTH = 360;
+
+  function loadSymbolRefsGutterWidth(): number {
+    try {
+      const v = Number(localStorage.getItem(SYMBOL_REFS_GUTTER_WIDTH_KEY));
+      if (Number.isFinite(v) && v > 0) return v;
+    } catch {
+      /* localStorage unavailable — fall through to default */
+    }
+    return DEFAULT_SYMBOL_REFS_GUTTER_WIDTH;
+  }
+
+  let symbolRefsGutterWidth = $state(loadSymbolRefsGutterWidth());
+  let resizingSymbolRefsGutter = false;
+  let gutterResizeStartX = 0;
+  let gutterResizeStartWidth = 0;
+
+  function onGutterResizeStart(e: PointerEvent): void {
+    resizingSymbolRefsGutter = true;
+    gutterResizeStartX = e.clientX;
+    gutterResizeStartWidth = symbolRefsGutterWidth;
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  }
+  function onGutterResizeMove(e: PointerEvent): void {
+    if (!resizingSymbolRefsGutter) return;
+    // Dragging the handle left (toward the diff body) widens the gutter.
+    const delta = gutterResizeStartX - e.clientX;
+    symbolRefsGutterWidth = clampGutterWidth(
+      gutterResizeStartWidth + delta,
+      diffAreaRow?.clientWidth ?? 0,
+    );
+  }
+  function onGutterResizeEnd(e: PointerEvent): void {
+    if (!resizingSymbolRefsGutter) return;
+    resizingSymbolRefsGutter = false;
+    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+    try {
+      localStorage.setItem(SYMBOL_REFS_GUTTER_WIDTH_KEY, String(Math.round(symbolRefsGutterWidth)));
+    } catch {
+      /* localStorage unavailable — width still applies for this session */
+    }
+  }
 
   onMount(() => {
     void diffStore.loadDiff(owner, name, number);
@@ -36,6 +92,11 @@
       aiStore.stop();
       reviewThreadsStore.clear();
       briefStore.stop();
+      // Closes any open symbol-references search so a stale result set
+      // from this PR doesn't reappear (isActive() still true) the
+      // instant a different PR's DiffView mounts — symbolRefsStore is
+      // an app-wide singleton, not scoped per PR like the diff itself.
+      symbolRefsStore.close();
     };
   });
 
@@ -184,20 +245,37 @@
     {:else if diff}
       <div class="diff-main">
         <DiffToolbar onReviewClick={() => { reviewPanelOpen = true; }} />
-        <div
-          class="diff-area"
-          bind:this={diffArea}
-          onscroll={onDiffScroll}
-          style:tab-size={tabWidth}
-        >
-          {#each diff.files as file (file.path)}
-            <DiffFileComponent
-              {file}
-              {owner}
-              {name}
-              {number}
-            />
-          {/each}
+        <div class="diff-area-row" bind:this={diffAreaRow}>
+          <div
+            class="diff-area"
+            bind:this={diffArea}
+            onscroll={onDiffScroll}
+            style:tab-size={tabWidth}
+          >
+            {#each diff.files as file (file.path)}
+              <DiffFileComponent
+                {file}
+                {owner}
+                {name}
+                {number}
+              />
+            {/each}
+          </div>
+          {#if symbolRefsStore.isActive()}
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div
+              class="symref-gutter-resize"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize symbol references gutter"
+              title="Drag to resize the symbol references gutter"
+              onpointerdown={onGutterResizeStart}
+              onpointermove={onGutterResizeMove}
+              onpointerup={onGutterResizeEnd}
+              onpointercancel={onGutterResizeEnd}
+            ></div>
+            <SymbolRefsGutter {owner} {name} {number} width={symbolRefsGutterWidth} />
+          {/if}
         </div>
       </div>
     {/if}
@@ -257,9 +335,35 @@
     overflow: hidden;
   }
 
+  /* Row containing the scrolling diff body and (when active) the
+     symbol-references gutter side by side. flex: 1 here does the
+     vertical-growth job .diff-area's own flex: 1 used to do alone;
+     min-height: 0 keeps it from taking its children's natural height
+     instead of the space .diff-main actually has left. */
+  .diff-area-row {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+  }
+
   .diff-area {
     flex: 1;
+    /* Lets the diff shrink instead of pushing the gutter off-screen
+       when the row above also holds a fixed-width gutter. */
+    min-width: 0;
     overflow: auto;
+  }
+
+  .symref-gutter-resize {
+    flex-shrink: 0;
+    width: 6px;
+    cursor: col-resize;
+    background: transparent;
+  }
+
+  .symref-gutter-resize:hover {
+    background: var(--accent-blue);
+    opacity: 0.4;
   }
 
   .diff-state {
