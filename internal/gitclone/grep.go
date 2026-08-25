@@ -53,10 +53,14 @@ func ParseGrepZ(data []byte, revPrefix string) []SymbolHit {
 		if revPrefix != "" {
 			path = strings.TrimPrefix(path, revPrefix)
 		}
+		// Records are split on "\n" alone, so a CRLF file's line keeps
+		// its trailing "\r" here; trim it so it doesn't leak into the
+		// API response and the rendered hit text.
+		text := strings.TrimSuffix(string(parts[2]), "\r")
 		hits = append(hits, SymbolHit{
 			Path: path,
 			Line: line,
-			Text: string(parts[2]),
+			Text: text,
 		})
 	}
 	return hits

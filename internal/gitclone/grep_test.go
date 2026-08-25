@@ -47,6 +47,12 @@ func TestParseGrepZ(t *testing.T) {
 			revPrefix: "HEAD:",
 			want:      []gitclone.SymbolHit{{Path: "a.go", Line: 5, Text: "m := map[string]int{\"k:v\": 1}"}},
 		},
+		{
+			name:      "a CRLF file's trailing carriage return is trimmed from the hit text",
+			data:      "HEAD:a.go\x005\x00Foo()\r\n",
+			revPrefix: "HEAD:",
+			want:      []gitclone.SymbolHit{{Path: "a.go", Line: 5, Text: "Foo()"}},
+		},
 		{name: "empty input", data: "", revPrefix: "HEAD:", want: nil},
 		{
 			name:      "malformed records are skipped",
