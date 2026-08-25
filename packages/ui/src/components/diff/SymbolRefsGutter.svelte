@@ -61,6 +61,30 @@
   const noisyHits = $derived(hits.filter((h) => NOISY_KINDS.has(h.kind)));
   const noisyGroups = $derived(groupConsecutive(noisyHits));
 
+  // The server partitions hits against the whole PR's changed-file set,
+  // but the rendered diff may only cover part of that (a single commit
+  // or a range). A hit whose path isn't part of what's on screen right
+  // now can never resolve when clicked — findDiffLineEl and the
+  // file-header fallback both look for a `.diff-file` that doesn't
+  // exist. renderedPaths lets rows say so up front rather than only
+  // after a click that silently does nothing.
+  const renderedPaths = $derived(
+    new Set((diffStore.getDiff()?.files ?? []).map((f) => f.path)),
+  );
+
+  // Set to the (path, line) of a hit whose jump just resolved as
+  // "missing" (scrollToDiffLine.ts), so a brief explanation can render
+  // next to that row. Cleared at the start of every jump attempt.
+  let missingJump = $state<{ path: string; line: number } | null>(null);
+
+  function isMissingJump(hit: SymbolHit): boolean {
+    return (
+      missingJump !== null &&
+      missingJump.path === hit.path &&
+      missingJump.line === hit.line
+    );
+  }
+
   // Collapsed by default; resets whenever the store hands back a fresh
   // result set. The store always reassigns a new `hits` array reference
   // at the start of search() (even for a repeat query), so depending on
@@ -90,13 +114,18 @@
     }
   }
 
-  function jumpTo(hit: SymbolHit): void {
+  async function jumpTo(hit: SymbolHit): Promise<void> {
+    missingJump = null;
     const deps: DiffJumpDeps = {
       isFileCollapsed: (path) => diffStore.isFileCollapsed(owner, name, number, path),
       toggleFileCollapsed: (path) => diffStore.toggleFileCollapsed(owner, name, number, path),
       requestRevealLine: (path, line) => diffStore.requestRevealLine(path, line),
+      clearRevealTarget: () => diffStore.consumeRevealTarget(),
     };
-    void scrollToDiffLine({ path: hit.path, line: hit.line }, deps);
+    const outcome = await scrollToDiffLine({ path: hit.path, line: hit.line }, deps);
+    if (outcome === "missing") {
+      missingJump = { path: hit.path, line: hit.line };
+    }
   }
 
   function toggleNoisy(): void {
@@ -108,6 +137,12 @@
   <div class="symref-group">
     <div class="symref-group__header">
       <span class="symref-group__path" title={group.path}>{group.path}</span>
+      {#if !renderedPaths.has(group.path)}
+        <span
+          class="symref-group__not-in-view"
+          title="This file isn't part of the diff currently shown — change scope to see it"
+        >not in this view</span>
+      {/if}
       <span class="symref-group__count">{group.hits.length}</span>
     </div>
     {#each group.hits as hit, i (i)}
@@ -115,13 +150,16 @@
         type="button"
         class="symref-row"
         class:symref-row--definition={hit.kind === "definition"}
-        onclick={() => jumpTo(hit)}
+        onclick={() => void jumpTo(hit)}
         title={hit.text}
       >
         <span class="symref-row__line">{hit.line}</span>
         <span class="symref-row__kind symref-row__kind--{hit.kind}">{kindLabel(hit.kind)}</span>
         <span class="symref-row__text">{hit.text}</span>
       </button>
+      {#if isMissingJump(hit)}
+        <div class="symref-row__notice">Not part of the rendered diff — nothing to jump to.</div>
+      {/if}
     {/each}
   </div>
 {/snippet}
@@ -304,6 +342,28 @@
     font-family: var(--font-mono);
     font-size: 10px;
     color: var(--text-muted);
+  }
+
+  /* Mirrors DiffFile's .outdated-banner treatment: an amber, help-cursor
+     badge for a row whose target doesn't resolve in the diff on screen. */
+  .symref-group__not-in-view {
+    flex-shrink: 0;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 0 5px;
+    border-radius: 999px;
+    color: var(--accent-amber);
+    border: 1px solid color-mix(in srgb, var(--accent-amber) 40%, var(--border-muted));
+    cursor: help;
+    white-space: nowrap;
+  }
+
+  .symref-row__notice {
+    padding: 1px 8px 4px 12px;
+    font-size: 10px;
+    font-style: italic;
+    color: var(--accent-amber);
   }
 
   .symref-row {

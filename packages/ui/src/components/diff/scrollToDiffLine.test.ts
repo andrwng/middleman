@@ -103,6 +103,7 @@ function makeDeps(overrides: Partial<DiffJumpDeps> = {}): DiffJumpDeps {
     isFileCollapsed: () => false,
     toggleFileCollapsed: vi.fn(),
     requestRevealLine: vi.fn(),
+    clearRevealTarget: vi.fn(),
     ...overrides,
   };
 }
@@ -123,6 +124,7 @@ describe("scrollToDiffLine", () => {
     expect(outcome).toBe("line");
     expect(bare.scrollIntoView).toHaveBeenCalledWith({ block: "center", behavior: "smooth" });
     expect(bare.classList.contains("line-wrap--flash")).toBe(true);
+    expect(deps.clearRevealTarget).toHaveBeenCalledTimes(1);
 
     await vi.advanceTimersByTimeAsync(1500);
     expect(bare.classList.contains("line-wrap--flash")).toBe(false);
@@ -140,6 +142,10 @@ describe("scrollToDiffLine", () => {
     expect(wrap.scrollIntoView).toHaveBeenCalledWith({ block: "center", behavior: "smooth" });
     expect(wrap.classList.contains("line-wrap--flash")).toBe(true);
     expect(deps.requestRevealLine).not.toHaveBeenCalled();
+    // A direct hit needs no reveal for THIS jump, but any unrelated
+    // target left over from an earlier, unresolved jump must still be
+    // swept away so it cannot misfire later against a different file.
+    expect(deps.clearRevealTarget).toHaveBeenCalledTimes(1);
 
     await vi.advanceTimersByTimeAsync(1500);
     expect(wrap.classList.contains("line-wrap--flash")).toBe(false);
@@ -171,6 +177,7 @@ describe("scrollToDiffLine", () => {
     const mounted = findDiffLineEl({ path: "a/b.go", line: 10, side: "RIGHT" });
     expect(mounted).not.toBeNull();
     expect(mounted?.scrollIntoView).toHaveBeenCalled();
+    expect(deps.clearRevealTarget).toHaveBeenCalledTimes(1);
   });
 
   it("requests a reveal and scrolls to the file header when the line is missing from a present file", async () => {
@@ -183,6 +190,9 @@ describe("scrollToDiffLine", () => {
     expect(outcome).toBe("pending");
     expect(deps.requestRevealLine).toHaveBeenCalledWith("a/b.go", 42);
     expect(fileEl.scrollIntoView).toHaveBeenCalledWith({ block: "start", behavior: "smooth" });
+    // The target this call just armed must survive — clearing it here
+    // would immediately undo the requestRevealLine call above.
+    expect(deps.clearRevealTarget).not.toHaveBeenCalled();
   });
 
   it("reports missing when the file itself is not present, without throwing", async () => {
@@ -191,5 +201,6 @@ describe("scrollToDiffLine", () => {
     const outcome = await scrollToDiffLine({ path: "does/not-exist.go", line: 1 }, deps);
 
     expect(outcome).toBe("missing");
+    expect(deps.clearRevealTarget).not.toHaveBeenCalled();
   });
 });

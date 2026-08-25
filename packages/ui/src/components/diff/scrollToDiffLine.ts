@@ -15,6 +15,14 @@ export interface DiffJumpDeps {
   isFileCollapsed: (path: string) => boolean;
   toggleFileCollapsed: (path: string) => void;
   requestRevealLine: (path: string, line: number) => void;
+  // Discards the store's reveal target outright, independent of
+  // whatever it currently holds. Called on a direct hit (the target
+  // line was already rendered, so no reveal was needed for THIS jump)
+  // to sweep away any earlier, unrelated target left over from a
+  // previous jump that never resolved — otherwise it can sit armed and
+  // later fire against a different file that happens to reuse the
+  // same line number.
+  clearRevealTarget: () => void;
 }
 
 // "line" landed on the line; "pending" asked a collapsed region to
@@ -83,6 +91,7 @@ export async function scrollToDiffLine(
   const el = findDiffLineEl(target);
   if (el) {
     flashDiffLine(el);
+    deps.clearRevealTarget();
     return "line";
   }
   deps.requestRevealLine(target.path, target.line);

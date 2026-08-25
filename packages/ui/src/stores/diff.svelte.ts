@@ -653,6 +653,12 @@ export function createDiffStore(opts: DiffStoreOptions) {
     activeFile = null;
     scrollTarget = null;
     scrolling = false;
+    // A reveal request from a symbol-refs jump (or any future caller)
+    // must not survive into the next PR's DiffView mount: this store
+    // is an app-wide singleton, so an unclaimed target would otherwise
+    // sit armed until some later, unrelated CollapsedRegion happens to
+    // cover the same line and spontaneously expands for it.
+    revealTarget = null;
     commits = null;
     commitsLoading = false;
     commitsError = null;

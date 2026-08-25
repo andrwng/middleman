@@ -29,3 +29,23 @@ describe("clearDraftCommentsForPath", () => {
     expect(store.getDraft().comments).toHaveLength(1);
   });
 });
+
+describe("clearDiff", () => {
+  it("clears a stale, unclaimed reveal target so it cannot survive into the next PR", () => {
+    // revealTarget is keyed only by (path, line) with no PR/owner scope
+    // of its own — the store is an app-wide singleton, reused as-is
+    // across PRs. If a jump on PR #1 never resolved (e.g. the file
+    // never mounted before the reviewer navigated away), the target
+    // must not still be armed once DiffView unmounts and clearDiff()
+    // runs, or an unrelated file in the next PR that happens to share
+    // the same line number would spontaneously expand and flash.
+    const store = createDiffStore({ client: stubClient() });
+    store.setActivePR("acme", "widget", 1);
+    store.requestRevealLine("src/foo.ts", 42);
+    expect(store.getRevealTarget()).toEqual({ path: "src/foo.ts", line: 42 });
+
+    store.clearDiff();
+
+    expect(store.getRevealTarget()).toBeNull();
+  });
+});
