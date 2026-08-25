@@ -222,8 +222,20 @@ describe("SymbolRefsGutter", () => {
   });
 
   it("renders an empty state when there are no hits", () => {
-    renderGutter({ status: "ready", hits: [], query: "Frobnicate" });
-    expect(screen.getByText(/appears only where it was selected/i)).toBeTruthy();
+    const { container } = renderGutter({ status: "ready", hits: [], query: "Frobnicate" });
+    expect(screen.getByText(/no other occurrences of/i)).toBeTruthy();
+    expect(container.querySelector(".symref-state")?.textContent).toContain("Frobnicate");
+  });
+
+  it("the empty state doesn't contradict an outside-PR footer rendered right below it", () => {
+    // The empty state is most often reached when the selection was on a
+    // deleted (LEFT-side) line -- i.e. exactly when the symbol is NOT
+    // "where it was selected" -- so the copy must not claim that, and it
+    // must stay true even when the repo-wide footer renders right below it.
+    renderGutter({ status: "ready", hits: [], query: "Frobnicate", outsidePrTotal: 23 });
+    expect(screen.getByText(/no other occurrences of/i)).toBeTruthy();
+    expect(screen.getByText(/\+23 elsewhere in the repo/)).toBeTruthy();
+    expect(screen.queryByText(/appears only where it was selected/i)).toBeNull();
   });
 
   it("clicking a row calls scrollToDiffLine with that row's path, line, and correctly-curried deps", async () => {

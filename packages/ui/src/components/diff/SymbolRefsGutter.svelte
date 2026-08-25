@@ -194,7 +194,8 @@
     {:else}
       {#if hits.length === 0}
         <div class="symref-state">
-          <span class="symref-state__query">{query}</span> appears only where it was selected.
+          No other occurrences of <span class="symref-state__query">{query}</span> in this PR's
+          changed files.
         </div>
       {:else}
         {#each mainGroups as group, i (i)}
