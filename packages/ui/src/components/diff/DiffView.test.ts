@@ -157,7 +157,7 @@ describe("DiffView symbol-refs scope guard", () => {
     expect(symbolRefsStore.isActive()).toBe(true);
   });
 
-  it("closes an active symbol search when the PR head advances while scope stays 'head' (a background sync, not a scope change)", async () => {
+  it("closes an active symbol search when the PR head advances while scope stays 'head' (a refresh, not a scope change)", async () => {
     let headSha = "sha-head-1";
     installCommitsFetch(() => headSha);
 
@@ -169,7 +169,7 @@ describe("DiffView symbol-refs scope guard", () => {
     await symbolRefsStore.search("acme", "widget", 7, "sha-head-1", "Foo");
     expect(symbolRefsStore.isActive()).toBe(true);
 
-    // Simulate a background sync advancing the PR head: diffScopeKey
+    // Simulate a refresh advancing the PR head: diffScopeKey
     // maps every head-scope view to the same "head" string, so this
     // never looks like a scope change -- only the resolved SHA moves.
     headSha = "sha-head-2";
