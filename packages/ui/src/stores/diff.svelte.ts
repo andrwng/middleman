@@ -785,15 +785,27 @@ export function createDiffStore(opts: DiffStoreOptions) {
   }
 
   // The SHA new comments and symbol-ref searches anchor against: the
-  // single commit or range's newer end for those scopes, otherwise the
-  // newest commit in the currently loaded list (commits is
-  // newest-first), or "" if commits haven't loaded yet. Shared by
-  // DiffFile (per-file rendering) and DiffView (the symbol-refs
-  // staleness watcher) so both read the exact same derivation instead
-  // of each keeping their own copy of this scope/commits logic.
+  // single commit or range's newer end for those scopes, the target
+  // patchset's head for a patchset-pair scope (the interdiff's new
+  // side, NOT the PR head), otherwise the newest commit in the
+  // currently loaded list (commits is newest-first), or "" if that
+  // data hasn't loaded yet or the target patchset isn't in the loaded
+  // list. Shared by DiffFile (per-file rendering) and DiffView (the
+  // symbol-refs staleness watcher) so both read the exact same
+  // derivation instead of each keeping their own copy of this
+  // scope/commits/patchsets logic.
   function getCurrentCommitSha(): string {
     if (scope.kind === "commit") return scope.sha;
     if (scope.kind === "range") return scope.toSha;
+    if (scope.kind === "patchsets") {
+      // scope.toNumber is captured into a local before the closure:
+      // scope is a mutable $state variable, so TS won't carry the
+      // "patchsets" narrowing from this `if` into a callback that
+      // could (as far as it knows) run after scope changes again.
+      const toNumber = scope.toNumber;
+      const toPatchset = patchsets?.find((p) => p.number === toNumber);
+      return toPatchset ? toPatchset.head_sha : "";
+    }
     if (commits && commits.length > 0) return commits[0]!.sha;
     return "";
   }
