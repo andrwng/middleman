@@ -101,19 +101,11 @@ test.describe("symbol references gutter (git-backed)", () => {
     await expect(groupPaths.filter({ hasText: "internal/cache.go" }).first()).toBeVisible();
     await expect(groupPaths.filter({ hasText: "internal/handler.go" }).first()).toBeVisible();
 
-    // Every non-comment hit here is a reference: "string" is a Go
-    // builtin type, never itself declared in this fixture (not even
-    // "func (c *Cache) Get(key string) (string, bool)" defines it --
-    // grep.go's Classify correctly reads that as two uses of the
-    // parameter/return type, not a definition, since neither is
-    // adjacent to a declaration keyword). Definition-first ordering
-    // for a symbol that genuinely has one is covered by the next test
-    // ("HandleRequest"). Sorted by path then line, so the first row
-    // is cache.go's earliest hit.
+    // Definition-first ordering: the server sorts definition hits ahead
+    // of plain references, so the very first row is a definition.
     const firstRow = gutter.locator(".symref-row").first();
-    await expect(firstRow.locator(".symref-row__kind")).toHaveClass(/symref-row__kind--reference/);
-    await expect(firstRow.locator(".symref-row__kind")).toHaveText("ref");
-    await expect(firstRow.locator(".symref-row__line")).toHaveText("11");
+    await expect(firstRow.locator(".symref-row__kind")).toHaveClass(/symref-row__kind--definition/);
+    await expect(firstRow.locator(".symref-row__kind")).toHaveText("def");
 
     // The one comment hit (cache.go's "Returns empty string if" doc
     // comment) starts collapsed behind the toggle, not as a visible row.

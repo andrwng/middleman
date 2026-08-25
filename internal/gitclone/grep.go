@@ -66,47 +66,14 @@ func ParseGrepZ(data []byte, revPrefix string) []SymbolHit {
 	return hits
 }
 
-// definitionKeywords are declaration keywords that, when they sit
-// immediately before the symbol (see adjacentToken), mark the line as
-// declaring it rather than using it.
+// definitionKeywords are the tokens that, when they appear before the
+// symbol on the same line, suggest the line declares it rather than
+// using it.
 var definitionKeywords = map[string]bool{
 	"class": true, "struct": true, "enum": true, "union": true,
 	"interface": true, "trait": true, "type": true, "func": true,
 	"fn": true, "def": true, "const": true, "var": true, "let": true,
-	"using": true, "typedef": true, "namespace": true, "function": true,
-}
-
-// adjacencyModifierWords are storage/visibility/async modifiers that
-// may sit between a declaration keyword (or a C/C++ return-type
-// identifier) and the symbol without breaking adjacency: "static
-// inline Foo getThing()" and "export async function run()" both still
-// read as adjacent to their keyword once these are peeled off. Kept
-// deliberately small, per the same judgment call adjacentToken's
-// pointer/reference sigil handling makes.
-var adjacencyModifierWords = map[string]bool{
-	"static": true, "inline": true, "export": true, "public": true,
-	"private": true, "protected": true, "async": true, "virtual": true,
-	"override": true, "extern": true, "final": true, "abstract": true,
-	"friend": true, "constexpr": true, "explicit": true, "readonly": true,
-}
-
-// controlFlowKeywords are identifier-shaped tokens that are never a
-// declaration's return type or receiver, even though a line like
-// "return foo(x)" has the exact same shape isDefinitionSite otherwise
-// treats as a C/C++ function definition: an identifier immediately
-// before the symbol, itself immediately followed by "(". Excluding
-// these is what keeps that call (and "throw Error(...)", "new
-// Thing(...)", "sizeof foo(...)", and friends) from reading as a
-// definition of foo/Error/Thing.
-var controlFlowKeywords = map[string]bool{
-	"return": true, "if": true, "else": true, "elif": true, "while": true,
-	"for": true, "switch": true, "case": true, "default": true, "do": true,
-	"goto": true, "break": true, "continue": true, "new": true, "delete": true,
-	"throw": true, "try": true, "catch": true, "finally": true, "sizeof": true,
-	"alignof": true, "typeof": true, "decltype": true, "noexcept": true,
-	"co_await": true, "co_yield": true, "co_return": true, "yield": true,
-	"await": true, "assert": true, "raise": true, "instanceof": true,
-	"typeid": true, "static_assert": true,
+	"using": true, "typedef": true, "namespace": true,
 }
 
 // preprocessorDirectives are the C/C++ directives we recognize so a
@@ -124,30 +91,8 @@ var preprocessorDirectives = map[string]bool{
 // as a plain reference, and it cannot tell two same-named methods on
 // different types apart. Callers use it to order and group results,
 // never to decide whether a hit is real.
-//
-// A hit is a definition when it matches one of three line-local
-// shapes (see isDefinitionSite):
-//
-//   - A declaration keyword sits immediately before the symbol, e.g.
-//     "class Foo", "func Foo(", "const Foo =" — modifiers such as
-//     "static"/"export"/"async" and a pointer/reference sigil may sit
-//     between the keyword and the symbol without breaking adjacency.
-//     This alone is deliberately strict: "func Get(key string)"
-//     no longer marks "string" a definition just because "func"
-//     appears earlier on the same line.
-//   - The line is a Go receiver method ("func (c *Cache) Get(...)"):
-//     it starts with "func (" and the symbol is immediately followed
-//     by "(". The receiver clause's trailing ")" breaks adjacency to
-//     "Get", so this is checked structurally against the whole line.
-//   - The symbol is a C/C++-style typed declaration or definition
-//     ("void handle_request(int fd)"): an identifier (its return
-//     type, plus the same modifiers/sigils) immediately precedes it
-//     and it is immediately followed by "(". Control-flow and
-//     expression keywords ("return", "throw", "new", "sizeof", ...)
-//     are excluded from counting as that preceding identifier, since
-//     "return foo(x)" has the identical shape but is a plain call.
 func Classify(symbol, text string) string {
-	before, after, ok := strings.Cut(text, symbol)
+	before, _, ok := strings.Cut(text, symbol)
 	if !ok {
 		return KindReference
 	}
@@ -171,7 +116,7 @@ func Classify(symbol, text string) string {
 		return KindComment
 	case quoted:
 		return KindString
-	case isDefinitionSite(before, after, trimmed):
+	case hasDefinitionKeyword(before):
 		return KindDefinition
 	}
 	return KindReference
@@ -264,73 +209,20 @@ func scanBefore(before string) (commented, quoted bool) {
 	return false, inSingle || inDouble || inBack
 }
 
-// isIdentByte reports whether b can appear in a bare ASCII identifier.
-// Used only to find token boundaries while walking the text preceding
-// a symbol, not to validate identifiers in general — a multi-byte
-// UTF-8 rune's bytes all fall outside these ranges, so the walk below
-// correctly stops before consuming any part of one without needing to
-// decode it.
-func isIdentByte(b byte) bool {
-	return b == '_' ||
-		(b >= 'a' && b <= 'z') ||
-		(b >= 'A' && b <= 'Z') ||
-		(b >= '0' && b <= '9')
-}
-
-// adjacentToken returns the token immediately before the symbol in
-// before, skipping whitespace and a small set of intervening
-// modifiers — storage/visibility/async keywords and pointer/reference
-// sigils ("*", "&") — that a real declaration can carry between its
-// keyword (or return type) and the name it declares. Returns "" when
-// nothing is there, or when something that breaks adjacency (".",
-// "::", "=", "->", a bare "{" ...) sits directly against the symbol
-// once those are peeled away.
-func adjacentToken(before string) string {
-	rest := before
-	for {
-		rest = strings.TrimRight(rest, " \t")
-		if rest == "" {
-			return ""
+// hasDefinitionKeyword reports whether a declaration keyword appears
+// among the identifier-ish tokens preceding the symbol.
+func hasDefinitionKeyword(before string) bool {
+	for _, tok := range strings.FieldsFunc(before, func(r rune) bool {
+		return r != '_' &&
+			(r < 'a' || r > 'z') &&
+			(r < 'A' || r > 'Z') &&
+			(r < '0' || r > '9')
+	}) {
+		if definitionKeywords[tok] {
+			return true
 		}
-		if last := rest[len(rest)-1]; last == '*' || last == '&' {
-			rest = rest[:len(rest)-1]
-			continue
-		}
-		end := len(rest)
-		start := end
-		for start > 0 && isIdentByte(rest[start-1]) {
-			start--
-		}
-		if start == end {
-			// The character directly against the symbol (after
-			// whitespace/sigils) isn't part of an identifier at
-			// all, so adjacency is broken outright.
-			return ""
-		}
-		tok := rest[start:end]
-		if adjacencyModifierWords[tok] {
-			rest = rest[:start]
-			continue
-		}
-		return tok
 	}
-}
-
-// isDefinitionSite reports whether the symbol's position on the line
-// reads as a declaration rather than a use. See Classify's doc
-// comment for the three shapes this checks.
-func isDefinitionSite(before, after, trimmed string) bool {
-	tok := adjacentToken(before)
-	if definitionKeywords[tok] {
-		return true
-	}
-	if !strings.HasPrefix(after, "(") {
-		return false
-	}
-	if strings.HasPrefix(trimmed, "func (") {
-		return true
-	}
-	return tok != "" && !controlFlowKeywords[tok]
+	return false
 }
 
 // GrepSymbol returns every word-boundary occurrence of symbol in the
