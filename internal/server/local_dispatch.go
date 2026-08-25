@@ -412,6 +412,35 @@ func (s *Server) getFilesLocal(
 	}}, nil
 }
 
+// getSymbolRefsLocal serves the symbol search for a local worktree. The
+// changed-file set comes from the same base-vs-working-tree diff
+// getFilesLocal uses, so the two views agree on what "in the PR" means.
+func (s *Server) getSymbolRefsLocal(
+	ctx context.Context, input *getSymbolRefsInput, symbol string,
+) (*getSymbolRefsOutput, error) {
+	w, err := s.resolveLocalWorktree(ctx, input.Name, input.Number)
+	if err != nil {
+		return nil, huma.Error404NotFound("worktree not found")
+	}
+	baseRef := s.lookupBaseRefForWorktree(ctx, *w)
+	ds, err := worktrees.DiffAgainstBase(ctx, w.Path, baseRef)
+	if err != nil {
+		return nil, huma.Error500InternalServerError(
+			"worktree files failed: " + err.Error())
+	}
+
+	gctx, cancel := context.WithTimeout(ctx, symbolRefsTimeout)
+	defer cancel()
+	hits, err := worktrees.GrepSymbol(gctx, w.Path, input.SHA, symbol)
+	if err != nil {
+		return nil, huma.Error502BadGateway("symbol search failed")
+	}
+
+	return &getSymbolRefsOutput{
+		Body: buildSymbolRefsResponse(symbol, hits, changedPathSet(ds.Files)),
+	}, nil
+}
+
 // resolveLocalWorktreeByPath powers GET /local/resolve: given an absolute
 // worktree path, return the PR-shaped review handle and the live current
 // branch. 404 when no active worktree matches. Loopback only, like the

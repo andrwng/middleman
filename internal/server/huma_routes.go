@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -433,6 +434,7 @@ func (s *Server) registerAPI(api huma.API) {
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/files", s.getFiles)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/blob-range", s.getBlobRange)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/blob", s.getBlob)
+	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/symbol-refs", s.getSymbolRefs)
 	huma.Post(api, "/repos/{owner}/{name}/resolve-files", s.resolveFiles)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/notes", s.getPRNotes)
 	huma.Put(api, "/repos/{owner}/{name}/pulls/{number}/notes", s.putPRNotes)
@@ -2495,6 +2497,188 @@ func (s *Server) getBlob(ctx context.Context, input *getBlobInput) (*getBlobOutp
 		return &getBlobOutput{Body: blobResponse{Truncated: true}}, nil
 	}
 	return &getBlobOutput{Body: blobResponse{Content: string(raw)}}, nil
+}
+
+// --- Symbol references (other occurrences of a selected symbol) ---
+
+// symbolRefsMaxHits caps the returned list. The totals are counted
+// before truncation so the "+N elsewhere in the repo" badge stays
+// accurate even when the list is cut.
+const symbolRefsMaxHits = 500
+
+// symbolRefsMaxQueryBytes bounds the selection a client may search for.
+const symbolRefsMaxQueryBytes = 128
+
+// symbolRefsTimeout bounds the grep. A whole-tree `git grep` is the
+// first git operation driven directly by user input, so it gets an
+// explicit deadline instead of running until the client disconnects.
+const symbolRefsTimeout = 10 * time.Second
+
+type getSymbolRefsInput struct {
+	Owner  string `path:"owner"`
+	Name   string `path:"name"`
+	Number int    `path:"number"`
+	Q      string `query:"q"   doc:"Symbol to search for (fixed string, word-boundary)"`
+	SHA    string `query:"sha" doc:"New-side commit SHA the hit line numbers refer to"`
+}
+
+type getSymbolRefsOutput struct {
+	Body symbolRefsResponse
+}
+
+type symbolRefsResponse struct {
+	Query string `json:"query"`
+	// Hits inside the PR's changed files, classified and ordered.
+	// Always a list, never null.
+	Hits []gitclone.SymbolHit `json:"hits"`
+	// Counts before truncation.
+	InPRTotal      int  `json:"in_pr_total"`
+	OutsidePRTotal int  `json:"outside_pr_total"`
+	Truncated      bool `json:"truncated"`
+}
+
+// getSymbolRefs lists other occurrences of a symbol in the PR's changed
+// files, plus a count of occurrences elsewhere in the repo. One
+// whole-tree grep serves both: the tree scan is cheap (about 0.15s on a
+// 6.8k-file repo) and partitioning in Go makes the "elsewhere" count
+// free. PR-scoped for auth coherence with /diff and /blob.
+func (s *Server) getSymbolRefs(
+	ctx context.Context, input *getSymbolRefsInput,
+) (*getSymbolRefsOutput, error) {
+	symbol, err := validateSymbolQuery(input.Q)
+	if err != nil {
+		return nil, err
+	}
+	if input.SHA == "" {
+		return nil, huma.Error400BadRequest("sha is required")
+	}
+	if isLocalSource(input.Owner) {
+		return s.getSymbolRefsLocal(ctx, input, symbol)
+	}
+	if s.clones == nil {
+		return nil, huma.Error503ServiceUnavailable(
+			"symbol search not available: clone manager not configured")
+	}
+
+	shas, err := s.db.GetDiffSHAs(ctx, input.Owner, input.Name, input.Number)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to look up PR")
+	}
+	if shas == nil {
+		return nil, huma.Error404NotFound("pull request not found")
+	}
+	if shas.DiffHeadSHA == "" || shas.MergeBaseSHA == "" {
+		return nil, huma.Error404NotFound(
+			"symbol search not available for this pull request")
+	}
+
+	host := s.syncer.HostForRepo(input.Owner, input.Name)
+	changed, err := s.clones.DiffFiles(
+		ctx, host, input.Owner, input.Name, shas.MergeBaseSHA, shas.DiffHeadSHA)
+	if err != nil {
+		if errors.Is(err, gitclone.ErrNotFound) {
+			return nil, huma.Error404NotFound(
+				"symbol search not available: referenced commit not found")
+		}
+		return nil, huma.Error502BadGateway("failed to list changed files")
+	}
+
+	gctx, cancel := context.WithTimeout(ctx, symbolRefsTimeout)
+	defer cancel()
+	hits, err := s.clones.GrepSymbol(
+		gctx, host, input.Owner, input.Name, input.SHA, symbol)
+	if err != nil {
+		if errors.Is(err, gitclone.ErrNotFound) {
+			return nil, huma.Error404NotFound("revision not found")
+		}
+		slog.Error("symbol search failed", "owner", input.Owner,
+			"name", input.Name, "number", input.Number, "err", err)
+		return nil, huma.Error502BadGateway("symbol search failed")
+	}
+
+	return &getSymbolRefsOutput{
+		Body: buildSymbolRefsResponse(symbol, hits, changedPathSet(changed)),
+	}, nil
+}
+
+// validateSymbolQuery trims and bounds a client-supplied symbol. The
+// grep is line-based, so a multi-line selection can never match.
+func validateSymbolQuery(q string) (string, error) {
+	symbol := strings.TrimSpace(q)
+	if symbol == "" {
+		return "", huma.Error400BadRequest("q is required")
+	}
+	if len(symbol) > symbolRefsMaxQueryBytes {
+		return "", huma.Error400BadRequest(fmt.Sprintf(
+			"q too long (max %d bytes)", symbolRefsMaxQueryBytes))
+	}
+	if strings.ContainsAny(symbol, "\n\r\x00") {
+		return "", huma.Error400BadRequest("q must be a single line")
+	}
+	return symbol, nil
+}
+
+// changedPathSet indexes changed files by their new-side path, which is
+// what a grep of the head tree reports. Renames and copies therefore
+// match on their new name, and deleted files cannot match at all.
+func changedPathSet(files []gitcloneDiffFile) map[string]bool {
+	set := make(map[string]bool, len(files))
+	for _, f := range files {
+		set[f.Path] = true
+	}
+	return set
+}
+
+// buildSymbolRefsResponse partitions hits against the PR's changed
+// files, classifies and orders the ones inside it, and caps the list.
+func buildSymbolRefsResponse(
+	symbol string, hits []gitclone.SymbolHit, changed map[string]bool,
+) symbolRefsResponse {
+	resp := symbolRefsResponse{Query: symbol, Hits: []gitclone.SymbolHit{}}
+	inPR := make([]gitclone.SymbolHit, 0, len(hits))
+	for _, h := range hits {
+		if !changed[h.Path] {
+			resp.OutsidePRTotal++
+			continue
+		}
+		h.Kind = gitclone.Classify(symbol, h.Text)
+		inPR = append(inPR, h)
+	}
+	resp.InPRTotal = len(inPR)
+	sort.SliceStable(inPR, func(i, j int) bool {
+		a, b := inPR[i], inPR[j]
+		if ra, rb := symbolKindRank(a.Kind), symbolKindRank(b.Kind); ra != rb {
+			return ra < rb
+		}
+		if a.Path != b.Path {
+			return a.Path < b.Path
+		}
+		return a.Line < b.Line
+	})
+	if len(inPR) > symbolRefsMaxHits {
+		inPR = inPR[:symbolRefsMaxHits]
+		resp.Truncated = true
+	}
+	resp.Hits = inPR
+	return resp
+}
+
+// symbolKindRank orders the list so declarations lead and the
+// comment/string noise the UI collapses trails.
+func symbolKindRank(kind string) int {
+	switch kind {
+	case gitclone.KindDefinition:
+		return 0
+	case gitclone.KindReference:
+		return 1
+	case gitclone.KindImport:
+		return 2
+	case gitclone.KindComment:
+		return 3
+	case gitclone.KindString:
+		return 4
+	}
+	return 5
 }
 
 // --- Filename resolution (for AI prose linkification) ---
