@@ -289,6 +289,12 @@ func TestSymbolRefsEndpointE2E(t *testing.T) {
 		})
 
 		validQ := "AnchorSymbol"
+		// malformedSHA is option-shaped: git parses flags anywhere on
+		// its command line, so a sha reaching `git grep` unvalidated
+		// would be read as --open-files-in-pager, which runs a shell
+		// command. This case would fail if the sha guard in
+		// getSymbolRefs were removed or loosened.
+		malformedSHA := "-Otouch /tmp/should-not-be-created"
 		errCases := []struct {
 			name       string
 			number     int64
@@ -298,6 +304,7 @@ func TestSymbolRefsEndpointE2E(t *testing.T) {
 			{name: "missing q", number: 1, q: nil, sha: &headSHA, wantStatus: http.StatusBadRequest},
 			{name: "missing sha", number: 1, q: &validQ, sha: nil, wantStatus: http.StatusBadRequest},
 			{name: "unknown PR number", number: 99999, q: &validQ, sha: &headSHA, wantStatus: http.StatusNotFound},
+			{name: "malformed sha (option-shaped)", number: 1, q: &validQ, sha: &malformedSHA, wantStatus: http.StatusBadRequest},
 		}
 		for _, tc := range errCases {
 			t.Run(tc.name, func(t *testing.T) {

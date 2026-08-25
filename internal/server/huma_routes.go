@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -2514,6 +2515,19 @@ const symbolRefsMaxQueryBytes = 128
 // explicit deadline instead of running until the client disconnects.
 const symbolRefsTimeout = 10 * time.Second
 
+// symbolRefsSHA matches a hex object id, short or full (SHA-1's 40
+// hex chars through SHA-256's 64). input.SHA is passed straight
+// through to `git grep` as a positional revision argument
+// (gitclone/grep.go, worktrees/grep.go), and `git grep` parses
+// options anywhere on its command line, including that slot — a sha
+// of "-Otouch /tmp/pwned" triggers --open-files-in-pager, which runs
+// the pager through a shell. Every character this pattern allows is
+// a hex digit, so nothing it accepts can begin with the '-' a git
+// option requires; there is no need to special-case any particular
+// flag. The literal WorkingTreeSentinel is checked separately by the
+// caller before this pattern is applied.
+var symbolRefsSHA = regexp.MustCompile(`^[0-9a-fA-F]{7,64}$`)
+
 type getSymbolRefsInput struct {
 	Owner  string `path:"owner"`
 	Name   string `path:"name"`
@@ -2551,6 +2565,9 @@ func (s *Server) getSymbolRefs(
 	}
 	if input.SHA == "" {
 		return nil, huma.Error400BadRequest("sha is required")
+	}
+	if input.SHA != worktrees.WorkingTreeSentinel && !symbolRefsSHA.MatchString(input.SHA) {
+		return nil, huma.Error400BadRequest("sha must be a hex object id")
 	}
 	if isLocalSource(input.Owner) {
 		return s.getSymbolRefsLocal(ctx, input, symbol)
