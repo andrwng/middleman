@@ -437,6 +437,8 @@
             newNum={newNumForTop(i)}
             {tokens}
             splitSide="right"
+            anchorLine={newNumForTop(i)}
+            anchorSide="RIGHT"
           />
         </div>
       </div>
@@ -447,6 +449,8 @@
         oldNum={oldNumForTop(i)}
         newNum={newNumForTop(i)}
         {tokens}
+        anchorLine={newNumForTop(i)}
+        anchorSide="RIGHT"
       />
     {/if}
   {/each}
@@ -500,6 +504,8 @@
             newNum={newNumForBottom(i)}
             {tokens}
             splitSide="right"
+            anchorLine={newNumForBottom(i)}
+            anchorSide="RIGHT"
           />
         </div>
       </div>
@@ -510,6 +516,8 @@
         oldNum={oldNumForBottom(i)}
         newNum={newNumForBottom(i)}
         {tokens}
+        anchorLine={newNumForBottom(i)}
+        anchorSide="RIGHT"
       />
     {/if}
   {/each}
