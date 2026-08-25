@@ -28,6 +28,15 @@
     // Language for syntax highlighting; undefined falls back to
     // plain text (DualToken with no color).
     lang?: string | undefined;
+    // A new-side (RIGHT) line number this region should reveal, or
+    // null/undefined if nothing is being sought here. Only the region
+    // whose gap window contains the line acts on it — every other
+    // region must do nothing at all: no fetch, no callback.
+    revealNewLine?: number | null;
+    // Called exactly once, after revealNewLine has rendered. Never
+    // called for a target outside this region's window, and never
+    // called again for a target that already fired it.
+    onrevealed?: () => void;
   }
 
   const {
@@ -39,6 +48,8 @@
     gapOldStart,
     gapNewStart,
     lang,
+    revealNewLine = null,
+    onrevealed,
   }: Props = $props();
 
   const STEP = 10;                    // lines per row click
@@ -280,6 +291,72 @@
       loading = false;
     }
   }
+
+  // --- Reveal-and-jump: expand toward an externally-requested line ---
+  //
+  // revealNewLine names a RIGHT-side line something outside this
+  // component wants brought into view (see scrollToDiffLine.ts). Only
+  // the region whose gap window contains that line does anything;
+  // every other region must ignore it entirely — no fetch, no
+  // callback. revealedFor guards onrevealed so it fires once per
+  // target even though this effect re-runs on every loading/topCount/
+  // bottomCount change while it drives the expansion forward.
+  let revealedFor: number | null = null;
+
+  function newLineIsCovered(target: number): boolean {
+    if (target <= gapNewStart + topCount - 1) return true;
+    // bottomCount can never leave 0 for a "bottom" region (see the
+    // note on oldNumForBottom/newNumForBottom below), so this half is
+    // a no-op there — excluded explicitly for clarity rather than
+    // relying on that invariant silently.
+    if (position !== "bottom" && target >= gapNewStart + lineCount - bottomCount) {
+      return true;
+    }
+    return false;
+  }
+
+  $effect(() => {
+    const target = revealNewLine;
+    if (target == null) return;
+
+    const inWindow =
+      position === "bottom"
+        ? target >= gapNewStart
+        : target >= gapNewStart && target <= gapNewStart + lineCount - 1;
+    if (!inWindow) return;
+
+    if (revealedFor === target) return;
+    if (errorMsg) return; // a fetch already failed here; don't retry silently
+
+    if (newLineIsCovered(target)) {
+      revealedFor = target;
+      onrevealed?.();
+      return;
+    }
+
+    if (fullyExpanded) return; // EOF, or the whole gap is revealed — target unreachable
+    if (loading || flushing) return; // a fetch is already in flight; retry once it settles
+
+    if (position === "bottom") {
+      // Unknown extent: ask for exactly the span needed to reach the
+      // target in one request rather than guessing a chunk size.
+      // BlobRange (internal/worktrees/blob.go) clamps at EOF instead
+      // of paginating, so a short response unambiguously means the
+      // target is past end-of-file.
+      void expandTop(target - (gapNewStart + topCount) + 1);
+      return;
+    }
+
+    // Known-size gap: grow from whichever edge is nearer so the
+    // reveal costs as few lines as possible.
+    const needViaTop = target - (gapNewStart + topCount - 1);
+    const needViaBottom = gapNewStart + lineCount - bottomCount - target;
+    if (needViaTop <= needViaBottom) {
+      void expandTop(needViaTop);
+    } else {
+      void expandBottom(needViaBottom);
+    }
+  });
 
   // Default row click expands by STEP. For top-of-file and
   // between-hunks, that means split across both edges (STEP/2

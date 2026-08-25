@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import type { DiffFile as DiffFileType, DiffHunk } from "../../api/types.js";
   import { getStores } from "../../context.js";
   import { isSymbolQuery } from "../../stores/symbolRefs.svelte.js";
+  import { findDiffLineEl, flashDiffLine } from "./scrollToDiffLine.js";
 
   const {
     diff: diffStore,
@@ -134,6 +135,30 @@
     const commits = diffStore.getCommits();
     if (commits && commits.length > 0) return commits[0]!.sha;
     return "";
+  }
+
+  // revealForThisFile: a line the UI wants revealed inside this
+  // file's collapsed gaps, or null when the store's reveal target
+  // belongs to a different file (or there is none). Handed to every
+  // CollapsedRegion below; only the one whose gap window contains the
+  // line acts on it (see CollapsedRegion's revealNewLine prop).
+  const revealForThisFile = $derived.by(() => {
+    const t = diffStore.getRevealTarget();
+    return t && t.path === file.path ? t.line : null;
+  });
+
+  // onRegionRevealed completes a reveal-and-jump once a
+  // CollapsedRegion reports its target line is now rendered: consumes
+  // the store's target so no other region acts on it again, then
+  // flashes the now-mounted line — the same finishing step
+  // scrollToDiffLine.ts uses for a line that was already visible.
+  async function onRegionRevealed(): Promise<void> {
+    const t = diffStore.getRevealTarget();
+    if (!t || t.path !== file.path) return;
+    diffStore.consumeRevealTarget();
+    await tick();
+    const el = findDiffLineEl({ path: t.path, line: t.line });
+    if (el) flashDiffLine(el);
   }
 
   // liveSelection continuously tracks the reviewer's text selection
@@ -789,6 +814,8 @@
               {number}
               gapOldStart={1}
               gapNewStart={1}
+              revealNewLine={revealForThisFile}
+              onrevealed={onRegionRevealed}
             />
           {/if}
           {#each renderedFile.hunks as hunk, hunkIdx}
@@ -807,6 +834,8 @@
                   {number}
                   gapOldStart={prev.old_start + prev.old_count}
                   gapNewStart={prev.new_start + prev.new_count}
+                  revealNewLine={revealForThisFile}
+                  onrevealed={onRegionRevealed}
                 />
               {/if}
             {/if}
@@ -1134,6 +1163,8 @@
               {number}
               gapOldStart={lastHunk.old_start + lastHunk.old_count}
               gapNewStart={lastHunk.new_start + lastHunk.new_count}
+              revealNewLine={revealForThisFile}
+              onrevealed={onRegionRevealed}
             />
           {/if}
         </div>

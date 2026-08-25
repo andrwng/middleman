@@ -361,6 +361,25 @@ export function createDiffStore(opts: DiffStoreOptions) {
     scrollTarget = null;
   }
 
+  // A line the UI wants brought into view that is not currently
+  // rendered because it sits in an unexpanded context gap. DiffFile
+  // hands this to its collapsed regions; the one containing the line
+  // expands itself, then reports back through its onrevealed callback
+  // so DiffFile can finish the jump and consume the target.
+  let revealTarget = $state<{ path: string; line: number } | null>(null);
+
+  function requestRevealLine(path: string, line: number): void {
+    revealTarget = { path, line };
+  }
+
+  function getRevealTarget(): { path: string; line: number } | null {
+    return revealTarget;
+  }
+
+  function consumeRevealTarget(): void {
+    revealTarget = null;
+  }
+
   function setTabWidth(w: number): void {
     tabWidth = w;
     safeSetItem("diff-tab-width", String(w));
@@ -1362,6 +1381,9 @@ export function createDiffStore(opts: DiffStoreOptions) {
     requestScrollToFile,
     getScrollTarget,
     consumeScrollTarget,
+    requestRevealLine,
+    getRevealTarget,
+    consumeRevealTarget,
     setTabWidth,
     setHideWhitespace,
     setLayout,

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/svelte";
+import { tick } from "svelte";
 import CollapsedRegion from "./CollapsedRegion.svelte";
 import { STORES_KEY } from "../../context.js";
 import { createDiffStore } from "../../stores/diff.svelte.js";
@@ -52,10 +53,20 @@ interface RegionProps {
   gapOldStart: number;
   gapNewStart: number;
   lang?: string;
+  revealNewLine?: number | null;
+  onrevealed?: () => void;
 }
 
-function renderRegion(props: Partial<RegionProps> = {}) {
-  const diffStore = stubbedDiffStore();
+// diffStoreOverride lets a test install its own loadBlobRange mock
+// (e.g. one that simulates EOF) BEFORE the component ever mounts —
+// CollapsedRegion's reveal effect can issue its first fetch
+// synchronously during render, so overriding stubbedDiffStore()'s
+// default mock only after renderRegion() returns would be too late.
+function renderRegion(
+  props: Partial<RegionProps> = {},
+  diffStoreOverride?: ReturnType<typeof stubbedDiffStore>,
+) {
+  const diffStore = diffStoreOverride ?? stubbedDiffStore();
   const rendered = render(CollapsedRegion, {
     props: {
       layout: "unified",
@@ -167,5 +178,205 @@ describe("CollapsedRegion anchors on revealed context lines", () => {
       expect(el).not.toBeNull();
       expect(el?.getAttribute("data-anchor-side")).toBe("RIGHT");
     }
+  });
+});
+
+describe("CollapsedRegion reveal-and-jump (revealNewLine / onrevealed)", () => {
+  it("a revealNewLine inside the window expands the region with a single bulk fetch and fires onrevealed once", async () => {
+    const onrevealed = vi.fn();
+    const { container, diffStore } = renderRegion({
+      position: "middle",
+      lineCount: 10,
+      gapNewStart: 200,
+      gapOldStart: 150,
+      revealNewLine: 204,
+      onrevealed,
+    });
+
+    await waitFor(() => {
+      expect(onrevealed).toHaveBeenCalledTimes(1);
+    });
+
+    const el = container.querySelector('[data-anchor-line="204"][data-anchor-side="RIGHT"]');
+    expect(el).not.toBeNull();
+    // Exactly one request for the whole span needed to reach the
+    // target (200..204) rather than a series of STEP-sized fetches.
+    expect(diffStore.loadBlobRange).toHaveBeenCalledTimes(1);
+    expect(diffStore.loadBlobRange).toHaveBeenCalledWith("a/b.go", "deadbeef", 200, 204);
+  });
+
+  it("a revealNewLine outside the window does nothing: no fetch, no onrevealed", async () => {
+    const onrevealed = vi.fn();
+    const { diffStore } = renderRegion({
+      position: "middle",
+      lineCount: 10,
+      gapNewStart: 200,
+      gapOldStart: 150,
+      revealNewLine: 999, // well outside [200, 209]
+      onrevealed,
+    });
+
+    expect(diffStore.loadBlobRange).not.toHaveBeenCalled();
+    expect(onrevealed).not.toHaveBeenCalled();
+
+    // Give any errant async work a chance to run before re-checking.
+    await tick();
+    await tick();
+    expect(diffStore.loadBlobRange).not.toHaveBeenCalled();
+    expect(onrevealed).not.toHaveBeenCalled();
+  });
+
+  it('a "bottom" region (unknown extent) expands downward and stops at EOF without calling onrevealed', async () => {
+    const onrevealed = vi.fn();
+    // Build the diffStore — and install its short-file mock — before
+    // the component mounts: CollapsedRegion's reveal effect issues its
+    // first fetch synchronously during render, so overriding the mock
+    // afterward would be too late and the default (full-response)
+    // stub would already have satisfied the request.
+    const diffStore = createDiffStore({ client: stubClient() });
+    // Simulate a short file: BlobRange clamps at EOF instead of
+    // paginating (internal/worktrees/blob.go), so any real short
+    // response — regardless of how many lines were asked for —
+    // unambiguously means end-of-file. Always return only 3 lines.
+    vi.spyOn(diffStore, "loadBlobRange").mockImplementation(
+      (_path: string, _sha: string, start: number) =>
+        Promise.resolve(Array.from({ length: 3 }, (_, i) => `line ${start + i}`)),
+    );
+
+    const { container } = renderRegion(
+      {
+        position: "bottom",
+        lineCount: 0,
+        gapNewStart: 500,
+        gapOldStart: 480,
+        revealNewLine: 550, // far beyond what this "file" actually contains
+        onrevealed,
+      },
+      diffStore,
+    );
+
+    // The collapsed-region bar disappears once bottomExhausted flips
+    // true (fullyExpanded === bottomExhausted for a "bottom" region),
+    // so its removal is the observable signal that EOF was reached.
+    await waitFor(() => {
+      expect(container.querySelector(".collapsed-region")).toBeNull();
+    });
+
+    expect(onrevealed).not.toHaveBeenCalled();
+    // One bulk request determined EOF; confirm it didn't keep firing
+    // requests after that (no infinite loop).
+    expect(diffStore.loadBlobRange).toHaveBeenCalledTimes(1);
+    await tick();
+    await tick();
+    expect(diffStore.loadBlobRange).toHaveBeenCalledTimes(1);
+    expect(onrevealed).not.toHaveBeenCalled();
+  });
+
+  it("a null revealNewLine does nothing: no fetch, no onrevealed", async () => {
+    const onrevealed = vi.fn();
+    const { diffStore } = renderRegion({
+      revealNewLine: null,
+      onrevealed,
+    });
+
+    await tick();
+    expect(diffStore.loadBlobRange).not.toHaveBeenCalled();
+    expect(onrevealed).not.toHaveBeenCalled();
+  });
+
+  it("an undefined revealNewLine (prop omitted entirely) does nothing: no fetch, no onrevealed", async () => {
+    const onrevealed = vi.fn();
+    const { diffStore } = renderRegion({ onrevealed });
+
+    await tick();
+    expect(diffStore.loadBlobRange).not.toHaveBeenCalled();
+    expect(onrevealed).not.toHaveBeenCalled();
+  });
+
+  it("onrevealed fires exactly once for a target, even though the region expands further afterward", async () => {
+    const onrevealed = vi.fn();
+    const { getByRole, container, diffStore } = renderRegion({
+      position: "middle",
+      lineCount: 10,
+      gapNewStart: 200,
+      gapOldStart: 150,
+      revealNewLine: 204,
+      onrevealed,
+    });
+
+    await waitFor(() => {
+      expect(onrevealed).toHaveBeenCalledTimes(1);
+    });
+    expect(diffStore.loadBlobRange).toHaveBeenCalledTimes(1);
+
+    // Expand the rest of the gap by hand (a plain click) — this grows
+    // topCount further, which the reveal effect also reads, so it
+    // re-runs. onrevealed must not fire a second time for the same
+    // target that already fired it.
+    await fireEvent.click(getByRole("button"));
+    await waitFor(() => {
+      // The whole 10-line gap is now revealed, so the bar is gone.
+      expect(container.querySelector(".collapsed-region")).toBeNull();
+    });
+
+    expect(onrevealed).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not race a fetch already in flight from a user scrub: a reveal target arriving mid-fetch waits rather than issuing a second request", async () => {
+    const onrevealed = vi.fn();
+    const diffStore = createDiffStore({ client: stubClient() });
+    let callCount = 0;
+    let resolveFirst: (() => void) | undefined;
+    vi.spyOn(diffStore, "loadBlobRange").mockImplementation(
+      (_path: string, _sha: string, start: number, end: number) => {
+        callCount++;
+        const lines = Array.from({ length: end - start + 1 }, (_, i) => `line ${start + i}`);
+        if (callCount === 1) {
+          // Hold the scrub's own fetch open so we can inspect state
+          // while it's still in flight.
+          return new Promise<string[]>((resolve) => {
+            resolveFirst = () => resolve(lines);
+          });
+        }
+        return Promise.resolve(lines);
+      },
+    );
+
+    const baseProps = {
+      position: "middle" as const,
+      layout: "unified" as const,
+      lineCount: 10,
+      owner: "o",
+      name: "n",
+      number: 1,
+      path: "a/b.go",
+      sha: "deadbeef",
+      gapOldStart: 150,
+      gapNewStart: 200,
+    };
+    const { getByRole, rerender } = renderRegion(baseProps, diffStore);
+
+    // Start a user scrub: a plain click on a "middle" region calls
+    // expandStep(), which calls expandTop first — synchronously
+    // setting loading = true and issuing the fetch we're holding open.
+    await fireEvent.click(getByRole("button"));
+    expect(callCount).toBe(1);
+
+    // While that fetch is still in flight, a reveal target for a line
+    // inside this region's window (200..209) arrives.
+    await rerender({ ...baseProps, revealNewLine: 204, onrevealed });
+
+    // The reveal effect must see loading === true and defer — not
+    // start a second, competing fetch while the scrub's is pending.
+    expect(callCount).toBe(1);
+    expect(onrevealed).not.toHaveBeenCalled();
+
+    // Let the scrub's fetch resolve. It covers lines 200..204, so the
+    // target is now rendered without the reveal effect ever fetching
+    // anything itself.
+    resolveFirst?.();
+    await waitFor(() => {
+      expect(onrevealed).toHaveBeenCalledTimes(1);
+    });
   });
 });

@@ -1,5 +1,5 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { tick } from "svelte";
 
 // Mock highlight utils to avoid loading Shiki in tests.
@@ -343,5 +343,61 @@ describe("DiffFile selection toolbar: Refs affordance", () => {
     await fireEvent.click(screen.getByTitle("Find other references to this symbol"));
 
     expect(searchSpy).toHaveBeenCalledWith(owner, "n", 1, "deadbeef", "fooBar");
+  });
+});
+
+describe("DiffFile reveal-and-jump: plumbs a store reveal target to its collapsed regions", () => {
+  beforeEach(() => {
+    // jsdom: scrollIntoView is not implemented (see
+    // scrollToDiffLine.test.ts) — onRegionRevealed's finishing flash
+    // calls it via flashDiffLine.
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("hands the target to the containing region and consumes it from the store once revealed", async () => {
+    const { container, diffStore } = renderDiffFile(makeFile());
+    // Stub loadBlobRange the same way CollapsedRegion.test.ts does, so
+    // the region's expansion resolves without a real network call.
+    vi.spyOn(diffStore, "loadBlobRange").mockImplementation(
+      (_path: string, _sha: string, start: number, end: number) =>
+        Promise.resolve(
+          Array.from({ length: Math.max(0, end - start + 1) }, (_, i) => `line ${start + i}`),
+        ),
+    );
+
+    // makeFile()'s only hunk ends at new_start(1) + new_count(5) = 6,
+    // so the file's bottom CollapsedRegion's gap starts at new-line 6
+    // and line 10 sits inside it, unrendered until revealed.
+    expect(container.querySelector('[data-anchor-line="10"][data-anchor-side="RIGHT"]')).toBeNull();
+
+    diffStore.requestRevealLine("src/foo.ts", 10);
+    await tick();
+
+    await waitFor(() => {
+      const el = container.querySelector('[data-anchor-line="10"][data-anchor-side="RIGHT"]');
+      expect(el).not.toBeNull();
+    });
+    // The reveal is complete: DiffFile's onrevealed handler consumed
+    // the store's target so no other file's region acts on it again.
+    expect(diffStore.getRevealTarget()).toBeNull();
+  });
+
+  it("ignores a reveal target aimed at a different file: no fetch, target left for its own file to consume", async () => {
+    const { container, diffStore } = renderDiffFile(makeFile());
+    const loadBlobRangeSpy = vi.spyOn(diffStore, "loadBlobRange");
+
+    diffStore.requestRevealLine("some/other/file.ts", 10);
+    await tick();
+    await tick();
+
+    expect(loadBlobRangeSpy).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-anchor-line="10"][data-anchor-side="RIGHT"]')).toBeNull();
+    // This file didn't touch a target that isn't its own — it's still
+    // there, unconsumed, for the right file's DiffFile to pick up.
+    expect(diffStore.getRevealTarget()).toEqual({ path: "some/other/file.ts", line: 10 });
   });
 });
