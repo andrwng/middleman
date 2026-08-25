@@ -251,13 +251,53 @@ describe("DiffFile selection toolbar: Refs affordance", () => {
   });
 
   it('shows a "Refs" button for a single-line selection of a bare symbol', async () => {
-    renderDiffFile(makeFile());
+    const { diffStore } = renderDiffFile(makeFile());
+    // A resolved sha so this test exercises only the selection gate, not
+    // the sha-readiness gate covered separately below.
+    await diffStore.selectCommit("deadbeef");
     const wrap = document.querySelector<HTMLElement>(
       '.line-wrap[data-anchor-line="2"][data-anchor-side="LEFT"]',
     );
     expect(wrap).toBeTruthy();
     stubSelection({ anchorNode: wrap!, focusNode: wrap!, text: "fooBar" });
     await fireSelectionChange();
+
+    expect(screen.getByTitle("Find other references to this symbol")).toBeTruthy();
+  });
+
+  it("shows no Refs button for an otherwise-valid symbol selection while head scope has no resolved sha yet", async () => {
+    // renderDiffFile's diffStore starts in head scope with no commits
+    // loaded, so currentCommitSha() is "" until loadCommits() resolves --
+    // exactly the window where the button must not be offered, since
+    // clicking it would send a request the server rejects with "sha is
+    // required".
+    renderDiffFile(makeFile());
+    const wrap = document.querySelector<HTMLElement>(
+      '.line-wrap[data-anchor-line="2"][data-anchor-side="LEFT"]',
+    );
+    stubSelection({ anchorNode: wrap!, focusNode: wrap!, text: "fooBar" });
+    await fireSelectionChange();
+
+    expect(screen.queryByTitle("Find other references to this symbol")).toBeNull();
+    // The toolbar itself must not render as an empty box either -- there
+    // is nothing else (no Comment/Ask, since this is a single-line
+    // selection) that would justify it appearing on its own.
+    expect(screen.queryByRole("toolbar")).toBeNull();
+  });
+
+  it("the Refs button appears once a sha becomes available, for a selection made while it was still pending", async () => {
+    const { diffStore } = renderDiffFile(makeFile());
+    const wrap = document.querySelector<HTMLElement>(
+      '.line-wrap[data-anchor-line="2"][data-anchor-side="LEFT"]',
+    );
+    stubSelection({ anchorNode: wrap!, focusNode: wrap!, text: "fooBar" });
+    await fireSelectionChange();
+    expect(screen.queryByTitle("Find other references to this symbol")).toBeNull();
+
+    // Stands in for loadCommits() resolving: currentCommitSha() becomes
+    // non-empty without the selection itself changing, and the button
+    // should reactively become available.
+    await diffStore.selectCommit("deadbeef");
 
     expect(screen.getByTitle("Find other references to this symbol")).toBeTruthy();
   });
@@ -490,6 +530,9 @@ describe("DiffFile selection toolbar: revealed context lines are not composer an
 
   it("still shows the Refs button for a single-line symbol selection on a revealed gap line", async () => {
     const { diffStore } = renderDiffFile(makeFile());
+    // A resolved sha so this test exercises only the revealed-gap-line
+    // selection gate, not the sha-readiness gate covered separately above.
+    await diffStore.selectCommit("deadbeef");
     await revealBottomGapLines(diffStore);
 
     const gapWrap = document.querySelector<HTMLElement>(

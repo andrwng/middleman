@@ -125,16 +125,13 @@
   });
 
   // The SHA we anchor new comments against — the newest commit in the
-  // currently scoped diff. Falls back to "HEAD" marker for head scope
-  // when commits haven't loaded yet, in which case the publish step
-  // will attach the actual PR head SHA.
+  // currently scoped diff. Falls back to "" for head scope when commits
+  // haven't loaded yet, in which case the publish step will attach the
+  // actual PR head SHA. Delegates to the diff store so DiffView's
+  // symbol-refs staleness watcher reads the exact same derivation
+  // rather than a second copy of this scope/commits logic.
   function currentCommitSha(): string {
-    const scope = diffStore.getScope();
-    if (scope.kind === "commit") return scope.sha;
-    if (scope.kind === "range") return scope.toSha;
-    const commits = diffStore.getCommits();
-    if (commits && commits.length > 0) return commits[0]!.sha;
-    return "";
+    return diffStore.getCurrentCommitSha();
   }
 
   // revealForThisFile: a line the UI wants revealed inside this
@@ -177,7 +174,20 @@
   // which is inherently single-line — never populates liveSelection.
   // Kept as a separate field rather than widening liveSelection so
   // Comment/Ask's existing multi-line-only visibility is untouched.
-  let liveSymbolSelection = $state<{ text: string; side: "LEFT" | "RIGHT" } | null>(null);
+  // Just the selected text: searchSymbolFromToolbar always searches
+  // against currentCommitSha()'s new-side SHA regardless of which side
+  // the selection was made on, so there's no use for the side it was
+  // selected on -- narrowed to a string rather than carrying a `side`
+  // field nothing reads.
+  let liveSymbolSelection = $state<string | null>(null);
+
+  // Additionally requires a resolved sha: in head scope,
+  // currentCommitSha() can briefly be "" before loadCommits()
+  // resolves. Gating the Refs button on this (rather than just its
+  // click handler) means the affordance simply isn't offered until it
+  // can work, and the toolbar doesn't render as an empty box when only
+  // a sha-pending symbol selection is active.
+  const symbolRefsAvailable = $derived(liveSymbolSelection != null && currentCommitSha() !== "");
 
   // rangeSnapshot is the range we'll anchor the next comment/question
   // to. snapshotRangeFor copies liveSelection into it at click time.
@@ -235,8 +245,12 @@
   // and new_num 2 on the RIGHT), it requires both ends to resolve to
   // the SAME .line-wrap element — the strongest available proof that
   // the selection is confined to one line on one side. Returns the
-  // trimmed selected text so callers never have to re-trim it.
-  function computeSymbolSelection(): { text: string; side: "LEFT" | "RIGHT" } | null {
+  // trimmed selected text so callers never have to re-trim it. The
+  // side itself is checked only to confirm the anchor is a real diff
+  // line (LEFT or RIGHT) and isn't returned -- the search this feeds
+  // always runs against the new-side SHA regardless of which side the
+  // text was selected on.
+  function computeSymbolSelection(): string | null {
     if (typeof window === "undefined") return null;
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || sel.rangeCount === 0) return null;
@@ -253,7 +267,7 @@
 
     const text = sel.toString().trim();
     if (!isSymbolQuery(text)) return null;
-    return { text, side };
+    return text;
   }
 
   function snapshotRangeFor(side: "LEFT" | "RIGHT"): void {
@@ -359,7 +373,7 @@
   // numbering, so the line numbers the server returns line up with
   // what's on screen.
   function searchSymbolFromToolbar(): void {
-    const sym = liveSymbolSelection?.text ?? "";
+    const sym = liveSymbolSelection ?? "";
     if (!isSymbolQuery(sym)) return;
     void symbolRefsStore.search(owner, name, number, currentCommitSha(), sym);
   }
@@ -681,7 +695,7 @@
   }
 </script>
 
-{#if liveSelection || liveSymbolSelection}
+{#if liveSelection || symbolRefsAvailable}
   <div
     class="selection-toolbar"
     style="top: {toolbarTop}px; left: {toolbarLeft}px"
@@ -714,7 +728,7 @@
         ? Ask
       </button>
     {/if}
-    {#if liveSymbolSelection}
+    {#if symbolRefsAvailable}
       <button
         type="button"
         class="selection-toolbar__btn selection-toolbar__btn--refs"
