@@ -94,7 +94,14 @@
     // Reading `hits` (always truthy — it's an array) is what creates the
     // reactive dependency here; the point is the read, not the value, so
     // this unconditionally re-collapses the section on every new search.
-    if (hits) noisyExpanded = false;
+    if (hits) {
+      noisyExpanded = false;
+      // A fresh result set invalidates any previous jump failure: even
+      // if it includes the same (path, line), nobody has clicked it in
+      // THIS result set, so no row should show "not part of the
+      // rendered diff" yet.
+      missingJump = null;
+    }
   });
 
   function kindLabel(kind: string): string {

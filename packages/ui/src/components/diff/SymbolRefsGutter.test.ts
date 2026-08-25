@@ -306,10 +306,24 @@ describe("SymbolRefsGutter", () => {
     await fireEvent.click(screen.getByText(/1 in comments\/strings/));
     expect(screen.getByText("// first")).toBeTruthy();
 
+    // A failed jump on this row must not survive into the next search's
+    // result set, even though "B"'s hit below shares this same
+    // (path, line) — hit()'s defaults leave both at ("a.go", 1).
+    scrollToDiffLineMock.mockResolvedValueOnce("missing");
+    await fireEvent.click(screen.getByText("// first"));
+    expect(screen.getByText(/nothing to jump to/)).toBeTruthy();
+
     await symbolRefsStore.search("o", "n", 1, "sha", "B");
     await tick();
     expect(screen.queryByText("// second")).toBeNull();
     expect(screen.getByText(/1 in comments\/strings/)).toBeTruthy();
+
+    // Re-reveal the (reset, re-collapsed) section: the new row at that
+    // same (path, line) must render clean, not carry over the stale
+    // "missing" notice from a row nobody has clicked yet this search.
+    await fireEvent.click(screen.getByText(/1 in comments\/strings/));
+    expect(screen.getByText("// second")).toBeTruthy();
+    expect(screen.queryByText(/nothing to jump to/)).toBeNull();
   });
 });
 
