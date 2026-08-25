@@ -12,13 +12,13 @@ function makeHit(over: Partial<SymbolHit> = {}): SymbolHit {
 
 function makeResponse(
   query: string,
-  hits: SymbolHit[],
+  hits: SymbolHit[] | null,
   over: Partial<SymbolRefsResponse> = {},
 ): SymbolRefsResponse {
   return {
     query,
     hits,
-    in_pr_total: hits.length,
+    in_pr_total: hits?.length ?? 0,
     outside_pr_total: 0,
     truncated: false,
     ...over,
@@ -76,6 +76,29 @@ describe("isSymbolQuery", () => {
   it("rejects 129 characters", () => {
     expect(isSymbolQuery("a".repeat(129))).toBe(false);
   });
+
+  it("accepts leading/trailing whitespace whose trimmed value is just inside the limit", () => {
+    expect(isSymbolQuery(`  ${"a".repeat(128)}  `)).toBe(true);
+  });
+
+  it("rejects leading/trailing whitespace whose trimmed value is just outside the limit", () => {
+    expect(isSymbolQuery(`  ${"a".repeat(129)}  `)).toBe(false);
+  });
+
+  it("rejects a multi-byte symbol under 128 characters but over 128 UTF-8 bytes", () => {
+    // U+65E5 encodes to 3 UTF-8 bytes but counts as 1 UTF-16 code unit,
+    // so 50 of them is 50 characters (well under the character count)
+    // but 150 bytes (over the server's byte bound).
+    const symbol = "日".repeat(50);
+    expect(symbol.length).toBe(50);
+    expect(isSymbolQuery(symbol)).toBe(false);
+  });
+
+  it("accepts a multi-byte symbol comfortably under both the character and byte limits", () => {
+    const symbol = "日".repeat(10);
+    expect(symbol.length).toBe(10);
+    expect(isSymbolQuery(symbol)).toBe(true);
+  });
 });
 
 describe("symbolRefs store", () => {
@@ -116,7 +139,7 @@ describe("symbolRefs store", () => {
     expect(store.isActive()).toBe(true);
   });
 
-  it("a failed request leaves status error with a message and no stale hits", async () => {
+  it("a failed request leaves status error with the server's detail and no stale hits", async () => {
     const get = vi
       .fn()
       .mockResolvedValueOnce({ data: makeResponse("Foo", [makeHit()]), error: undefined })
@@ -129,8 +152,33 @@ describe("symbolRefs store", () => {
 
     await store.search("acme", "widget", 7, "sha1", "Bar");
     expect(store.getStatus()).toBe("error");
-    expect(store.getError()).not.toBeNull();
+    expect(store.getError()).toBe("boom");
     expect(store.getHits()).toEqual([]);
+  });
+
+  it("falls back to a generic message when the server error has no detail", async () => {
+    const get = vi.fn(async () => ({ data: undefined, error: {} }));
+    const store = createSymbolRefsStore({ client: stubClient({ GET: get }) });
+
+    await store.search("acme", "widget", 7, "sha1", "Foo");
+    expect(store.getStatus()).toBe("error");
+    expect(store.getError()).toBe("Symbol search failed");
+  });
+
+  it("treats a null hits payload as empty, matching the nullable generated type", async () => {
+    const get = vi.fn(async () => ({
+      data: makeResponse("Foo", null),
+      error: undefined,
+    }));
+    const store = createSymbolRefsStore({ client: stubClient({ GET: get }) });
+
+    await store.search("acme", "widget", 7, "sha1", "Foo");
+
+    expect(store.getStatus()).toBe("ready");
+    expect(store.getHits()).toEqual([]);
+    expect(store.getInPrTotal()).toBe(0);
+    expect(store.getOutsidePrTotal()).toBe(0);
+    expect(store.isTruncated()).toBe(false);
   });
 
   it("close returns the store to idle and empties the hits", async () => {
@@ -148,6 +196,26 @@ describe("symbolRefs store", () => {
     expect(store.getStatus()).toBe("idle");
     expect(store.getHits()).toEqual([]);
     expect(store.getQuery()).toBe("");
+  });
+
+  it("close() while a search is in flight discards the late response", async () => {
+    const d = deferred<{ data: SymbolRefsResponse; error: undefined }>();
+    const get = vi.fn().mockReturnValueOnce(d.promise);
+    const store = createSymbolRefsStore({ client: stubClient({ GET: get }) });
+
+    const pending = store.search("acme", "widget", 7, "sha1", "Foo");
+    expect(store.getStatus()).toBe("loading");
+
+    store.close();
+    expect(store.getStatus()).toBe("idle");
+
+    d.resolve({ data: makeResponse("Foo", [makeHit()]), error: undefined });
+    await pending;
+
+    expect(store.getStatus()).toBe("idle");
+    expect(store.getHits()).toEqual([]);
+    expect(store.getQuery()).toBe("");
+    expect(store.isActive()).toBe(false);
   });
 
   it("discards an out-of-order response so an earlier search resolving last cannot clobber a later one", async () => {

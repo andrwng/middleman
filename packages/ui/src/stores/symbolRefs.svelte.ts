@@ -7,16 +7,20 @@ export type SymbolHit = components["schemas"]["SymbolHit"];
 export type SymbolRefsStatus = "idle" | "loading" | "ready" | "error";
 
 // The longest selection worth searching, matching the server's
-// symbolRefsMaxQueryBytes.
-const MAX_QUERY_LENGTH = 128;
+// symbolRefsMaxQueryBytes: 128 bytes of UTF-8, not UTF-16 code units.
+const MAX_QUERY_BYTES = 128;
 
 // isSymbolQuery gates the "Refs" affordance: a searchable symbol is a
-// single run of non-whitespace within the server's length bound. A
-// multi-word or multi-line selection can never match a line-based
-// word-boundary grep, so the button stays hidden for those.
+// single run of non-whitespace within the server's byte-length bound.
+// A multi-word or multi-line selection can never match a line-based
+// word-boundary grep, so the button stays hidden for those. The bound
+// is measured in UTF-8 bytes (not `.length`, which counts UTF-16 code
+// units) so a multi-byte symbol is judged the same way the server
+// judges it, instead of being accepted here only to be rejected there.
 export function isSymbolQuery(text: string): boolean {
   const t = text.trim();
-  return t.length > 0 && t.length <= MAX_QUERY_LENGTH && !/\s/.test(t);
+  if (t.length === 0 || /\s/.test(t)) return false;
+  return new TextEncoder().encode(t).length <= MAX_QUERY_BYTES;
 }
 
 export interface SymbolRefsStoreOptions {
@@ -66,6 +70,10 @@ export function createSymbolRefsStore(opts: SymbolRefsStoreOptions) {
     return status !== "idle";
   }
 
+  function detail(err: unknown, fallback: string): string {
+    return (err as { detail?: string }).detail ?? fallback;
+  }
+
   async function search(
     owner: string,
     name: string,
@@ -91,7 +99,7 @@ export function createSymbolRefsStore(opts: SymbolRefsStoreOptions) {
     if (ticket !== seq) return;
     if (err || !data) {
       status = "error";
-      errorMsg = "Symbol search failed";
+      errorMsg = err ? detail(err, "Symbol search failed") : "Symbol search failed";
       return;
     }
     hits = data.hits ?? [];
