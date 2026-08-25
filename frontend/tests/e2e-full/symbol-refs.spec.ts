@@ -262,5 +262,23 @@ test.describe("symbol references gutter (git-backed)", () => {
       .locator(".collapsed-region")
       .filter({ hasText: "13 unchanged lines" });
     await expect(collapsedAfter).toHaveCount(1);
+
+    // "path" also produces 2 string-classified hits alongside its 3
+    // reference hits (Classify.go: the slog.Info call's "path" log key
+    // at line 11, and the "empty path" literal at line 14, are both
+    // still inside open quotes at the point "path" first appears on the
+    // line). Neither test above ever opens the toggle on a "string"
+    // kind -- test 1 and test 2 only ever expand a "comment" kind -- so
+    // do that here, scoped via .symref-row__line rather than matching
+    // on the row's full, whitespace-normalized text.
+    const stringToggle = gutter.locator(".symref-toggle");
+    await expect(stringToggle).toHaveText(/2 in comments\/strings/);
+    await stringToggle.click();
+
+    const line11Row = gutter.locator(".symref-row").filter({
+      has: page.locator(".symref-row__line", { hasText: /^11$/ }),
+    });
+    await expect(line11Row).toHaveCount(1);
+    await expect(line11Row.locator(".symref-row__kind")).toHaveText("string");
   });
 });
