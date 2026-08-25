@@ -109,9 +109,9 @@
   const interdiff = $derived(diffStore.getInterdiff());
   // Tracked alongside `scope` for the symbol-refs staleness watcher
   // below: diffScopeKey collapses every head-scope view to the same
-  // "head" string, so a background sync that advances the PR head
-  // (refresh() re-fetches commits without changing scope.kind) needs
-  // its own signal, distinct from a genuine scope change.
+  // "head" string, so the user clicking Refresh while scope stays
+  // "head" (refresh() re-fetches commits without changing scope.kind)
+  // needs its own signal, distinct from a genuine scope change.
   const currentSha = $derived(diffStore.getCurrentCommitSha());
 
   function scrollToFile(path: string): void {
@@ -231,14 +231,14 @@
   // regardless of object identity.
   //
   // The key alone misses one case: every head-scope view maps to the
-  // same "head" string, so a background sync that advances the PR head
-  // (diffStore.refresh() re-fetching commits) changes nothing the key
-  // can see, even though the rendered line numbers just shifted under
-  // an active search's feet. currentSha (tracked alongside the key)
-  // catches that: it's the same currentCommitSha() derivation DiffFile
-  // searched against, so comparing it to the store's own recorded
-  // searched-sha detects the drift regardless of whether scope.kind
-  // changed.
+  // same "head" string, so the user clicking Refresh while scope stays
+  // "head" (diffStore.refresh() re-fetching commits) changes nothing
+  // the key can see, even though the rendered line numbers just
+  // shifted under an active search's feet. currentSha (tracked
+  // alongside the key) catches that: it's the same currentCommitSha()
+  // derivation DiffFile searched against, so comparing it to the
+  // store's own recorded searched-sha detects the drift regardless of
+  // whether scope.kind changed.
   function diffScopeKey(s: DiffScope): string {
     switch (s.kind) {
       case "head": return "head";
