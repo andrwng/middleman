@@ -30,11 +30,19 @@ export interface DiffJumpDeps {
 // find the file at all.
 export type DiffJumpOutcome = "line" | "pending" | "missing";
 
-// Reuses DiffFile's existing :global(.line-wrap--flash) rule, which
+// Reuses DiffFile's :global(.line-wrap--jump-highlight) rule, which
 // applies document-wide and so also covers a line revealed inside a
-// CollapsedRegion.
-const FLASH_CLASS = "line-wrap--flash";
-const FLASH_MS = 1500;
+// CollapsedRegion. Unlike the timed .line-wrap--flash class the other
+// (non-symbol-refs) jump-to-line implementations add and remove on
+// their own, this class is persistent — see flashDiffLine below.
+const HIGHLIGHT_CLASS = "line-wrap--jump-highlight";
+
+// The one element currently carrying HIGHLIGHT_CLASS, so a later jump
+// can clear it before highlighting its own target. Module-level rather
+// than per-call state because the highlight is a single, page-wide
+// "this is where you last jumped to" indicator, not something scoped
+// to one DiffFile instance.
+let highlightedEl: HTMLElement | null = null;
 
 // CSS.escape isn't implemented by every environment this module runs
 // in — notably jsdom, which this file's own test suite runs under —
@@ -60,10 +68,32 @@ export function findDiffLineEl(target: DiffJumpTarget): HTMLElement | null {
   );
 }
 
+// flashDiffLine scrolls to el and marks it as the current jump target
+// with a persistent highlight, clearing whichever element previously
+// held it first. "Persistent" (rather than a timed flash) is
+// deliberate: a jump can land many lines down the page, and a
+// time-based flash would routinely finish decaying before a long
+// smooth-scroll even arrives — this has no such race, since nothing
+// times it out.
 export function flashDiffLine(el: HTMLElement): void {
   el.scrollIntoView({ block: "center", behavior: "smooth" });
-  el.classList.add(FLASH_CLASS);
-  window.setTimeout(() => el.classList.remove(FLASH_CLASS), FLASH_MS);
+  if (highlightedEl && highlightedEl !== el && highlightedEl.isConnected) {
+    highlightedEl.classList.remove(HIGHLIGHT_CLASS);
+  }
+  highlightedEl = el;
+  el.classList.add(HIGHLIGHT_CLASS);
+}
+
+// clearDiffLineHighlight removes the persistent highlight left by the
+// most recent flashDiffLine call, if any. Callers use this when the
+// context that made the highlight meaningful goes away — e.g. the
+// symbol-refs gutter closing — rather than leaving a highlighted line
+// with nothing on screen explaining why.
+export function clearDiffLineHighlight(): void {
+  if (highlightedEl && highlightedEl.isConnected) {
+    highlightedEl.classList.remove(HIGHLIGHT_CLASS);
+  }
+  highlightedEl = null;
 }
 
 function scrollToFileHeader(path: string): boolean {

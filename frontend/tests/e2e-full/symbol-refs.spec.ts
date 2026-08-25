@@ -133,7 +133,7 @@ test.describe("symbol references gutter (git-backed)", () => {
 
     // Click a row inside a rendered hunk -- handler.go's ProcessEvent
     // signature sits well within the file's second hunk -- and the diff
-    // scrolls to it and flashes it.
+    // scrolls to it and highlights it.
     const handlerGroup = gutter.locator(".symref-group", { hasText: "internal/handler.go" });
     await expect(handlerGroup.locator(".symref-row")).toHaveCount(1);
     await handlerGroup.locator(".symref-row").click();
@@ -141,7 +141,7 @@ test.describe("symbol references gutter (git-backed)", () => {
     const target = page.locator(
       '.diff-file[data-file-path="internal/handler.go"] [data-anchor-line="34"][data-anchor-side="RIGHT"]',
     );
-    await expect(target).toHaveClass(/line-wrap--flash/, { timeout: 5000 });
+    await expect(target).toHaveClass(/line-wrap--jump-highlight/, { timeout: 5000 });
     await expect(target).toBeInViewport();
 
     // Closing the gutter returns the diff to full width.
@@ -209,7 +209,7 @@ test.describe("symbol references gutter (git-backed)", () => {
     expect(role).toBeNull();
   });
 
-  test("clicking a row whose line sits in a collapsed context gap expands the region and lands on the flashed target line", async ({ page }) => {
+  test("clicking a row whose line sits in a collapsed context gap expands the region and lands on the highlighted target line", async ({ page }) => {
     await page.goto("/pulls/acme/widgets/1/files");
     await page.locator(".diff-file").first().waitFor({ state: "visible", timeout: 10_000 });
 
@@ -248,10 +248,10 @@ test.describe("symbol references gutter (git-backed)", () => {
     await row18.click();
 
     // The region expands to bring line 18 into the DOM, the diff scrolls
-    // to it, and it carries the same flash class an already-rendered
-    // jump would.
+    // to it, and it carries the same persistent highlight class an
+    // already-rendered jump would.
     await target.waitFor({ state: "attached", timeout: 10_000 });
-    await expect(target).toHaveClass(/line-wrap--flash/, { timeout: 5000 });
+    await expect(target).toHaveClass(/line-wrap--jump-highlight/, { timeout: 5000 });
     await expect(target).toBeInViewport();
 
     // The gap shrank by exactly the 4 lines needed to reach line 18 from

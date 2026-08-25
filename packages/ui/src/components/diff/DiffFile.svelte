@@ -147,7 +147,7 @@
   // onRegionRevealed completes a reveal-and-jump once a
   // CollapsedRegion reports its target line is now rendered: consumes
   // the store's target so no other region acts on it again, then
-  // flashes the now-mounted line — the same finishing step
+  // highlights the now-mounted line — the same finishing step
   // scrollToDiffLine.ts uses for a line that was already visible.
   async function onRegionRevealed(): Promise<void> {
     const t = diffStore.getRevealTarget();
@@ -1479,6 +1479,20 @@
   @keyframes line-wrap-flash {
     0%   { background: color-mix(in srgb, var(--accent-blue) 35%, transparent); }
     100% { background: transparent; }
+  }
+
+  /* Persistent highlight for a symbol-refs jump target (see
+     scrollToDiffLine.ts's flashDiffLine/clearDiffLineHighlight).
+     Unlike .line-wrap--flash above, this has no timer: a jump can
+     land many lines down the page, where a time-based flash would
+     often finish decaying before the smooth scroll even arrives.
+     Stays until superseded by another jump or cleared when the
+     gutter closes. :global because the target can be a line
+     revealed inside a CollapsedRegion, not just one of this file's
+     own .line-wrap elements. */
+  :global(.line-wrap--jump-highlight) {
+    background: color-mix(in srgb, var(--accent-teal) 18%, transparent);
+    box-shadow: inset 3px 0 0 0 var(--accent-teal);
   }
 
   .line-actions {

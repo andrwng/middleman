@@ -1,6 +1,7 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { getStores } from "../../context.js";
-  import { scrollToDiffLine, type DiffJumpDeps } from "./scrollToDiffLine.js";
+  import { scrollToDiffLine, clearDiffLineHighlight, type DiffJumpDeps } from "./scrollToDiffLine.js";
   import type { SymbolHit } from "../../stores/symbolRefs.svelte.js";
 
   interface Props {
@@ -15,6 +16,16 @@
   const { owner, name, number, width }: Props = $props();
 
   const { symbolRefs: symbolRefsStore, diff: diffStore } = getStores();
+
+  // This component's mounted lifetime is exactly the gutter's open
+  // state (DiffView only renders it while symbolRefsStore.isActive()),
+  // so its teardown is the one place that covers every way the gutter
+  // can close — the close button, an auto-close on scope/SHA drift,
+  // or the diff view itself going away — without each of those call
+  // sites needing to remember to clear the jump highlight themselves.
+  onMount(() => {
+    return () => clearDiffLineHighlight();
+  });
 
   const query = $derived(symbolRefsStore.getQuery());
   const hits = $derived(symbolRefsStore.getHits());

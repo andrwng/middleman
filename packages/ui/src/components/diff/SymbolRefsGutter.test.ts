@@ -21,9 +21,15 @@ const scrollToDiffLineMock = vi.fn(
     _deps: DiffJumpDeps,
   ): Promise<DiffJumpOutcome> => "line",
 );
+// clearDiffLineHighlightMock backs the gutter's onMount teardown (see the
+// "clears the jump highlight on unmount" test below) — also mocked
+// wholesale rather than exercising the real DOM/classList logic, which
+// scrollToDiffLine.test.ts already covers directly.
+const clearDiffLineHighlightMock = vi.fn();
 vi.mock("./scrollToDiffLine.js", () => ({
   scrollToDiffLine: (target: { path: string; line: number }, deps: DiffJumpDeps) =>
     scrollToDiffLineMock(target, deps),
+  clearDiffLineHighlight: () => clearDiffLineHighlightMock(),
 }));
 
 import SymbolRefsGutter from "./SymbolRefsGutter.svelte";
@@ -114,12 +120,22 @@ function stubClient(responses: unknown[]): MiddlemanClient {
 afterEach(() => {
   cleanup();
   scrollToDiffLineMock.mockClear();
+  clearDiffLineHighlightMock.mockClear();
 });
 
 describe("SymbolRefsGutter", () => {
   it("exposes itself as a labelled landmark for assistive tech", () => {
     renderGutter({ hits: [hit()], inPrTotal: 1 });
     expect(screen.getByRole("complementary", { name: "Symbol references" })).toBeTruthy();
+  });
+
+  it("clears the jump highlight when the gutter unmounts (the close button, or any other cause)", () => {
+    renderGutter({ hits: [hit()], inPrTotal: 1 });
+    expect(clearDiffLineHighlightMock).not.toHaveBeenCalled();
+
+    cleanup();
+
+    expect(clearDiffLineHighlightMock).toHaveBeenCalledTimes(1);
   });
 
   it("renders the query and the in-PR count in the header", () => {

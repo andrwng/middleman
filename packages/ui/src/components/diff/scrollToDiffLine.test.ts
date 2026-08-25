@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { findDiffLineEl, scrollToDiffLine, type DiffJumpDeps } from "./scrollToDiffLine";
+import {
+  clearDiffLineHighlight,
+  findDiffLineEl,
+  scrollToDiffLine,
+  type DiffJumpDeps,
+} from "./scrollToDiffLine";
 
 beforeEach(() => {
   // jsdom: scrollIntoView is not implemented (see CommentGutter.test.ts:22).
@@ -9,6 +14,10 @@ beforeEach(() => {
 afterEach(() => {
   document.body.innerHTML = "";
   vi.useRealTimers();
+  // The highlighted element is module-level state (a single, page-wide
+  // "last jump target"), so it outlives any one test's DOM unless
+  // cleared explicitly.
+  clearDiffLineHighlight();
 });
 
 // Builds a `.diff-file` container under document.body for a test to attach
@@ -109,12 +118,11 @@ function makeDeps(overrides: Partial<DiffJumpDeps> = {}): DiffJumpDeps {
 }
 
 describe("scrollToDiffLine", () => {
-  it("flashes a bare revealed-context line the same way as a wrapped one", async () => {
+  it("highlights a bare revealed-context line the same way as a wrapped one", async () => {
     // The shape CollapsedRegion produces: no .line-wrap, attributes on
     // the .diff-line element itself. flashDiffLine doesn't branch on
     // element shape, but this is the actual case Task 8 depends on, so
     // it's worth pinning directly rather than only through .line-wrap.
-    vi.useFakeTimers();
     const fileEl = makeDiffFile("a/b.go");
     const bare = appendBareDiffLine(fileEl, 20, "RIGHT");
     const deps = makeDeps();
@@ -123,14 +131,11 @@ describe("scrollToDiffLine", () => {
 
     expect(outcome).toBe("line");
     expect(bare.scrollIntoView).toHaveBeenCalledWith({ block: "center", behavior: "smooth" });
-    expect(bare.classList.contains("line-wrap--flash")).toBe(true);
+    expect(bare.classList.contains("line-wrap--jump-highlight")).toBe(true);
     expect(deps.clearRevealTarget).toHaveBeenCalledTimes(1);
-
-    await vi.advanceTimersByTimeAsync(1500);
-    expect(bare.classList.contains("line-wrap--flash")).toBe(false);
   });
 
-  it("flashes a rendered line, then removes the flash after the timeout", async () => {
+  it("highlights a rendered line persistently — no timeout removes it", async () => {
     vi.useFakeTimers();
     const fileEl = makeDiffFile("a/b.go");
     const wrap = appendLineWrap(fileEl, 10, "RIGHT");
@@ -140,15 +145,33 @@ describe("scrollToDiffLine", () => {
 
     expect(outcome).toBe("line");
     expect(wrap.scrollIntoView).toHaveBeenCalledWith({ block: "center", behavior: "smooth" });
-    expect(wrap.classList.contains("line-wrap--flash")).toBe(true);
+    expect(wrap.classList.contains("line-wrap--jump-highlight")).toBe(true);
+    // Not the older timed class this path used to add.
+    expect(wrap.classList.contains("line-wrap--flash")).toBe(false);
     expect(deps.requestRevealLine).not.toHaveBeenCalled();
     // A direct hit needs no reveal for THIS jump, but any unrelated
     // target left over from an earlier, unresolved jump must still be
     // swept away so it cannot misfire later against a different file.
     expect(deps.clearRevealTarget).toHaveBeenCalledTimes(1);
 
-    await vi.advanceTimersByTimeAsync(1500);
-    expect(wrap.classList.contains("line-wrap--flash")).toBe(false);
+    // Unlike the old flash, nothing times this out.
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(wrap.classList.contains("line-wrap--jump-highlight")).toBe(true);
+  });
+
+  it("clears the previous target's highlight when a second jump lands on a different line", async () => {
+    const fileEl = makeDiffFile("a/b.go");
+    const first = appendLineWrap(fileEl, 10, "RIGHT");
+    const second = appendLineWrap(fileEl, 20, "RIGHT");
+    const deps = makeDeps();
+
+    await scrollToDiffLine({ path: "a/b.go", line: 10 }, deps);
+    expect(first.classList.contains("line-wrap--jump-highlight")).toBe(true);
+
+    await scrollToDiffLine({ path: "a/b.go", line: 20 }, deps);
+
+    expect(second.classList.contains("line-wrap--jump-highlight")).toBe(true);
+    expect(first.classList.contains("line-wrap--jump-highlight")).toBe(false);
   });
 
   it("expands a collapsed file before looking, and finds a line that mounts after the toggle", async () => {
