@@ -2634,7 +2634,10 @@ func changedPathSet(files []gitcloneDiffFile) map[string]bool {
 func buildSymbolRefsResponse(
 	symbol string, hits []gitclone.SymbolHit, changed map[string]bool,
 ) symbolRefsResponse {
-	resp := symbolRefsResponse{Query: symbol, Hits: []gitclone.SymbolHit{}}
+	resp := symbolRefsResponse{Query: symbol}
+	// make guarantees inPR is never nil, which is what makes
+	// resp.Hits marshal as `[]` rather than `null` below — the TS
+	// client depends on it.
 	inPR := make([]gitclone.SymbolHit, 0, len(hits))
 	for _, h := range hits {
 		if !changed[h.Path] {

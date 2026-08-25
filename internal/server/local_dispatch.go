@@ -426,7 +426,7 @@ func (s *Server) getSymbolRefsLocal(
 	ds, err := worktrees.DiffAgainstBase(ctx, w.Path, baseRef)
 	if err != nil {
 		return nil, huma.Error500InternalServerError(
-			"worktree files failed: " + err.Error())
+			"symbol search changed-file lookup failed: " + err.Error())
 	}
 
 	gctx, cancel := context.WithTimeout(ctx, symbolRefsTimeout)

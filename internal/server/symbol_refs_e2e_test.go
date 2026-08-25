@@ -364,4 +364,69 @@ func TestSymbolRefsEndpointE2E(t *testing.T) {
 		assert.Equal(gitclone.KindDefinition, hits[0].Kind)
 		assert.EqualValues(1, resp.JSON200.InPrTotal)
 	})
+
+	t.Run("local mode: a symbol absent from the worktree returns 200 with empty hits", func(t *testing.T) {
+		assert := Assert.New(t)
+		require := require.New(t)
+
+		dir := t.TempDir()
+		runGitWT(t, "", "init", "--initial-branch=main", dir)
+		runGitWT(t, dir, "config", "user.email", "test@example.com")
+		runGitWT(t, dir, "config", "user.name", "Test")
+
+		require.NoError(os.WriteFile(filepath.Join(dir, "tracked.go"),
+			[]byte("package widgets\n\nvar Committed = 1\n"), 0o644))
+		runGitWT(t, dir, "add", "tracked.go")
+		runGitWT(t, dir, "commit", "-m", "add tracked.go")
+
+		srv, database := setupTestServer(t)
+		client := setupTestClient(t, srv)
+		ctx := context.Background()
+
+		repoID, err := database.UpsertLocalRepo(ctx, "demo")
+		require.NoError(err)
+		canonDir, err := filepath.EvalSymlinks(dir)
+		require.NoError(err)
+		w, err := database.UpsertWorktree(ctx, repoID, db.ScannedWorktree{
+			Path:   canonDir,
+			Branch: "main",
+		})
+		require.NoError(err)
+
+		// This symbol appears nowhere in the worktree: git grep exits
+		// 1, which worktrees.GrepSymbol (grep.go) treats as an empty
+		// result rather than an error, so this must surface as 200
+		// with an empty list — never 404, never 502.
+		q := "ZzzNoSuchSymbolAnywhere999"
+		sentinel := worktrees.WorkingTreeSentinel
+		resp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberSymbolRefsWithResponse(
+			ctx, "local", "demo", w.ID,
+			&generated.GetReposByOwnerByNamePullsByNumberSymbolRefsParams{Q: &q, Sha: &sentinel},
+		)
+		require.NoError(err)
+		require.Equal(http.StatusOK, resp.StatusCode())
+		require.NotNil(resp.JSON200)
+		// Non-nil proves the wire payload was `[]`, not `null`.
+		require.NotNil(resp.JSON200.Hits)
+		assert.Empty(*resp.JSON200.Hits)
+		assert.EqualValues(0, resp.JSON200.InPrTotal)
+	})
+
+	t.Run("local mode: an unknown worktree number returns 404", func(t *testing.T) {
+		assert := Assert.New(t)
+		require := require.New(t)
+
+		srv, _ := setupTestServer(t)
+		client := setupTestClient(t, srv)
+		ctx := context.Background()
+
+		q := "AnySymbol"
+		sentinel := worktrees.WorkingTreeSentinel
+		resp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberSymbolRefsWithResponse(
+			ctx, "local", "demo", 99999,
+			&generated.GetReposByOwnerByNamePullsByNumberSymbolRefsParams{Q: &q, Sha: &sentinel},
+		)
+		require.NoError(err)
+		assert.Equal(http.StatusNotFound, resp.StatusCode())
+	})
 }
