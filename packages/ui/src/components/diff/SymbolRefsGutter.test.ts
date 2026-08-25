@@ -8,16 +8,21 @@ import type { MiddlemanClient } from "../../types.js";
 
 // scrollToDiffLine.ts is mocked wholesale so row-click tests can assert on
 // exactly what the component passed it, without exercising the real DOM
-// jump logic (which is covered by scrollToDiffLine.test.ts already).
+// jump logic (which is covered by scrollToDiffLine.test.ts already). The
+// mock's second parameter is typed as the real DiffJumpDeps (a type-only
+// import, unaffected by the vi.mock below) rather than `unknown`, so
+// `.mock.calls[0]` comes back correctly typed and tests can call into the
+// deps without an unsafe cast.
 const scrollToDiffLineMock = vi.fn(
-  async (_target: { path: string; line: number }, _deps: unknown) => "line" as const,
+  async (_target: { path: string; line: number }, _deps: DiffJumpDeps) => "line" as const,
 );
 vi.mock("./scrollToDiffLine.js", () => ({
-  scrollToDiffLine: (target: { path: string; line: number }, deps: unknown) =>
+  scrollToDiffLine: (target: { path: string; line: number }, deps: DiffJumpDeps) =>
     scrollToDiffLineMock(target, deps),
 }));
 
 import SymbolRefsGutter from "./SymbolRefsGutter.svelte";
+import type { DiffJumpDeps } from "./scrollToDiffLine.js";
 
 function hit(over: Partial<SymbolHit> = {}): SymbolHit {
   return { path: "a.go", line: 1, text: "ref line", kind: "reference", ...over };
@@ -99,6 +104,11 @@ afterEach(() => {
 });
 
 describe("SymbolRefsGutter", () => {
+  it("exposes itself as a labelled landmark for assistive tech", () => {
+    renderGutter({ hits: [hit()], inPrTotal: 1 });
+    expect(screen.getByRole("complementary", { name: "Symbol references" })).toBeTruthy();
+  });
+
   it("renders the query and the in-PR count in the header", () => {
     renderGutter({ query: "Frobnicate", hits: [hit()], inPrTotal: 7 });
     expect(screen.getByText("Frobnicate")).toBeTruthy();
@@ -203,9 +213,9 @@ describe("SymbolRefsGutter", () => {
     expect(screen.getByText(/appears only where it was selected/i)).toBeTruthy();
   });
 
-  it("clicking a row calls scrollToDiffLine with that row's path and line", async () => {
+  it("clicking a row calls scrollToDiffLine with that row's path, line, and correctly-curried deps", async () => {
     const hits = [hit({ path: "pkg/foo.go", line: 42, text: "func Foo()", kind: "definition" })];
-    renderGutter({ hits, inPrTotal: 1 });
+    const { diffStore } = renderGutter({ hits, inPrTotal: 1 });
 
     await fireEvent.click(screen.getByText("func Foo()"));
 
@@ -213,6 +223,22 @@ describe("SymbolRefsGutter", () => {
     const call = scrollToDiffLineMock.mock.calls[0]!;
     expect(call[0].path).toBe("pkg/foo.go");
     expect(call[0].line).toBe(42);
+
+    // Exercise the deps jumpTo built, rather than just trusting they were
+    // constructed correctly by inspection: each function must reach the
+    // diff store with owner/name/number curried in the right order ahead
+    // of the argument(s) the caller supplies. A swapped owner/name (or a
+    // dropped number) in SymbolRefsGutter's jumpTo would fail these
+    // assertions even though `call[0]` above already looks right.
+    const deps = call[1];
+    deps.isFileCollapsed("other/path.go");
+    expect(diffStore.isFileCollapsed).toHaveBeenCalledWith("o", "n", 1, "other/path.go");
+
+    deps.toggleFileCollapsed("other/path.go");
+    expect(diffStore.toggleFileCollapsed).toHaveBeenCalledWith("o", "n", 1, "other/path.go");
+
+    deps.requestRevealLine("other/path.go", 99);
+    expect(diffStore.requestRevealLine).toHaveBeenCalledWith("other/path.go", 99);
   });
 
   it("the close button calls symbolRefs.close()", async () => {

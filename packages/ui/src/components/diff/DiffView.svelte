@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { getStores } from "../../context.js";
   import { clampGutterWidth } from "./gutterStack.js";
+  import type { DiffScope } from "../../stores/diff.svelte.js";
 
   const {
     diff: diffStore,
@@ -200,6 +201,55 @@
     if (scope.kind === "commit" && diff && !loading) {
       diffStore.markCommitReviewed(scope.sha);
     }
+  });
+
+  // Symbol-ref hits are scope-relative, not PR-relative: the line numbers
+  // the server returned only make sense against whichever SHA DiffFile's
+  // currentCommitSha() searched (the single commit, the range's newer
+  // end, or the PR head). Switching PRs is safe -- PRListView remounts
+  // this whole surface inside a {#key}, and our onMount cleanup below
+  // already closes any open search -- but changing scope WITHIN the same
+  // PR mutates diffStore's scope in place without unmounting DiffView, so
+  // nothing else clears a search that no longer matches what's rendered.
+  // Left alone, a stale hit whose line number happens to still exist in
+  // the new scope's rendering would silently jump to unrelated code.
+  //
+  // Watches a derived string key, not the scope object itself: every
+  // select* method on the diff store reassigns `scope` to a brand-new
+  // object literal even when re-selecting the value it already has (e.g.
+  // re-clicking the already-selected commit), so comparing raw object
+  // identity would close a search the user is still using on a pure no-op
+  // reassignment. diffScopeKey mirrors DiffScope's own shape -- kind plus
+  // whichever shas/numbers that kind carries -- so two
+  // structurally-identical scopes always produce the same string
+  // regardless of object identity.
+  function diffScopeKey(s: DiffScope): string {
+    switch (s.kind) {
+      case "head": return "head";
+      case "commit": return `commit:${s.sha}`;
+      case "range": return `range:${s.fromSha}..${s.toSha}`;
+      case "unreviewed": return "unreviewed";
+      case "patchsets": return `patchsets:${s.fromNumber}..${s.toNumber}`;
+    }
+  }
+
+  // Stays undefined until the effect below has recorded a first key --
+  // that first run is the initial mount observing whatever scope it
+  // started in, not a "change" to react to, so it must never close a
+  // search on its own.
+  let lastScopeKey: string | undefined;
+  $effect(() => {
+    const key = diffScopeKey(scope);
+    // isActive()/close() read and write the store's own `status` field.
+    // untrack keeps this effect from subscribing to it -- same gotcha,
+    // avoided here, as the one noted in WorktreeConversation.svelte --
+    // so closing a search doesn't turn around and re-trigger this effect.
+    untrack(() => {
+      if (lastScopeKey !== undefined && key !== lastScopeKey && symbolRefsStore.isActive()) {
+        symbolRefsStore.close();
+      }
+      lastScopeKey = key;
+    });
   });
 </script>
 

@@ -126,7 +126,12 @@
   </div>
 {/snippet}
 
-<div class="symref-gutter" style:width="{width}px">
+<div
+  class="symref-gutter"
+  style:width="{width}px"
+  role="complementary"
+  aria-label="Symbol references"
+>
   <div class="symref-header">
     <span class="symref-header__query" title={query}>{query}</span>
     <span class="symref-header__count" title="Occurrences in this PR's changed files">{inPrTotal}</span>
