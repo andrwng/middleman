@@ -322,7 +322,7 @@ describe("CollapsedRegion reveal-and-jump (revealNewLine / onrevealed)", () => {
     expect(onrevealed).toHaveBeenCalledTimes(1);
   });
 
-  it("does not race a fetch already in flight from a user scrub: a reveal target arriving mid-fetch waits rather than issuing a second request", async () => {
+  it("does not race a fetch already in flight from a click-initiated expand: a reveal target arriving mid-fetch waits rather than issuing a second request (the loading guard)", async () => {
     const onrevealed = vi.fn();
     const diffStore = createDiffStore({ client: stubClient() });
     let callCount = 0;
@@ -356,9 +356,12 @@ describe("CollapsedRegion reveal-and-jump (revealNewLine / onrevealed)", () => {
     };
     const { getByRole, rerender } = renderRegion(baseProps, diffStore);
 
-    // Start a user scrub: a plain click on a "middle" region calls
-    // expandStep(), which calls expandTop first — synchronously
-    // setting loading = true and issuing the fetch we're holding open.
+    // Start a click-initiated expand (this is NOT the scrub gesture —
+    // see the dedicated scrub test below for that): a plain click on
+    // a "middle" region calls expandStep(), which calls expandTop
+    // first — synchronously setting loading = true and issuing the
+    // fetch we're holding open. This exercises the reveal effect's
+    // `loading` guard specifically.
     await fireEvent.click(getByRole("button"));
     expect(callCount).toBe(1);
 
@@ -367,16 +370,177 @@ describe("CollapsedRegion reveal-and-jump (revealNewLine / onrevealed)", () => {
     await rerender({ ...baseProps, revealNewLine: 204, onrevealed });
 
     // The reveal effect must see loading === true and defer — not
-    // start a second, competing fetch while the scrub's is pending.
+    // start a second, competing fetch while the click-initiated one
+    // is pending.
     expect(callCount).toBe(1);
     expect(onrevealed).not.toHaveBeenCalled();
 
-    // Let the scrub's fetch resolve. It covers lines 200..204, so the
-    // target is now rendered without the reveal effect ever fetching
-    // anything itself.
+    // Let the held-open fetch resolve. It covers lines 200..204, so
+    // the target is now rendered without the reveal effect ever
+    // fetching anything itself.
     resolveFirst?.();
     await waitFor(() => {
       expect(onrevealed).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("does not race a fetch already in flight from a real scrub gesture: a reveal target arriving mid-scrub waits on the `flushing` guard rather than issuing a second request", async () => {
+    const onrevealed = vi.fn();
+    const diffStore = createDiffStore({ client: stubClient() });
+    let callCount = 0;
+    let resolveFirst: (() => void) | undefined;
+    vi.spyOn(diffStore, "loadBlobRange").mockImplementation(
+      (_path: string, _sha: string, start: number, end: number) => {
+        callCount++;
+        const lines = Array.from({ length: end - start + 1 }, (_, i) => `line ${start + i}`);
+        if (callCount === 1) {
+          // Hold the scrub's own coalesced fetch open so we can
+          // inspect state while it's still in flight.
+          return new Promise<string[]>((resolve) => {
+            resolveFirst = () => resolve(lines);
+          });
+        }
+        return Promise.resolve(lines);
+      },
+    );
+
+    const baseProps = {
+      position: "middle" as const,
+      layout: "unified" as const,
+      lineCount: 10,
+      owner: "o",
+      name: "n",
+      number: 1,
+      path: "a/b.go",
+      sha: "deadbeef",
+      gapOldStart: 150,
+      gapNewStart: 200,
+    };
+    const { getByRole, rerender } = renderRegion(baseProps, diffStore);
+
+    // Start a real press-and-hold scrub: pointerdown flips `scrubbing`,
+    // then a wheel event past SCRUB_PIXELS_PER_LINE (10) coalesces into
+    // a single requestExpandTop() -> flushPending() -> expandTop() call,
+    // synchronously setting both `loading` and `flushing` and issuing
+    // the fetch we're holding open.
+    await fireEvent.pointerDown(getByRole("button"));
+    await fireEvent.wheel(getByRole("button"), { deltaY: 100 });
+    expect(callCount).toBe(1);
+
+    // While that fetch is still in flight, a reveal target for a line
+    // inside this region's window (200..209) arrives.
+    await rerender({ ...baseProps, revealNewLine: 204, onrevealed });
+
+    // The reveal effect must see loading/flushing still true and
+    // defer — not start a second, competing fetch while the scrub's
+    // coalesced fetch is pending.
+    expect(callCount).toBe(1);
+    expect(onrevealed).not.toHaveBeenCalled();
+
+    // Let the scrub's fetch resolve. It covers lines 200..209 (the
+    // whole gap, since a 100px scroll crosses the 10-line threshold
+    // once), so the target is now rendered without the reveal effect
+    // ever fetching anything itself.
+    resolveFirst?.();
+    await waitFor(() => {
+      expect(onrevealed).toHaveBeenCalledTimes(1);
+    });
+    expect(callCount).toBe(1);
+  });
+
+  it("a 'bottom' region target more than one chunk away converges over several capped fetches, each within the server's line-span cap", async () => {
+    const onrevealed = vi.fn();
+    const { container, diffStore } = renderRegion({
+      position: "bottom",
+      lineCount: 0,
+      gapNewStart: 1000,
+      gapOldStart: 980,
+      // 1201 lines away — over twice the 500-line chunk size, so a
+      // single uncapped request (the pre-fix behavior) would exceed
+      // the server's 2000-line hard cap for some real files, and
+      // always takes more than one chunk to satisfy here.
+      revealNewLine: 2200,
+      onrevealed,
+    });
+
+    await waitFor(() => {
+      expect(onrevealed).toHaveBeenCalledTimes(1);
+    });
+
+    const el = container.querySelector('[data-anchor-line="2200"][data-anchor-side="RIGHT"]');
+    expect(el).not.toBeNull();
+
+    // Converged over several requests rather than one all-or-nothing
+    // fetch — and critically, no individual fetch's span exceeded the
+    // chunk size. This is the assertion that catches the original bug:
+    // before the fix, this would have been a single (1000, 2200) call,
+    // a 1201-line span the real server would reject.
+    const calls = vi.mocked(diffStore.loadBlobRange).mock.calls;
+    expect(calls.length).toBeGreaterThan(1);
+    for (const [, , start, end] of calls) {
+      expect(end - start + 1).toBeLessThanOrEqual(500);
+    }
+    // The chunks tile the whole span with no gaps or overlaps.
+    const totalLines = calls.reduce((sum, [, , start, end]) => sum + (end - start + 1), 0);
+    expect(totalLines).toBe(2200 - 1000 + 1);
+  });
+
+  describe("window containment boundaries", () => {
+    it("the first line of a window is treated as in-window (inclusive lower bound)", async () => {
+      const onrevealed = vi.fn();
+      const { container, diffStore } = renderRegion({
+        position: "middle",
+        lineCount: 10,
+        gapNewStart: 200,
+        gapOldStart: 150,
+        revealNewLine: 200, // gapNewStart itself
+        onrevealed,
+      });
+
+      await waitFor(() => {
+        expect(onrevealed).toHaveBeenCalledTimes(1);
+      });
+      expect(
+        container.querySelector('[data-anchor-line="200"][data-anchor-side="RIGHT"]'),
+      ).not.toBeNull();
+      expect(diffStore.loadBlobRange).toHaveBeenCalledWith("a/b.go", "deadbeef", 200, 200);
+    });
+
+    it("the last line of a window is treated as in-window (inclusive upper bound)", async () => {
+      const onrevealed = vi.fn();
+      const { container, diffStore } = renderRegion({
+        position: "middle",
+        lineCount: 10,
+        gapNewStart: 200,
+        gapOldStart: 150,
+        revealNewLine: 209, // gapNewStart + lineCount - 1
+        onrevealed,
+      });
+
+      await waitFor(() => {
+        expect(onrevealed).toHaveBeenCalledTimes(1);
+      });
+      expect(
+        container.querySelector('[data-anchor-line="209"][data-anchor-side="RIGHT"]'),
+      ).not.toBeNull();
+      expect(diffStore.loadBlobRange).toHaveBeenCalledWith("a/b.go", "deadbeef", 209, 209);
+    });
+
+    it("one line past the end of a window does nothing: no fetch, no onrevealed", async () => {
+      const onrevealed = vi.fn();
+      const { diffStore } = renderRegion({
+        position: "middle",
+        lineCount: 10,
+        gapNewStart: 200,
+        gapOldStart: 150,
+        revealNewLine: 210, // gapNewStart + lineCount, one past the last valid line
+        onrevealed,
+      });
+
+      await tick();
+      await tick();
+      expect(diffStore.loadBlobRange).not.toHaveBeenCalled();
+      expect(onrevealed).not.toHaveBeenCalled();
     });
   });
 });

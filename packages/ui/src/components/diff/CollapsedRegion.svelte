@@ -54,6 +54,13 @@
 
   const STEP = 10;                    // lines per row click
   const SCRUB_PIXELS_PER_LINE = 10;   // wheel deltaY threshold per line
+  // Safe per-request line span for a single blob-range fetch. Must stay
+  // under the server's hard cap (blobRangeMaxLines in
+  // internal/server/huma_routes.go and local_dispatch.go, currently
+  // 2000) — a request that exceeds it gets a 400, not a truncated
+  // response. expandAll's "bottom" handling and the reveal-and-jump
+  // effect below both chunk against this same constant.
+  const CHUNK = 500;
 
   // topCount = lines revealed extending the previous hunk downward.
   // bottomCount = lines revealed extending the next hunk upward.
@@ -80,7 +87,12 @@
   // fetch that catches up whenever the in-flight one returns.
   let pendingTop = 0;
   let pendingBottom = 0;
-  let flushing = false;
+  // $state (not a plain flag) so the reveal effect below — which
+  // reads it as a coalescing guard — re-runs the instant a flush
+  // finishes, rather than depending on `loading` happening to change
+  // at the same moment in whatever the effect scheduler's microtask
+  // ordering turns out to be.
+  let flushing = $state(false);
 
   const { diff: diffStore } = getStores();
 
@@ -234,7 +246,6 @@
     if (position === "bottom") {
       // Unknown size — keep pulling chunks until the backend
       // returns fewer lines than we asked for (EOF).
-      const CHUNK = 500;
       while (!bottomExhausted) {
         const start = gapNewStart + topCount;
         const end = start + CHUNK - 1;
@@ -338,12 +349,22 @@
     if (loading || flushing) return; // a fetch is already in flight; retry once it settles
 
     if (position === "bottom") {
-      // Unknown extent: ask for exactly the span needed to reach the
-      // target in one request rather than guessing a chunk size.
-      // BlobRange (internal/worktrees/blob.go) clamps at EOF instead
-      // of paginating, so a short response unambiguously means the
-      // target is past end-of-file.
-      void expandTop(target - (gapNewStart + topCount) + 1);
+      // Unknown extent: the full remaining distance to the target can
+      // easily exceed the server's per-request cap — a "bottom"
+      // region's tail is unbounded by design, so a target can sit
+      // arbitrarily far past the last known edge. Chunk toward it the
+      // same way expandAll's bottom branch does rather than asking
+      // for the whole span in one shot. Each pass strictly grows
+      // topCount by at least one line (see expandTop), and the effect
+      // re-runs whenever topCount changes, so this converges: either
+      // newLineIsCovered flips true once topCount reaches the target,
+      // or a short response flips bottomExhausted (true EOF, caught
+      // by the fullyExpanded guard above on the next pass) — whichever
+      // comes first. BlobRange (internal/worktrees/blob.go) clamps at
+      // EOF instead of paginating, so a short response unambiguously
+      // means the target is past end-of-file.
+      const needed = target - (gapNewStart + topCount) + 1;
+      void expandTop(Math.min(needed, CHUNK));
       return;
     }
 
