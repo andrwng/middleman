@@ -9,9 +9,16 @@
     noNewline?: boolean;
     tokens: DualToken[];
     splitSide?: "left" | "right";
+    // Stamped on revealed context lines only (CollapsedRegion) so the
+    // shared jump helper in scrollToDiffLine.ts can address them the
+    // same way it addresses DiffFile's .line-wrap-wrapped lines.
+    // Undefined on every other call site, which Svelte omits from the
+    // rendered attribute.
+    anchorLine?: number;
+    anchorSide?: "LEFT" | "RIGHT";
   }
 
-  const { type, oldNum, newNum, noNewline, tokens, splitSide }: Props = $props();
+  const { type, oldNum, newNum, noNewline, tokens, splitSide, anchorLine, anchorSide }: Props = $props();
 
   const marker = $derived(type === "add" ? "+" : type === "delete" ? "-" : " ");
 </script>
@@ -20,6 +27,8 @@
   class="diff-line"
   class:diff-line--add={type === "add"}
   class:diff-line--del={type === "delete"}
+  data-anchor-line={anchorLine}
+  data-anchor-side={anchorSide}
 >
   {#if splitSide !== "right"}
     <span

@@ -1,11 +1,20 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { getStores } from "../../context.js";
+  import { clampGutterWidth } from "./gutterStack.js";
+  import type { DiffScope } from "../../stores/diff.svelte.js";
 
-  const { diff: diffStore, ai: aiStore, brief: briefStore, reviewThreads: reviewThreadsStore } = getStores();
+  const {
+    diff: diffStore,
+    ai: aiStore,
+    brief: briefStore,
+    reviewThreads: reviewThreadsStore,
+    symbolRefs: symbolRefsStore,
+  } = getStores();
   import DiffToolbar from "./DiffToolbar.svelte";
   import DiffFileComponent from "./DiffFile.svelte";
   import ReviewPanel from "./ReviewPanel.svelte";
+  import SymbolRefsGutter from "./SymbolRefsGutter.svelte";
 
   interface Props {
     owner: string;
@@ -16,8 +25,56 @@
   const { owner, name, number }: Props = $props();
 
   let diffArea: HTMLDivElement | undefined = $state();
+  let diffAreaRow: HTMLDivElement | undefined = $state();
   let scrollRaf = 0;
   let reviewPanelOpen = $state(false);
+
+  // Symbol references gutter width — horizontally resizable, persisted
+  // across reloads. The drag handle lives here (not in the gutter
+  // component) because clampGutterWidth needs the row's own clientWidth.
+  const SYMBOL_REFS_GUTTER_WIDTH_KEY = "symbol-refs-gutter-width";
+  const DEFAULT_SYMBOL_REFS_GUTTER_WIDTH = 360;
+
+  function loadSymbolRefsGutterWidth(): number {
+    try {
+      const v = Number(localStorage.getItem(SYMBOL_REFS_GUTTER_WIDTH_KEY));
+      if (Number.isFinite(v) && v > 0) return v;
+    } catch {
+      /* localStorage unavailable — fall through to default */
+    }
+    return DEFAULT_SYMBOL_REFS_GUTTER_WIDTH;
+  }
+
+  let symbolRefsGutterWidth = $state(loadSymbolRefsGutterWidth());
+  let resizingSymbolRefsGutter = false;
+  let gutterResizeStartX = 0;
+  let gutterResizeStartWidth = 0;
+
+  function onGutterResizeStart(e: PointerEvent): void {
+    resizingSymbolRefsGutter = true;
+    gutterResizeStartX = e.clientX;
+    gutterResizeStartWidth = symbolRefsGutterWidth;
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  }
+  function onGutterResizeMove(e: PointerEvent): void {
+    if (!resizingSymbolRefsGutter) return;
+    // Dragging the handle left (toward the diff body) widens the gutter.
+    const delta = gutterResizeStartX - e.clientX;
+    symbolRefsGutterWidth = clampGutterWidth(
+      gutterResizeStartWidth + delta,
+      diffAreaRow?.clientWidth ?? 0,
+    );
+  }
+  function onGutterResizeEnd(e: PointerEvent): void {
+    if (!resizingSymbolRefsGutter) return;
+    resizingSymbolRefsGutter = false;
+    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+    try {
+      localStorage.setItem(SYMBOL_REFS_GUTTER_WIDTH_KEY, String(Math.round(symbolRefsGutterWidth)));
+    } catch {
+      /* localStorage unavailable — width still applies for this session */
+    }
+  }
 
   onMount(() => {
     void diffStore.loadDiff(owner, name, number);
@@ -36,6 +93,11 @@
       aiStore.stop();
       reviewThreadsStore.clear();
       briefStore.stop();
+      // Closes any open symbol-references search so a stale result set
+      // from this PR doesn't reappear (isActive() still true) the
+      // instant a different PR's DiffView mounts — symbolRefsStore is
+      // an app-wide singleton, not scoped per PR like the diff itself.
+      symbolRefsStore.close();
     };
   });
 
@@ -45,6 +107,12 @@
   const tabWidth = $derived(diffStore.getTabWidth());
   const scope = $derived(diffStore.getScope());
   const interdiff = $derived(diffStore.getInterdiff());
+  // Tracked alongside `scope` for the symbol-refs staleness watcher
+  // below: diffScopeKey collapses every head-scope view to the same
+  // "head" string, so the user clicking Refresh while scope stays
+  // "head" (refresh() re-fetches commits without changing scope.kind)
+  // needs its own signal, distinct from a genuine scope change.
+  const currentSha = $derived(diffStore.getCurrentCommitSha());
 
   function scrollToFile(path: string): void {
     if (!diffArea) return;
@@ -140,6 +208,73 @@
       diffStore.markCommitReviewed(scope.sha);
     }
   });
+
+  // Symbol-ref hits are scope-relative, not PR-relative: the line numbers
+  // the server returned only make sense against whichever SHA DiffFile's
+  // currentCommitSha() searched (the single commit, the range's newer
+  // end, or the PR head). Switching PRs is safe -- PRListView remounts
+  // this whole surface inside a {#key}, and our onMount cleanup below
+  // already closes any open search -- but changing scope WITHIN the same
+  // PR mutates diffStore's scope in place without unmounting DiffView, so
+  // nothing else clears a search that no longer matches what's rendered.
+  // Left alone, a stale hit whose line number happens to still exist in
+  // the new scope's rendering would silently jump to unrelated code.
+  //
+  // Watches a derived string key, not the scope object itself: every
+  // select* method on the diff store reassigns `scope` to a brand-new
+  // object literal even when re-selecting the value it already has (e.g.
+  // re-clicking the already-selected commit), so comparing raw object
+  // identity would close a search the user is still using on a pure no-op
+  // reassignment. diffScopeKey mirrors DiffScope's own shape -- kind plus
+  // whichever shas/numbers that kind carries -- so two
+  // structurally-identical scopes always produce the same string
+  // regardless of object identity.
+  //
+  // The key alone misses one case: every head-scope view maps to the
+  // same "head" string, so the user clicking Refresh while scope stays
+  // "head" (diffStore.refresh() re-fetching commits) changes nothing
+  // the key can see, even though the rendered line numbers just
+  // shifted under an active search's feet. currentSha (tracked
+  // alongside the key) catches that: it's the same currentCommitSha()
+  // derivation DiffFile searched against, so comparing it to the
+  // store's own recorded searched-sha detects the drift regardless of
+  // whether scope.kind changed.
+  function diffScopeKey(s: DiffScope): string {
+    switch (s.kind) {
+      case "head": return "head";
+      case "commit": return `commit:${s.sha}`;
+      case "range": return `range:${s.fromSha}..${s.toSha}`;
+      case "unreviewed": return "unreviewed";
+      case "patchsets": return `patchsets:${s.fromNumber}..${s.toNumber}`;
+    }
+  }
+
+  // Stays undefined until the effect below has recorded a first key --
+  // that first run is the initial mount observing whatever scope it
+  // started in, not a "change" to react to, so it must never close a
+  // search on its own.
+  let lastScopeKey: string | undefined;
+  $effect(() => {
+    const key = diffScopeKey(scope);
+    const sha = currentSha;
+    // isActive()/getSearchedSha()/close() read and write the store's own
+    // state. untrack keeps this effect from subscribing to it -- same
+    // gotcha, avoided here, as the one noted in WorktreeConversation.svelte
+    // -- so closing a search doesn't turn around and re-trigger this effect.
+    untrack(() => {
+      const scopeChanged = lastScopeKey !== undefined && key !== lastScopeKey;
+      const searchedSha = symbolRefsStore.getSearchedSha();
+      // "" on either side means "not known yet" (no search recorded, or
+      // commits mid-reload after e.g. refresh() nulls them out) rather
+      // than a real divergence -- wait for a definite new SHA to compare
+      // against instead of closing on the transient gap.
+      const shaDrifted = searchedSha !== "" && sha !== "" && searchedSha !== sha;
+      if (symbolRefsStore.isActive() && (scopeChanged || shaDrifted)) {
+        symbolRefsStore.close();
+      }
+      lastScopeKey = key;
+    });
+  });
 </script>
 
 <div class="diff-view">
@@ -184,20 +319,37 @@
     {:else if diff}
       <div class="diff-main">
         <DiffToolbar onReviewClick={() => { reviewPanelOpen = true; }} />
-        <div
-          class="diff-area"
-          bind:this={diffArea}
-          onscroll={onDiffScroll}
-          style:tab-size={tabWidth}
-        >
-          {#each diff.files as file (file.path)}
-            <DiffFileComponent
-              {file}
-              {owner}
-              {name}
-              {number}
-            />
-          {/each}
+        <div class="diff-area-row" bind:this={diffAreaRow}>
+          <div
+            class="diff-area"
+            bind:this={diffArea}
+            onscroll={onDiffScroll}
+            style:tab-size={tabWidth}
+          >
+            {#each diff.files as file (file.path)}
+              <DiffFileComponent
+                {file}
+                {owner}
+                {name}
+                {number}
+              />
+            {/each}
+          </div>
+          {#if symbolRefsStore.isActive()}
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div
+              class="symref-gutter-resize"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize symbol references gutter"
+              title="Drag to resize the symbol references gutter"
+              onpointerdown={onGutterResizeStart}
+              onpointermove={onGutterResizeMove}
+              onpointerup={onGutterResizeEnd}
+              onpointercancel={onGutterResizeEnd}
+            ></div>
+            <SymbolRefsGutter {owner} {name} {number} width={symbolRefsGutterWidth} />
+          {/if}
         </div>
       </div>
     {/if}
@@ -257,9 +409,35 @@
     overflow: hidden;
   }
 
+  /* Row containing the scrolling diff body and (when active) the
+     symbol-references gutter side by side. flex: 1 here does the
+     vertical-growth job .diff-area's own flex: 1 used to do alone;
+     min-height: 0 keeps it from taking its children's natural height
+     instead of the space .diff-main actually has left. */
+  .diff-area-row {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+  }
+
   .diff-area {
     flex: 1;
+    /* Lets the diff shrink instead of pushing the gutter off-screen
+       when the row above also holds a fixed-width gutter. */
+    min-width: 0;
     overflow: auto;
+  }
+
+  .symref-gutter-resize {
+    flex-shrink: 0;
+    width: 6px;
+    cursor: col-resize;
+    background: transparent;
+  }
+
+  .symref-gutter-resize:hover {
+    background: var(--accent-blue);
+    opacity: 0.4;
   }
 
   .diff-state {

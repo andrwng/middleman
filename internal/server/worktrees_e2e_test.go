@@ -395,6 +395,22 @@ func TestAPILocalDispatchBlobServesWorktreeFiles(t *testing.T) {
 	)
 	require.NoError(err)
 	assert.Equal(http.StatusNotFound, missResp.StatusCode())
+
+	// 4. Malformed sha (option-shaped): rejected before it reaches
+	// `git cat-file` (worktrees.Blob) — the same guard shape and
+	// reasoning as getSymbolRefs's: git parses flags anywhere on its
+	// command line, so an unvalidated sha of "-Otouch ..." would be
+	// read as --open-files-in-pager, which runs a shell command.
+	malformedSHA := "-Otouch /tmp/should-not-be-created"
+	badResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberBlobWithResponse(
+		ctx, "local", "demo", w.ID,
+		&generated.GetReposByOwnerByNamePullsByNumberBlobParams{
+			Path: &docPath,
+			Sha:  &malformedSHA,
+		},
+	)
+	require.NoError(err)
+	assert.Equal(http.StatusBadRequest, badResp.StatusCode())
 }
 
 // TestAPILocalDispatchBlobRangeServesWorktreeFiles pins the same
@@ -492,6 +508,21 @@ func TestAPILocalDispatchBlobRangeServesWorktreeFiles(t *testing.T) {
 	require.NotNil(pastResp.JSON200)
 	require.NotNil(pastResp.JSON200.Lines)
 	assert.Len(*pastResp.JSON200.Lines, 5)
+
+	// 4. Malformed sha (option-shaped): same guard, same reasoning,
+	// now on the /blob-range path (worktrees.BlobRange).
+	malformedSHA := "-Otouch /tmp/should-not-be-created"
+	badResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberBlobRangeWithResponse(
+		ctx, "local", "demo", w.ID,
+		&generated.GetReposByOwnerByNamePullsByNumberBlobRangeParams{
+			Path:  &linesPath,
+			Sha:   &malformedSHA,
+			Start: &startOne,
+			End:   &endTen,
+		},
+	)
+	require.NoError(err)
+	assert.Equal(http.StatusBadRequest, badResp.StatusCode())
 }
 
 // TestAPILocalDispatchAIThreadAcceptsRangeAnchor pins the contract

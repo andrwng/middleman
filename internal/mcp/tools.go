@@ -63,9 +63,12 @@ func builtinTools() map[string]toolDef {
 					return "", err
 				}
 				if p, _ := args["path"].(string); p != "" {
-					return filterThreadsByPath(out, p)
+					out, err = filterThreadsByPath(out, p)
+					if err != nil {
+						return "", err
+					}
 				}
-				return out, nil
+				return stripWritesAllowed(out), nil
 			},
 		},
 		"get_thread": {
@@ -89,7 +92,11 @@ func builtinTools() map[string]toolDef {
 				if err != nil {
 					return "", err
 				}
-				return filterThread(all, id)
+				one, err := filterThread(all, id)
+				if err != nil {
+					return "", err
+				}
+				return stripWritesAllowed(one), nil
 			},
 		},
 		"reply_to_thread": {
@@ -113,7 +120,11 @@ func builtinTools() map[string]toolDef {
 					return "", err
 				}
 				payload, _ := json.Marshal(map[string]any{"body": body, "author": "agent"})
-				return s.restJSON("POST", s.reviewPath(owner, name, number, fmt.Sprintf("/review-threads/%d/comments", id)), payload)
+				out, err := s.restJSON("POST", s.reviewPath(owner, name, number, fmt.Sprintf("/review-threads/%d/comments", id)), payload)
+				if err != nil {
+					return "", err
+				}
+				return stripWritesAllowed(out), nil
 			},
 		},
 		"get_pull": {
@@ -194,7 +205,7 @@ func builtinTools() map[string]toolDef {
 					Threads []json.RawMessage `json:"threads"`
 				}
 				if err := json.Unmarshal([]byte(resp), &listed); err != nil {
-					return resp, nil // best-effort: return the raw payload if shape changes
+					return stripWritesAllowed(resp), nil // best-effort: return the raw payload if shape changes
 				}
 				var bestID int64
 				var best json.RawMessage
@@ -208,9 +219,9 @@ func builtinTools() map[string]toolDef {
 					}
 				}
 				if best != nil {
-					return string(best), nil
+					return stripWritesAllowed(string(best)), nil
 				}
-				return resp, nil
+				return stripWritesAllowed(resp), nil
 			},
 		},
 		"list_repos": {
@@ -384,6 +395,42 @@ func filterThreadsByPath(listJSON, path string) (string, error) {
 	}
 	out, _ := json.Marshal(map[string]any{"threads": kept})
 	return string(out), nil
+}
+
+// stripWritesAllowed removes the writes_allowed field from review-thread JSON
+// before it is returned to an external MCP agent. writes_allowed is an in-app
+// Apply-gate (true only when a thread's status == "applied"); agents driving
+// review over MCP never go through that in-app Apply flow, so it is always
+// false for them and misreads as "you may not edit files." It is unused by the
+// frontend and the in-app edit gate recomputes it server-side, so dropping it
+// from the agent's view changes nothing else. Recursive so it handles a
+// {threads:[...]} list, a bare thread, and a single updated thread uniformly;
+// on any parse/marshal error the input is returned unchanged.
+func stripWritesAllowed(threadJSON string) string {
+	var v any
+	if err := json.Unmarshal([]byte(threadJSON), &v); err != nil {
+		return threadJSON
+	}
+	stripWritesAllowedValue(v)
+	out, err := json.Marshal(v)
+	if err != nil {
+		return threadJSON
+	}
+	return string(out)
+}
+
+func stripWritesAllowedValue(v any) {
+	switch t := v.(type) {
+	case map[string]any:
+		delete(t, "writes_allowed")
+		for _, child := range t {
+			stripWritesAllowedValue(child)
+		}
+	case []any:
+		for _, child := range t {
+			stripWritesAllowedValue(child)
+		}
+	}
 }
 
 func intArg(args map[string]any, key string) (int64, error) {

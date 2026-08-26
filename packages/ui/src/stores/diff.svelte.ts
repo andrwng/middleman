@@ -361,6 +361,25 @@ export function createDiffStore(opts: DiffStoreOptions) {
     scrollTarget = null;
   }
 
+  // A line the UI wants brought into view that is not currently
+  // rendered because it sits in an unexpanded context gap. DiffFile
+  // hands this to its collapsed regions; the one containing the line
+  // expands itself, then reports back through its onrevealed callback
+  // so DiffFile can finish the jump and consume the target.
+  let revealTarget = $state<{ path: string; line: number } | null>(null);
+
+  function requestRevealLine(path: string, line: number): void {
+    revealTarget = { path, line };
+  }
+
+  function getRevealTarget(): { path: string; line: number } | null {
+    return revealTarget;
+  }
+
+  function consumeRevealTarget(): void {
+    revealTarget = null;
+  }
+
   function setTabWidth(w: number): void {
     tabWidth = w;
     safeSetItem("diff-tab-width", String(w));
@@ -634,6 +653,12 @@ export function createDiffStore(opts: DiffStoreOptions) {
     activeFile = null;
     scrollTarget = null;
     scrolling = false;
+    // A reveal request from a symbol-refs jump (or any future caller)
+    // must not survive into the next PR's DiffView mount: this store
+    // is an app-wide singleton, so an unclaimed target would otherwise
+    // sit armed until some later, unrelated CollapsedRegion happens to
+    // cover the same line and spontaneously expands for it.
+    revealTarget = null;
     commits = null;
     commitsLoading = false;
     commitsError = null;
@@ -757,6 +782,32 @@ export function createDiffStore(opts: DiffStoreOptions) {
 
   function getCommits(): CommitInfo[] | null {
     return commits;
+  }
+
+  // The SHA new comments and symbol-ref searches anchor against: the
+  // single commit or range's newer end for those scopes, the target
+  // patchset's head for a patchset-pair scope (the interdiff's new
+  // side, NOT the PR head), otherwise the newest commit in the
+  // currently loaded list (commits is newest-first), or "" if that
+  // data hasn't loaded yet or the target patchset isn't in the loaded
+  // list. Shared by DiffFile (per-file rendering) and DiffView (the
+  // symbol-refs staleness watcher) so both read the exact same
+  // derivation instead of each keeping their own copy of this
+  // scope/commits/patchsets logic.
+  function getCurrentCommitSha(): string {
+    if (scope.kind === "commit") return scope.sha;
+    if (scope.kind === "range") return scope.toSha;
+    if (scope.kind === "patchsets") {
+      // scope.toNumber is captured into a local before the closure:
+      // scope is a mutable $state variable, so TS won't carry the
+      // "patchsets" narrowing from this `if` into a callback that
+      // could (as far as it knows) run after scope changes again.
+      const toNumber = scope.toNumber;
+      const toPatchset = patchsets?.find((p) => p.number === toNumber);
+      return toPatchset ? toPatchset.head_sha : "";
+    }
+    if (commits && commits.length > 0) return commits[0]!.sha;
+    return "";
   }
 
   function isCommitsLoading(): boolean {
@@ -1362,6 +1413,9 @@ export function createDiffStore(opts: DiffStoreOptions) {
     requestScrollToFile,
     getScrollTarget,
     consumeScrollTarget,
+    requestRevealLine,
+    getRevealTarget,
+    consumeRevealTarget,
     setTabWidth,
     setHideWhitespace,
     setLayout,
@@ -1375,6 +1429,7 @@ export function createDiffStore(opts: DiffStoreOptions) {
     clearDiff,
     getScope,
     getCommits,
+    getCurrentCommitSha,
     isCommitsLoading,
     getCommitsError,
     getCommitIndex,

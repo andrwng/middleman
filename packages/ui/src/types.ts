@@ -116,6 +116,7 @@ import type { CommitAnalysisStore } from "./stores/commitAnalysis.svelte.js";
 import type { WorktreesStore } from "./stores/worktrees.svelte.js";
 import type { WorktreeSessionStore } from "./stores/worktreeSession.svelte.js";
 import type { ReviewThreadsStore } from "./stores/reviewThreads.svelte.js";
+import type { SymbolRefsStore } from "./stores/symbolRefs.svelte.js";
 
 export interface StoreInstances {
   pulls: PullsStore;
@@ -138,6 +139,7 @@ export interface StoreInstances {
   worktrees: WorktreesStore;
   worktreeSession: WorktreeSessionStore;
   reviewThreads: ReviewThreadsStore;
+  symbolRefs: SymbolRefsStore;
   roborevDaemon?: DaemonStore;
   roborevJobs?: JobsStore;
   roborevReview?: ReviewStore;

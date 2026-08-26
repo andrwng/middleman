@@ -89,6 +89,7 @@
   import { createWorktreesStore } from "./stores/worktrees.svelte.js";
   import { createWorktreeSessionStore } from "./stores/worktreeSession.svelte.js";
   import { createReviewThreadsStore } from "./stores/reviewThreads.svelte.js";
+  import { createSymbolRefsStore } from "./stores/symbolRefs.svelte.js";
 
   interface Props {
     client: MiddlemanClient;
@@ -222,6 +223,8 @@
 
     const reviewThreadsStore = createReviewThreadsStore({ client: cl });
 
+    const symbolRefsStore = createSymbolRefsStore({ client: cl });
+
     const eventsStore = createEventsStore({
       ...(cfg.basePath != null && {
         getBasePath: () => cfg.basePath as string,
@@ -283,6 +286,7 @@
       worktrees: worktreesStore,
       worktreeSession: createWorktreeSessionStore({ client: cl }),
       reviewThreads: reviewThreadsStore,
+      symbolRefs: symbolRefsStore,
     };
 
     if (roborevBase) {

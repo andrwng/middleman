@@ -489,6 +489,14 @@
   .review-thread__edit {
     margin-top: 4px;
   }
+
+  /* The edit textarea lives in a block (Save/Cancel sit below it), not the
+     reply flex row, so .review-thread__reply-input's flex:1 gives it no width.
+     Make it fill the card like a normal text input. */
+  .review-thread__edit .review-thread__reply-input {
+    width: 100%;
+    box-sizing: border-box;
+  }
   .review-thread__edit-actions {
     display: flex;
     gap: 6px;

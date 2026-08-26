@@ -1005,6 +1005,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/repos/{owner}/{name}/pulls/{number}/symbol-refs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get repos by owner by name pulls by number symbol refs */
+        get: operations["get-repos-by-owner-by-name-pulls-by-number-symbol-refs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/repos/{owner}/{name}/pulls/{number}/sync": {
         parameters: {
             query?: never;
@@ -2571,6 +2588,35 @@ export interface components {
             response_turn: components["schemas"]["SessionTurnResponse"];
             session: components["schemas"]["SessionResponse"];
             user_turn: components["schemas"]["SessionTurnResponse"];
+        };
+        SymbolHit: {
+            kind: string;
+            /** Format: int64 */
+            line: number;
+            path: string;
+            tag?: components["schemas"]["SymbolTag"];
+            text: string;
+        };
+        SymbolRefsResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/SymbolRefsResponse.json
+             */
+            readonly $schema?: string;
+            classifier: string;
+            hits: components["schemas"]["SymbolHit"][] | null;
+            /** Format: int64 */
+            in_pr_total: number;
+            /** Format: int64 */
+            outside_pr_total: number;
+            query: string;
+            truncated: boolean;
+        };
+        SymbolTag: {
+            kind: string;
+            scope?: string;
+            signature?: string;
         };
         SyncStatus: {
             /**
@@ -5106,6 +5152,44 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-repos-by-owner-by-name-pulls-by-number-symbol-refs": {
+        parameters: {
+            query?: {
+                /** @description Symbol to search for (fixed string, word-boundary) */
+                q?: string;
+                /** @description New-side commit SHA the hit line numbers refer to */
+                sha?: string;
+            };
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SymbolRefsResponse"];
+                };
             };
             /** @description Error */
             default: {

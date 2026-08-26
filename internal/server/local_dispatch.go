@@ -330,6 +330,14 @@ func (s *Server) getBlobRangeLocal(
 	if input.SHA == "" {
 		return nil, huma.Error400BadRequest("sha is required")
 	}
+	// Same defense as getSymbolRefs: sha reaches `git cat-file` as a
+	// positional revision argument (worktrees.BlobRange), so reject
+	// anything that isn't a hex object id or the working-tree sentinel
+	// before it gets there. Reuses symbolRefsSHA rather than a second
+	// copy of the pattern.
+	if input.SHA != worktrees.WorkingTreeSentinel && !symbolRefsSHA.MatchString(input.SHA) {
+		return nil, huma.Error400BadRequest("sha must be a hex object id")
+	}
 	if input.Start < 1 {
 		return nil, huma.Error400BadRequest("start must be >= 1")
 	}
@@ -366,6 +374,14 @@ func (s *Server) getBlobLocal(
 	}
 	if input.SHA == "" {
 		return nil, huma.Error400BadRequest("sha is required")
+	}
+	// Same defense as getSymbolRefs: sha reaches `git cat-file` as a
+	// positional revision argument (worktrees.Blob), so reject anything
+	// that isn't a hex object id or the working-tree sentinel before it
+	// gets there. Reuses symbolRefsSHA rather than a second copy of the
+	// pattern.
+	if input.SHA != worktrees.WorkingTreeSentinel && !symbolRefsSHA.MatchString(input.SHA) {
+		return nil, huma.Error400BadRequest("sha must be a hex object id")
 	}
 	w, err := s.resolveLocalWorktree(ctx, input.Name, input.Number)
 	if err != nil {
@@ -410,6 +426,41 @@ func (s *Server) getFilesLocal(
 		Stale: false,
 		Files: files,
 	}}, nil
+}
+
+// getSymbolRefsLocal serves the symbol search for a local worktree. The
+// changed-file set comes from the same base-vs-working-tree diff
+// getFilesLocal uses, so the two views agree on what "in the PR" means.
+func (s *Server) getSymbolRefsLocal(
+	ctx context.Context, input *getSymbolRefsInput, symbol string,
+) (*getSymbolRefsOutput, error) {
+	w, err := s.resolveLocalWorktree(ctx, input.Name, input.Number)
+	if err != nil {
+		return nil, huma.Error404NotFound("worktree not found")
+	}
+	baseRef := s.lookupBaseRefForWorktree(ctx, *w)
+	ds, err := worktrees.DiffAgainstBase(ctx, w.Path, baseRef)
+	if err != nil {
+		return nil, huma.Error500InternalServerError(
+			"symbol search changed-file lookup failed: " + err.Error())
+	}
+
+	gctx, cancel := context.WithTimeout(ctx, symbolRefsTimeout)
+	defer cancel()
+	hits, err := worktrees.GrepSymbol(gctx, w.Path, input.SHA, symbol)
+	if err != nil {
+		slog.Error("symbol search failed",
+			"owner", input.Owner, "name", input.Name, "number", input.Number, "err", err)
+		return nil, huma.Error502BadGateway("symbol search failed")
+	}
+
+	readBlob := func(p string) ([]byte, error) {
+		return worktrees.Blob(gctx, w.Path, input.SHA, p)
+	}
+	changedSet := changedPathSet(ds.Files)
+	tagsByPath := symbolRefTags(gctx, hits, changedSet, readBlob)
+	resp := buildSymbolRefsResponse(symbol, hits, changedSet, tagsByPath)
+	return &getSymbolRefsOutput{Body: resp}, nil
 }
 
 // resolveLocalWorktreeByPath powers GET /local/resolve: given an absolute

@@ -1,9 +1,17 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import type { DiffFile as DiffFileType, DiffHunk } from "../../api/types.js";
   import { getStores } from "../../context.js";
+  import { isSymbolQuery } from "../../stores/symbolRefs.svelte.js";
+  import { findDiffLineEl, flashDiffLine } from "./scrollToDiffLine.js";
 
-  const { diff: diffStore, ai: aiStore, detail: detailStore, reviewThreads: reviewThreadsStore } = getStores();
+  const {
+    diff: diffStore,
+    ai: aiStore,
+    detail: detailStore,
+    reviewThreads: reviewThreadsStore,
+    symbolRefs: symbolRefsStore,
+  } = getStores();
   import { tokenizeLineDual, langFromPath, type DualToken } from "../../utils/highlight.js";
   import { pairHunk } from "../../utils/diffPairing.js";
   import DiffLineComponent from "./DiffLine.svelte";
@@ -117,16 +125,37 @@
   });
 
   // The SHA we anchor new comments against — the newest commit in the
-  // currently scoped diff. Falls back to "HEAD" marker for head scope
-  // when commits haven't loaded yet, in which case the publish step
-  // will attach the actual PR head SHA.
+  // currently scoped diff. Falls back to "" for head scope when commits
+  // haven't loaded yet, in which case the publish step will attach the
+  // actual PR head SHA. Delegates to the diff store so DiffView's
+  // symbol-refs staleness watcher reads the exact same derivation
+  // rather than a second copy of this scope/commits logic.
   function currentCommitSha(): string {
-    const scope = diffStore.getScope();
-    if (scope.kind === "commit") return scope.sha;
-    if (scope.kind === "range") return scope.toSha;
-    const commits = diffStore.getCommits();
-    if (commits && commits.length > 0) return commits[0]!.sha;
-    return "";
+    return diffStore.getCurrentCommitSha();
+  }
+
+  // revealForThisFile: a line the UI wants revealed inside this
+  // file's collapsed gaps, or null when the store's reveal target
+  // belongs to a different file (or there is none). Handed to every
+  // CollapsedRegion below; only the one whose gap window contains the
+  // line acts on it (see CollapsedRegion's revealNewLine prop).
+  const revealForThisFile = $derived.by(() => {
+    const t = diffStore.getRevealTarget();
+    return t && t.path === file.path ? t.line : null;
+  });
+
+  // onRegionRevealed completes a reveal-and-jump once a
+  // CollapsedRegion reports its target line is now rendered: consumes
+  // the store's target so no other region acts on it again, then
+  // highlights the now-mounted line — the same finishing step
+  // scrollToDiffLine.ts uses for a line that was already visible.
+  async function onRegionRevealed(): Promise<void> {
+    const t = diffStore.getRevealTarget();
+    if (!t || t.path !== file.path) return;
+    diffStore.consumeRevealTarget();
+    await tick();
+    const el = findDiffLineEl({ path: t.path, line: t.line });
+    if (el) flashDiffLine(el);
   }
 
   // liveSelection continuously tracks the reviewer's text selection
@@ -137,6 +166,29 @@
   // selection exists.
   let liveSelection = $state<{ startLine: number; endLine: number; side: "LEFT" | "RIGHT" } | null>(null);
 
+  // liveSymbolSelection tracks a single-line selection that looks like
+  // a searchable symbol (see computeSymbolSelection below). It is the
+  // single-line counterpart to liveSelection: computeSelectionRange
+  // requires the two selection ends to land on DIFFERENT lines (see
+  // its trailing `a === f` check), so a double-click word selection —
+  // which is inherently single-line — never populates liveSelection.
+  // Kept as a separate field rather than widening liveSelection so
+  // Comment/Ask's existing multi-line-only visibility is untouched.
+  // Just the selected text: searchSymbolFromToolbar always searches
+  // against currentCommitSha()'s new-side SHA regardless of which side
+  // the selection was made on, so there's no use for the side it was
+  // selected on -- narrowed to a string rather than carrying a `side`
+  // field nothing reads.
+  let liveSymbolSelection = $state<string | null>(null);
+
+  // Additionally requires a resolved sha: in head scope,
+  // currentCommitSha() can briefly be "" before loadCommits()
+  // resolves. Gating the Refs button on this (rather than just its
+  // click handler) means the affordance simply isn't offered until it
+  // can work, and the toolbar doesn't render as an empty box when only
+  // a sha-pending symbol selection is active.
+  const symbolRefsAvailable = $derived(liveSymbolSelection != null && currentCommitSha() !== "");
+
   // rangeSnapshot is the range we'll anchor the next comment/question
   // to. snapshotRangeFor copies liveSelection into it at click time.
   let rangeSnapshot = $state<{ startLine: number; endLine: number; side: "LEFT" | "RIGHT" } | null>(null);
@@ -145,6 +197,7 @@
     if (typeof document === "undefined") return;
     const handler = (): void => {
       liveSelection = computeSelectionRange();
+      liveSymbolSelection = computeSymbolSelection();
     };
     document.addEventListener("selectionchange", handler);
     return () => document.removeEventListener("selectionchange", handler);
@@ -159,6 +212,18 @@
     const anchorWrap = nearestLineWrap(sel.anchorNode);
     const focusWrap = nearestLineWrap(sel.focusNode);
     if (!anchorWrap || !focusWrap) return null;
+    // nearestLineWrap matches on dataset.anchorLine alone, which a
+    // revealed context line in a CollapsedRegion also carries (on a
+    // plain .diff-line, not a .line-wrap) so a symbol search can find
+    // it. But a Comment/Ask composer only ever renders inside the
+    // hunk loops below, keyed by a real .line-wrap's anchor — so a
+    // range that resolves to a revealed gap line on either end must
+    // not become a live selection, or the toolbar opens a composer
+    // that never mounts. computeSymbolSelection (below) intentionally
+    // has no such restriction: a single-line search from a revealed
+    // line works end to end and must keep working.
+    if (!anchorWrap.classList.contains("line-wrap")) return null;
+    if (!focusWrap.classList.contains("line-wrap")) return null;
     if (!fileEl.contains(anchorWrap) || !fileEl.contains(focusWrap)) return null;
 
     const aSide = anchorWrap.dataset.anchorSide;
@@ -171,6 +236,38 @@
     if (!Number.isFinite(a) || !Number.isFinite(f) || a === f) return null;
     const [startLine, endLine] = a < f ? [a, f] : [f, a];
     return { startLine, endLine, side: aSide };
+  }
+
+  // computeSymbolSelection is the single-line sibling of
+  // computeSelectionRange above. Rather than compare the two ends'
+  // line/side VALUES (which would also accept two different lines
+  // that happen to share a line number, e.g. old_num 2 on the LEFT
+  // and new_num 2 on the RIGHT), it requires both ends to resolve to
+  // the SAME .line-wrap element — the strongest available proof that
+  // the selection is confined to one line on one side. Returns the
+  // trimmed selected text so callers never have to re-trim it. The
+  // side itself is checked only to confirm the anchor is a real diff
+  // line (LEFT or RIGHT) and isn't returned -- the search this feeds
+  // always runs against the new-side SHA regardless of which side the
+  // text was selected on.
+  function computeSymbolSelection(): string | null {
+    if (typeof window === "undefined") return null;
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0) return null;
+    if (!fileEl) return null;
+
+    const anchorWrap = nearestLineWrap(sel.anchorNode);
+    const focusWrap = nearestLineWrap(sel.focusNode);
+    if (!anchorWrap || !focusWrap) return null;
+    if (!fileEl.contains(anchorWrap)) return null;
+    if (anchorWrap !== focusWrap) return null;
+
+    const side = anchorWrap.dataset.anchorSide;
+    if (side !== "LEFT" && side !== "RIGHT") return null;
+
+    const text = sel.toString().trim();
+    if (!isSymbolQuery(text)) return null;
+    return text;
   }
 
   function snapshotRangeFor(side: "LEFT" | "RIGHT"): void {
@@ -236,7 +333,7 @@
   let toolbarLeft = $state(0);
 
   function updateToolbarPosition(): void {
-    if (typeof window === "undefined" || !liveSelection) return;
+    if (typeof window === "undefined" || (!liveSelection && !liveSymbolSelection)) return;
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0) return;
     const rect = sel.getRangeAt(0).getBoundingClientRect();
@@ -246,9 +343,9 @@
   }
 
   $effect(() => {
-    // Reposition whenever liveSelection changes. `liveSelection`
-    // gates the effect so we only run when it's actually set.
-    if (liveSelection) updateToolbarPosition();
+    // Reposition whenever either selection kind changes. The check
+    // gates the effect so we only run when one is actually set.
+    if (liveSelection || liveSymbolSelection) updateToolbarPosition();
   });
 
   function openComposerFromToolbar(): void {
@@ -266,6 +363,32 @@
     selectionSnapshot = selText.trim() || null;
     askError = null;
     openAsk = `${liveSelection.endLine}:${liveSelection.side}`;
+  }
+
+  // searchSymbolFromToolbar fires the Refs affordance: it hands the
+  // selected symbol to the symbolRefs store, which greps the PR for
+  // other occurrences. The gutter that renders the results is a later
+  // task — this only triggers the search. currentCommitSha() is the
+  // new-side SHA of the current diff scope, matching hunk new_num
+  // numbering, so the line numbers the server returns line up with
+  // what's on screen.
+  //
+  // Unlike Comment/Ask, the search is the last thing this selection is
+  // needed for — those two intentionally keep the selection alive
+  // (rangeSnapshot backs their composer's range indicator), but the
+  // toolbar container's mousedown preventDefault (below) means nothing
+  // else will ever collapse it here. Read the symbol out first, then
+  // collapse the DOM selection so the existing selectionchange effect
+  // recomputes liveSelection/liveSymbolSelection to null and the
+  // floating toolbar — which has no other trigger to disappear — goes
+  // away along with the leftover text-selection highlight.
+  function searchSymbolFromToolbar(): void {
+    const sym = liveSymbolSelection ?? "";
+    if (!isSymbolQuery(sym)) return;
+    void symbolRefsStore.search(owner, name, number, currentCommitSha(), sym);
+    if (typeof window !== "undefined") {
+      window.getSelection()?.removeAllRanges();
+    }
   }
 
   function nearestLineWrap(node: Node | null): HTMLElement | null {
@@ -570,14 +693,22 @@
   }
 
   function displayPath(f: DiffFileType): string {
-    if (f.status === "renamed" && f.old_path !== f.path) {
-      return `${f.old_path} -> ${f.path}`;
-    }
     return f.path;
+  }
+
+  // A "Copied from …" / "Renamed from …" provenance label for git-detected
+  // copies and renames, so a similar-but-new file reads as what it is instead
+  // of a mysterious partial diff against its source. Empty for other statuses.
+  function provenanceLabel(f: DiffFileType): string {
+    if (f.old_path && f.old_path !== f.path) {
+      if (f.status === "copied") return `Copied from ${f.old_path}`;
+      if (f.status === "renamed") return `Renamed from ${f.old_path}`;
+    }
+    return "";
   }
 </script>
 
-{#if liveSelection}
+{#if liveSelection || symbolRefsAvailable}
   <div
     class="selection-toolbar"
     style="top: {toolbarTop}px; left: {toolbarLeft}px"
@@ -586,28 +717,44 @@
     tabindex="-1"
     aria-label="Selection actions"
   >
-    <span class="selection-toolbar__label">
-      Lines {liveSelection.startLine}–{liveSelection.endLine}
-    </span>
-    <button
-      type="button"
-      class="selection-toolbar__btn selection-toolbar__btn--comment"
-      onclick={openComposerFromToolbar}
-      title="Comment on the selected lines"
-    >
-      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M5 2V8M2 5H8" stroke-linecap="round" />
-      </svg>
-      Comment
-    </button>
-    <button
-      type="button"
-      class="selection-toolbar__btn selection-toolbar__btn--ask"
-      onclick={openAskFromToolbar}
-      title="Ask Claude about the selected lines"
-    >
-      ? Ask
-    </button>
+    {#if liveSelection}
+      <span class="selection-toolbar__label">
+        Lines {liveSelection.startLine}–{liveSelection.endLine}
+      </span>
+      <button
+        type="button"
+        class="selection-toolbar__btn selection-toolbar__btn--comment"
+        onclick={openComposerFromToolbar}
+        title="Comment on the selected lines"
+      >
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M5 2V8M2 5H8" stroke-linecap="round" />
+        </svg>
+        Comment
+      </button>
+      <button
+        type="button"
+        class="selection-toolbar__btn selection-toolbar__btn--ask"
+        onclick={openAskFromToolbar}
+        title="Ask Claude about the selected lines"
+      >
+        ? Ask
+      </button>
+    {/if}
+    {#if symbolRefsAvailable}
+      <button
+        type="button"
+        class="selection-toolbar__btn selection-toolbar__btn--refs"
+        onclick={searchSymbolFromToolbar}
+        title="Find other references to this symbol"
+      >
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="4" cy="4" r="3" />
+          <path d="M6.5 6.5L9 9" stroke-linecap="round" />
+        </svg>
+        Refs
+      </button>
+    {/if}
   </div>
 {/if}
 
@@ -623,8 +770,13 @@
       <svg class="collapse-chevron" class:collapse-chevron--collapsed={collapsed} width="12" height="12" viewBox="0 0 12 12" fill="none">
         <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
-      <span class="file-path" class:file-path--deleted={file.status === "deleted"}>
-        {displayPath(file)}
+      <span class="file-id">
+        <span class="file-path" class:file-path--deleted={file.status === "deleted"}>
+          {displayPath(file)}
+        </span>
+        {#if provenanceLabel(file)}
+          <span class="file-provenance">{provenanceLabel(file)}</span>
+        {/if}
       </span>
       <span class="file-stats">
         <span class="stat" class:stat--add={file.additions > 0} class:stat--dim={file.additions === 0}>+{file.additions}</span>
@@ -701,6 +853,8 @@
               {number}
               gapOldStart={1}
               gapNewStart={1}
+              revealNewLine={revealForThisFile}
+              onrevealed={onRegionRevealed}
             />
           {/if}
           {#each renderedFile.hunks as hunk, hunkIdx}
@@ -719,6 +873,8 @@
                   {number}
                   gapOldStart={prev.old_start + prev.old_count}
                   gapNewStart={prev.new_start + prev.new_count}
+                  revealNewLine={revealForThisFile}
+                  onrevealed={onRegionRevealed}
                 />
               {/if}
             {/if}
@@ -1046,6 +1202,8 @@
               {number}
               gapOldStart={lastHunk.old_start + lastHunk.old_count}
               gapNewStart={lastHunk.new_start + lastHunk.new_count}
+              revealNewLine={revealForThisFile}
+              onrevealed={onRegionRevealed}
             />
           {/if}
         </div>
@@ -1131,11 +1289,18 @@
     transform: rotate(-90deg);
   }
 
+  .file-id {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+
   .file-path {
     font-family: var(--font-mono);
     font-size: 12px;
     color: var(--diff-text);
-    flex: 1;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1147,6 +1312,19 @@
 
   .file-path--deleted {
     text-decoration: line-through;
+  }
+
+  /* Copy/rename provenance shown under the filename (see provenanceLabel).
+     Muted + sans so it reads as metadata, not part of the path. */
+  .file-provenance {
+    font-family: var(--font-sans);
+    font-size: 11px;
+    color: var(--text-muted);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    user-select: text;
   }
 
   .file-stats {
@@ -1303,6 +1481,54 @@
     100% { background: transparent; }
   }
 
+  /* Persistent highlight for a symbol-refs jump target (see
+     scrollToDiffLine.ts's flashDiffLine/clearDiffLineHighlight).
+     Unlike .line-wrap--flash above, this has no timer: a jump can
+     land many lines down the page, where a time-based flash would
+     often finish decaying before the smooth scroll even arrives.
+     Stays until superseded by another jump or cleared when the
+     gutter closes. :global because the target can be a line
+     revealed inside a CollapsedRegion, not just one of this file's
+     own .line-wrap elements -- in that case the class lands directly
+     on a bare .diff-line instead of a wrapping .line-wrap.
+
+     Painted as an ::after overlay rather than as background/box-shadow
+     on the highlighted element itself: DiffLine.svelte's .diff-line
+     sets an unconditional, opaque `background: var(--diff-bg)` (or
+     the add/del variant), and .diff-line is always a child of
+     whichever element carries this class -- .line-wrap wraps it in
+     the normal case, and in the CollapsedRegion case the class lands
+     on .diff-line itself, tying with its own same-specificity
+     background rule. Either way the opaque background wins on every
+     line, not just add/delete ones, so nothing painted as a
+     background on the ancestor/self ever shows through. An
+     absolutely-positioned overlay sidesteps the fight entirely by
+     painting in its own layer above the static content instead of
+     underneath it. */
+  :global(.line-wrap--jump-highlight) {
+    /* Containing block for the ::after overlay below. .line-wrap
+       already declares this, so it's a no-op there; it's what makes
+       the bare-.diff-line (CollapsedRegion) case work too, instead of
+       inset: 0 resolving against a distant positioned ancestor (e.g.
+       the sticky file header) and escaping the line entirely. */
+    position: relative;
+  }
+
+  :global(.line-wrap--jump-highlight)::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    /* Strictly between .diff-line's own children -- unpositioned, so
+       always painted beneath any positioned, non-negative-z-indexed
+       box regardless of the exact value -- and .line-actions's
+       z-index: 1. Above the diff content, below the hover
+       comment/ask buttons so they stay legible over the tint. */
+    z-index: 0;
+    background: color-mix(in srgb, var(--accent-teal) 22%, transparent);
+    border-left: 3px solid var(--accent-teal);
+    pointer-events: none;
+  }
+
   .line-actions {
     position: absolute;
     top: 50%;
@@ -1372,6 +1598,10 @@
 
   .selection-toolbar__btn--ask {
     background: var(--accent-claude);
+  }
+
+  .selection-toolbar__btn--refs {
+    background: var(--accent-teal);
   }
 
   .selection-toolbar__btn:hover {
