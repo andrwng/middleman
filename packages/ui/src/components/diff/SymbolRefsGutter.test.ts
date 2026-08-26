@@ -598,3 +598,207 @@ describe("SymbolRefsGutter: rows outside the current diff scope", () => {
     expect(screen.queryByText(/nothing to jump to/)).toBeNull();
   });
 });
+
+// ctags has no name for an anonymous namespace, so it invents one:
+// "__anon" plus a hex run derived from the file. That placeholder reaches
+// the gutter inside the scope string, and every shape below was taken from
+// real ctags output over redpanda's C++ tree -- all four occur there in
+// numbers, so none of these is a corner case.
+//
+// The rendering rule has two halves, and both matter. An anonymous
+// component that comes FIRST collapses to nothing, leaving the leading
+// "::" that C++ already uses to mean "unqualified" -- the most common
+// shape by a wide margin. One anywhere else becomes "<anon>", because
+// collapsing it there would emit "redpanda::::varint", which reads as a
+// broken renderer rather than as a scope.
+describe("SymbolRefsGutter: anonymous namespace scopes", () => {
+  it("a top-level anonymous namespace renders as a bare leading \"::\"", () => {
+    const hits = [
+      hit({
+        path: "src/v/transform/transform.cc",
+        kind: "definition",
+        text: "void do_transform() {",
+        tag: {
+          kind: "function",
+          scope: "__anonbc440b330211",
+          signature: "()",
+        },
+      }),
+    ];
+    const { container } = renderGutter({
+      hits,
+      inPrTotal: 1,
+      query: "do_transform",
+    });
+
+    const rowText = container.querySelector(".symref-row__text")?.textContent;
+    expect(rowText).toBe("::do_transform()");
+    expect(rowText).not.toContain("__anon");
+  });
+
+  // The separator survives even though the sanitized scope is empty. Keying
+  // off the sanitized value instead would drop it and render a bare
+  // "do_transform()", silently losing the file-local signal in exactly the
+  // shape that occurs most often.
+  it("keeps the leading \"::\" when the anonymous component is the whole scope", () => {
+    const hits = [
+      hit({
+        path: "src/v/transform/transform.cc",
+        kind: "definition",
+        text: "void do_transform() {",
+        tag: { kind: "function", scope: "__anonbc440b330211" },
+      }),
+    ];
+    const { container } = renderGutter({
+      hits,
+      inPrTotal: 1,
+      query: "do_transform",
+    });
+
+    expect(container.querySelector(".symref-row__text")?.textContent).toBe(
+      "::do_transform",
+    );
+  });
+
+  it("an anonymous namespace with a nested scope keeps the leading \"::\"", () => {
+    const hits = [
+      hit({
+        path: "src/v/wasm/wasi.cc",
+        kind: "definition",
+        text: "void native_object::add() {",
+        tag: {
+          kind: "function",
+          scope: "__anonecb58e540111::native_object",
+          signature: "()",
+        },
+      }),
+    ];
+    const { container } = renderGutter({ hits, inPrTotal: 1, query: "add" });
+
+    expect(container.querySelector(".symref-row__text")?.textContent).toBe(
+      "::native_object::add()",
+    );
+  });
+
+  it("an anonymous component in the middle renders as \"<anon>\", never \"::::\"", () => {
+    const hits = [
+      hit({
+        path: "src/v/serde/varint.cc",
+        kind: "definition",
+        text: "constexpr size_t MAX_LENGTH = 10;",
+        tag: {
+          kind: "variable",
+          scope: "redpanda::__anondf446e100111::varint",
+        },
+      }),
+    ];
+    const { container } = renderGutter({
+      hits,
+      inPrTotal: 1,
+      query: "MAX_LENGTH",
+    });
+
+    const rowText = container.querySelector(".symref-row__text")?.textContent;
+    expect(rowText).toBe("redpanda::<anon>::varint::MAX_LENGTH");
+    expect(rowText).not.toContain("::::");
+    expect(rowText).not.toContain("__anon");
+  });
+
+  it("a trailing anonymous component renders as \"<anon>\", never \"::::\"", () => {
+    const hits = [
+      hit({
+        path: "tools/clang-tidy/redpanda.cc",
+        kind: "definition",
+        text: "AST_MATCHER(Decl, isFromRedpanda) {",
+        tag: {
+          kind: "function",
+          scope: "clang::tidy::redpanda::__anoncc1061c90111",
+          signature: "()",
+        },
+      }),
+    ];
+    const { container } = renderGutter({
+      hits,
+      inPrTotal: 1,
+      query: "AST_MATCHER",
+    });
+
+    const rowText = container.querySelector(".symref-row__text")?.textContent;
+    expect(rowText).toBe("clang::tidy::redpanda::<anon>::AST_MATCHER()");
+    expect(rowText).not.toContain("::::");
+  });
+
+  // ctags spells an anonymous union or struct exactly the way it spells an
+  // anonymous namespace, and scopeKind cannot tell them apart when the
+  // placeholder sits mid-scope. So they get the same treatment, which lands
+  // on "<anon>" here because the component is not first.
+  it("an anonymous union member renders as \"<anon>\"", () => {
+    const hits = [
+      hit({
+        path: "src/v/model/record.h",
+        kind: "definition",
+        text: "        int a;",
+        tag: { kind: "member", scope: "HasAnon::__anon373dda25040a" },
+      }),
+    ];
+    const { container } = renderGutter({ hits, inPrTotal: 1, query: "a" });
+
+    expect(container.querySelector(".symref-row__text")?.textContent).toBe(
+      "HasAnon::<anon>::a",
+    );
+  });
+
+  // The whole-component match plus the 8-hex-digit floor is what keeps a
+  // real identifier out of the rewrite. "__anonymous_helper" fails on the
+  // "y"; "__anonface" is hex but only four digits long.
+  it("leaves a real identifier that merely starts with \"__anon\" alone", () => {
+    const hits = [
+      hit({
+        path: "src/v/kafka/handler.cc",
+        kind: "definition",
+        text: "void foo() {",
+        tag: {
+          kind: "function",
+          scope: "redpanda::__anonymous_helper",
+          signature: "()",
+        },
+      }),
+      hit({
+        path: "src/v/kafka/handler.cc",
+        line: 2,
+        kind: "definition",
+        text: "void foo() {",
+        tag: { kind: "function", scope: "redpanda::__anonface", signature: "()" },
+      }),
+    ];
+    const { container } = renderGutter({ hits, inPrTotal: 2, query: "foo" });
+
+    const rows = [...container.querySelectorAll(".symref-row__text")].map(
+      (el) => el.textContent,
+    );
+    expect(rows).toEqual([
+      "redpanda::__anonymous_helper::foo()",
+      "redpanda::__anonface::foo()",
+    ]);
+  });
+
+  // Go and Python never produce these placeholders -- verified against
+  // ctags directly, including Go anonymous struct fields and Python nested
+  // classes. Splitting on the language's own separator is what makes the
+  // rewrite a structural no-op there rather than something to special-case.
+  it("leaves a dotted Go scope untouched", () => {
+    const hits = [
+      hit({
+        path: "internal/cache.go",
+        kind: "definition",
+        text: "func (c *Cache) Get(k string) string {",
+        tag: { kind: "func", scope: "main.Cache", signature: "(k string)" },
+      }),
+    ];
+    const { container } = renderGutter({ hits, inPrTotal: 1, query: "Get" });
+
+    expect(container.querySelector(".symref-row__text")?.textContent).toBe(
+      "main.Cache.Get(k string)",
+    );
+  });
+});

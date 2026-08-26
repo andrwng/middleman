@@ -139,8 +139,46 @@
     return langFromPath(path) === "cpp" ? "::" : ".";
   }
 
+  // ctags names an anonymous namespace — and an anonymous struct or
+  // union — with a mangled placeholder: "__anon" plus a hex run derived
+  // from the file, e.g. "__anon373dda250111". That placeholder lands in
+  // the scope string verbatim ("redpanda::__anondf446e100111::varint"),
+  // where it carries nothing a reader wants.
+  //
+  // Matched as a whole component, with a floor of 8 hex digits so a real
+  // identifier cannot be taken for one: "__anonymous_helper" fails on the
+  // "y", and a hypothetical "__anonface" has only 4 hex digits. Observed
+  // output uses 12; the floor tolerates that changing.
+  const ANON_SCOPE_COMPONENT = /^__anon[0-9a-f]{8,}$/;
+
+  // sanitizeScope rewrites the anonymous components of a scope.
+  //
+  // The FIRST component becomes empty, leaving the scope with a leading
+  // separator — "::do_transform" — which is already how C++ spells an
+  // unqualified name, and is the most common shape in practice. A
+  // component anywhere else becomes "<anon>", because an empty one there
+  // would render "redpanda::::varint" and read as a rendering bug rather
+  // than as a scope.
+  //
+  // Splitting on the language's own separator makes this a no-op for
+  // languages that never produce these placeholders: a Go scope like
+  // "main.Cache" has no component that can match. The substring check
+  // short-circuits that overwhelmingly common case before any splitting.
+  function sanitizeScope(scope: string, separator: string): string {
+    if (!scope.includes("__anon")) return scope;
+    return scope
+      .split(separator)
+      .map((part, i) => (ANON_SCOPE_COMPONENT.test(part) ? (i === 0 ? "" : "<anon>") : part))
+      .join(separator);
+  }
+
   function taggedLabel(tag: SymbolTag, symbol: string, path: string): string {
-    const scope = tag.scope ? `${tag.scope}${scopeSeparator(path)}` : "";
+    const separator = scopeSeparator(path);
+    // Test the ORIGINAL scope, not the sanitized one. A scope that is
+    // nothing but an anonymous component sanitizes to "", and dropping
+    // the separator along with it would silently lose the leading "::"
+    // that marks the symbol as file-local.
+    const scope = tag.scope ? `${sanitizeScope(tag.scope, separator)}${separator}` : "";
     return `${scope}${symbol}${tag.signature ?? ""}`;
   }
 
