@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 )
 
 // binaryNames are tried in order. The Debian/Ubuntu package installs
@@ -37,6 +38,13 @@ var (
 	resolved   string // the binary to run, empty when unavailable
 )
 
+// detectTimeout bounds the version probe below. detect runs inside
+// detectOnce.Do: a hang there would not just fail the current caller,
+// it would block that sync.Once forever, wedging every later symbol
+// search in the process with no recovery short of a restart. detect
+// has no request context to inherit, so this deadline is its own.
+const detectTimeout = 2 * time.Second
+
 // detect finds a Universal Ctags binary once per process.
 func detect() {
 	for _, name := range binaryNames {
@@ -44,7 +52,9 @@ func detect() {
 		if err != nil {
 			continue
 		}
-		out, err := exec.Command(path, "--version").Output()
+		ctx, cancel := context.WithTimeout(context.Background(), detectTimeout)
+		out, err := exec.CommandContext(ctx, path, "--version").Output()
+		cancel()
 		if err != nil {
 			continue
 		}
