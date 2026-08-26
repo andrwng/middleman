@@ -128,14 +128,8 @@ test.describe("symbol references gutter (git-backed)", () => {
     // "def" under both classifiers here only because "string" is a Go
     // builtin type ctags never declares -- this exact hit stays
     // untagged even with ctags active, and falls back to the same
-    // heuristic label. Guarded anyway so this isn't a latent break for
-    // whoever next changes this fixture to something ctags does tag.
-    const stringClassifier = await readClassifier(gutter);
-    if (stringClassifier === "heuristic") {
-      await expect(firstRow.locator(".symref-row__kind")).toHaveText("def");
-    } else {
-      await expect(firstRow.locator(".symref-row__kind")).toHaveText("def");
-    }
+    // heuristic label, so the assertion below is unconditional.
+    await expect(firstRow.locator(".symref-row__kind")).toHaveText("def");
 
     // The one comment hit (cache.go's "Returns empty string if" doc
     // comment) starts collapsed behind the toggle, not as a visible row.
