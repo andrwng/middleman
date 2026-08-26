@@ -1163,6 +1163,7 @@ type SymbolHit struct {
 type SymbolRefsResponse struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema         *string      `json:"$schema,omitempty"`
+	Classifier     string       `json:"classifier"`
 	Hits           *[]SymbolHit `json:"hits"`
 	InPrTotal      int64        `json:"in_pr_total"`
 	OutsidePrTotal int64        `json:"outside_pr_total"`

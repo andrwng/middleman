@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/wesm/middleman/internal/apiclient"
 	"github.com/wesm/middleman/internal/apiclient/generated"
+	"github.com/wesm/middleman/internal/ctags"
 	"github.com/wesm/middleman/internal/db"
 	"github.com/wesm/middleman/internal/gitclone"
 	ghclient "github.com/wesm/middleman/internal/github"
@@ -78,7 +79,7 @@ func TestBuildSymbolRefsResponse(t *testing.T) {
 		}
 		changed := map[string]bool{"changed.go": true}
 
-		resp := buildSymbolRefsResponse("Zap", hits, changed)
+		resp := buildSymbolRefsResponse("Zap", hits, changed, nil)
 
 		require.Len(resp.Hits, 2)
 		assert.Equal(2, resp.InPRTotal)
@@ -108,7 +109,7 @@ func TestBuildSymbolRefsResponse(t *testing.T) {
 		}
 		changed := map[string]bool{"f.go": true}
 
-		resp := buildSymbolRefsResponse("Sym", hits, changed)
+		resp := buildSymbolRefsResponse("Sym", hits, changed, nil)
 
 		assert.Equal(total, resp.InPRTotal)
 		require.Len(resp.Hits, symbolRefsMaxHits)
@@ -135,7 +136,7 @@ func TestBuildSymbolRefsResponse(t *testing.T) {
 			"a.go": true, "b.go": true, "c.go": true, "d.go": true, "z.go": true,
 		}
 
-		resp := buildSymbolRefsResponse("Zap", hits, changed)
+		resp := buildSymbolRefsResponse("Zap", hits, changed, nil)
 
 		require.Len(resp.Hits, 7)
 		type key struct {
@@ -162,7 +163,7 @@ func TestBuildSymbolRefsResponse(t *testing.T) {
 		assert := Assert.New(t)
 		require := require.New(t)
 
-		resp := buildSymbolRefsResponse("Sym", nil, map[string]bool{})
+		resp := buildSymbolRefsResponse("Sym", nil, map[string]bool{}, nil)
 
 		require.Empty(resp.Hits)
 		b, err := json.Marshal(resp)
@@ -176,7 +177,11 @@ func TestBuildSymbolRefsResponse(t *testing.T) {
 // #1 in acme/widget. base.go is committed on main and left untouched
 // by the PR; changed.go is added by the PR and refers to the same
 // symbol, so one query against "AnchorSymbol" exercises both sides
-// of the in-PR/outside-PR partition in a single request.
+// of the in-PR/outside-PR partition in a single request. server.cc
+// and notes.zzzlang are also added by the PR, for the ctags-labelling
+// subtests below; the symbol they share ("handle") does not appear in
+// base.go or changed.go, so they do not affect the AnchorSymbol
+// assertions.
 func setupSymbolRefsPRServer(t *testing.T) (client *apiclient.Client, headSHA string) {
 	t.Helper()
 
@@ -205,8 +210,28 @@ func setupSymbolRefsPRServer(t *testing.T) (client *apiclient.Client, headSHA st
 	runGit(t, tmpWork, "checkout", "-b", "pr")
 	require.NoError(t, os.WriteFile(filepath.Join(tmpWork, "changed.go"),
 		[]byte("package widgets\n\nfunc lookup() int {\n\treturn AnchorSymbol\n}\n"), 0o644))
+	// server.cc and notes.zzzlang exercise ctags labelling: "handle" is
+	// defined once, inside a namespace and a class so its ctags tag
+	// carries a scope; called once, a plain reference ctags does not
+	// tag; and mentioned once more in a file whose extension ctags
+	// does not recognize as any language, so that hit falls back to
+	// the textual heuristic instead of erroring or vanishing.
+	require.NoError(t, os.WriteFile(filepath.Join(tmpWork, "server.cc"), []byte(
+		"namespace kafka {\n"+
+			"class server {\n"+
+			" public:\n"+
+			"  void handle(int x) {}\n"+
+			"};\n"+
+			"}  // namespace kafka\n"+
+			"\n"+
+			"void dispatch() {\n"+
+			"  kafka::server s;\n"+
+			"  s.handle(1);\n"+
+			"}\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpWork, "notes.zzzlang"),
+		[]byte("// handle should not be tagged\n"), 0o644))
 	runGit(t, tmpWork, "add", ".")
-	runGit(t, tmpWork, "commit", "-m", "add changed.go")
+	runGit(t, tmpWork, "commit", "-m", "add changed.go, server.cc, notes.zzzlang")
 	runGit(t, tmpWork, "push", "origin", "pr")
 	headSHA = testGitSHA(t, tmpWork, "HEAD")
 
@@ -265,6 +290,88 @@ func TestSymbolRefsEndpointE2E(t *testing.T) {
 			assert.EqualValues(1, resp.JSON200.InPrTotal)
 			assert.EqualValues(1, resp.JSON200.OutsidePrTotal)
 			assert.False(resp.JSON200.Truncated)
+		})
+
+		t.Run("classifier reflects ctags.Available()", func(t *testing.T) {
+			assert := Assert.New(t)
+			require := require.New(t)
+
+			q := "AnchorSymbol"
+			resp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberSymbolRefsWithResponse(
+				ctx, "acme", "widget", 1,
+				&generated.GetReposByOwnerByNamePullsByNumberSymbolRefsParams{Q: &q, Sha: &headSHA},
+			)
+			require.NoError(err)
+			require.Equal(http.StatusOK, resp.StatusCode())
+			require.NotNil(resp.JSON200)
+
+			// Derived rather than hardcoded so this is correct on CI
+			// whether or not universal-ctags happens to be installed.
+			want := "heuristic"
+			if ctags.Available() {
+				want = "ctags"
+			}
+			assert.Equal(want, resp.JSON200.Classifier)
+		})
+
+		t.Run("ctags labelling", func(t *testing.T) {
+			if !ctags.Available() {
+				t.Skip("universal-ctags not installed")
+			}
+
+			// Not locally bound: nested t.Run subtests below each
+			// bind their own require, which would shadow a package-
+			// level binding made here.
+			q := "handle"
+			resp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberSymbolRefsWithResponse(
+				ctx, "acme", "widget", 1,
+				&generated.GetReposByOwnerByNamePullsByNumberSymbolRefsParams{Q: &q, Sha: &headSHA},
+			)
+			require.NoError(t, err)
+			require.Equal(t, http.StatusOK, resp.StatusCode())
+			require.NotNil(t, resp.JSON200)
+			require.NotNil(t, resp.JSON200.Hits)
+
+			// Definition ranks before reference, which ranks before
+			// comment, so this order is exact, not incidental.
+			hits := *resp.JSON200.Hits
+			require.Len(t, hits, 3)
+
+			t.Run("a C++ definition line carries a claimed-kind tag with a populated scope", func(t *testing.T) {
+				assert := Assert.New(t)
+				require := require.New(t)
+
+				h := hits[0]
+				assert.Equal("server.cc", h.Path)
+				assert.EqualValues(4, h.Line)
+				assert.Equal(gitclone.KindDefinition, h.Kind)
+				require.NotNil(h.Tag)
+				assert.Contains([]string{
+					"function", "class", "struct", "member", "macro",
+					"typedef", "enum", "namespace", "prototype",
+				}, h.Tag.Kind)
+				require.NotNil(h.Tag.Scope)
+				assert.NotEmpty(*h.Tag.Scope)
+			})
+
+			t.Run("a plain call line carries no tag and kind reference", func(t *testing.T) {
+				assert := Assert.New(t)
+
+				h := hits[1]
+				assert.Equal("server.cc", h.Path)
+				assert.EqualValues(10, h.Line)
+				assert.Equal(gitclone.KindReference, h.Kind)
+				assert.Nil(h.Tag)
+			})
+
+			t.Run("a file in a language ctags does not know still returns a coarse kind and no tag", func(t *testing.T) {
+				assert := Assert.New(t)
+
+				h := hits[2]
+				assert.Equal("notes.zzzlang", h.Path)
+				assert.Equal(gitclone.KindComment, h.Kind)
+				assert.Nil(h.Tag)
+			})
 		})
 
 		t.Run("symbol absent from the tree returns 200 with empty hits, not 404 or 502", func(t *testing.T) {
@@ -370,6 +477,64 @@ func TestSymbolRefsEndpointE2E(t *testing.T) {
 		assert.EqualValues(4, hits[0].Line)
 		assert.Equal(gitclone.KindDefinition, hits[0].Kind)
 		assert.EqualValues(1, resp.JSON200.InPrTotal)
+	})
+
+	t.Run("local mode: ctags labels an uncommitted C++ definition using the working-tree sentinel", func(t *testing.T) {
+		if !ctags.Available() {
+			t.Skip("universal-ctags not installed")
+		}
+		assert := Assert.New(t)
+		require := require.New(t)
+
+		dir := t.TempDir()
+		runGitWT(t, "", "init", "--initial-branch=main", dir)
+		runGitWT(t, dir, "config", "user.email", "test@example.com")
+		runGitWT(t, dir, "config", "user.name", "Test")
+
+		committed := "int Committed = 1;\n"
+		require.NoError(os.WriteFile(filepath.Join(dir, "tracked.cc"), []byte(committed), 0o644))
+		runGitWT(t, dir, "add", "tracked.cc")
+		runGitWT(t, dir, "commit", "-m", "add tracked.cc")
+
+		// Uncommitted: this function exists only on disk, never
+		// committed, so its tag can only come from the working tree
+		// via the sentinel SHA, never from a git blob.
+		edited := committed + "\nvoid UncommittedWidget() {}\n"
+		require.NoError(os.WriteFile(filepath.Join(dir, "tracked.cc"), []byte(edited), 0o644))
+
+		srv, database := setupTestServer(t)
+		client := setupTestClient(t, srv)
+		ctx := context.Background()
+
+		repoID, err := database.UpsertLocalRepo(ctx, "demo")
+		require.NoError(err)
+		canonDir, err := filepath.EvalSymlinks(dir)
+		require.NoError(err)
+		w, err := database.UpsertWorktree(ctx, repoID, db.ScannedWorktree{
+			Path:   canonDir,
+			Branch: "main",
+		})
+		require.NoError(err)
+
+		q := "UncommittedWidget"
+		sentinel := worktrees.WorkingTreeSentinel
+		resp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberSymbolRefsWithResponse(
+			ctx, "local", "demo", w.ID,
+			&generated.GetReposByOwnerByNamePullsByNumberSymbolRefsParams{Q: &q, Sha: &sentinel},
+		)
+		require.NoError(err)
+		require.Equal(http.StatusOK, resp.StatusCode())
+		require.NotNil(resp.JSON200)
+		require.NotNil(resp.JSON200.Hits)
+
+		hits := *resp.JSON200.Hits
+		require.Len(hits, 1)
+		assert.Equal("tracked.cc", hits[0].Path)
+		assert.EqualValues(3, hits[0].Line)
+		assert.Equal(gitclone.KindDefinition, hits[0].Kind)
+		require.NotNil(hits[0].Tag)
+		assert.Equal("function", hits[0].Tag.Kind)
+		assert.Equal("ctags", resp.JSON200.Classifier)
 	})
 
 	t.Run("local mode: a symbol absent from the worktree returns 200 with empty hits", func(t *testing.T) {

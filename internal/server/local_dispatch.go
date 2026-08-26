@@ -454,9 +454,13 @@ func (s *Server) getSymbolRefsLocal(
 		return nil, huma.Error502BadGateway("symbol search failed")
 	}
 
-	return &getSymbolRefsOutput{
-		Body: buildSymbolRefsResponse(symbol, hits, changedPathSet(ds.Files)),
-	}, nil
+	readBlob := func(p string) ([]byte, error) {
+		return worktrees.Blob(gctx, w.Path, input.SHA, p)
+	}
+	tagsByPath := symbolRefTags(gctx, hits, readBlob)
+	resp := buildSymbolRefsResponse(symbol, hits, changedPathSet(ds.Files), tagsByPath)
+	resp.Classifier = symbolRefsClassifier()
+	return &getSymbolRefsOutput{Body: resp}, nil
 }
 
 // resolveLocalWorktreeByPath powers GET /local/resolve: given an absolute

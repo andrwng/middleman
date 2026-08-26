@@ -2604,6 +2604,7 @@ export interface components {
              * @example /api/v1/schemas/SymbolRefsResponse.json
              */
             readonly $schema?: string;
+            classifier: string;
             hits: components["schemas"]["SymbolHit"][] | null;
             /** Format: int64 */
             in_pr_total: number;
