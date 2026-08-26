@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -2557,91 +2555,6 @@ type symbolRefsResponse struct {
 	// the UI can say labels are degraded instead of the user having to
 	// infer it from absent tags.
 	Classifier string `json:"classifier"`
-}
-
-// symbolRefTags runs ctags over the distinct files among hits that are
-// in the PR's changed set, and returns their tags keyed by repo-relative
-// path. Paths outside changed are skipped before ever reading a blob:
-// buildSymbolRefsResponse only calls labelHits on the changed subset of
-// hits, so tagging a file elsewhere in the tree would cost a Blob fetch
-// plus a ctags subprocess spawn for a result nothing uses — on a large
-// repo a common symbol can hit hundreds of tree-wide files while the PR
-// touches a handful, and that waste can plausibly exhaust the request's
-// timeout. readBlob supplies each file's content at the searched SHA,
-// which differs by mode.
-//
-// A file is also skipped — absent from the result, so its hits fall
-// back to the heuristic — when its blob cannot be read, it is too
-// large, or ctags fails on it. One awkward file must never degrade the
-// whole search.
-func symbolRefTags(
-	ctx context.Context,
-	hits []gitclone.SymbolHit,
-	changed map[string]bool,
-	readBlob func(path string) ([]byte, error),
-) map[string][]ctags.Tag {
-	if !ctags.Available() {
-		return nil
-	}
-	out := make(map[string][]ctags.Tag)
-	for _, path := range distinctPaths(hits) {
-		if !changed[path] {
-			continue
-		}
-		content, err := readBlob(path)
-		if err != nil || len(content) == 0 || len(content) > blobMaxBytes {
-			continue
-		}
-		tags, err := tagsForContent(ctx, path, content)
-		if err != nil {
-			continue
-		}
-		out[path] = tags
-	}
-	return out
-}
-
-// distinctPaths lists each path in hits once, preserving first-seen order
-// so behaviour is deterministic.
-func distinctPaths(hits []gitclone.SymbolHit) []string {
-	seen := make(map[string]bool, len(hits))
-	var paths []string
-	for _, h := range hits {
-		if !seen[h.Path] {
-			seen[h.Path] = true
-			paths = append(paths, h.Path)
-		}
-	}
-	return paths
-}
-
-// tagsForContent writes content to a temp file that keeps path's
-// extension and runs ctags on it. The extension is what ctags uses to
-// pick a language, and it cannot read source from stdin.
-func tagsForContent(
-	ctx context.Context, path string, content []byte,
-) ([]ctags.Tag, error) {
-	f, err := os.CreateTemp("", "symbolrefs-*"+filepath.Ext(path))
-	if err != nil {
-		return nil, err
-	}
-	defer os.Remove(f.Name())
-	if _, err := f.Write(content); err != nil {
-		f.Close()
-		return nil, err
-	}
-	if err := f.Close(); err != nil {
-		return nil, err
-	}
-	return ctags.TagsForFile(ctx, f.Name())
-}
-
-// symbolRefsClassifier names the labeller used, for the response.
-func symbolRefsClassifier() string {
-	if ctags.Available() {
-		return "ctags"
-	}
-	return "heuristic"
 }
 
 // getSymbolRefs lists other occurrences of a symbol in the PR's changed

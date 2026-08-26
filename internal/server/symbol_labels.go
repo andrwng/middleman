@@ -1,6 +1,11 @@
 package server
 
 import (
+	"context"
+	"log/slog"
+	"os"
+	"path/filepath"
+
 	"github.com/wesm/middleman/internal/ctags"
 	"github.com/wesm/middleman/internal/gitclone"
 )
@@ -98,4 +103,132 @@ func findTag(
 		}
 	}
 	return ctags.Tag{}, false
+}
+
+// --- ctags orchestration ---
+//
+// The functions below drive ctags over a search's hits and hand the
+// result to labelHits above. They live here rather than in the routes
+// file because they are this feature's pure labelling pipeline, not
+// request/response plumbing: symbolRefsResponse, the input/output
+// types and the HTTP handlers that call into this file stay in
+// huma_routes.go and local_dispatch.go.
+
+// symbolRefTagsMaxFiles caps how many distinct files are sent through
+// ctags in a single search. Ordinarily a handful, but a large PR
+// touching a common symbol can span hundreds of changed files, each
+// costing a git-cat-file fork plus a ctags fork inside the shared
+// symbolRefsTimeout deadline — turning a fast search into a
+// multi-second one. Past the cap, the remaining files' hits fall back
+// to the heuristic, the same as any other file ctags could not tag.
+// Named in the same style as symbolRefsMaxHits.
+const symbolRefTagsMaxFiles = 200
+
+// symbolRefTags runs ctags over the distinct files among hits that are
+// in the PR's changed set, and returns their tags keyed by repo-relative
+// path. Paths outside changed are skipped before ever reading a blob:
+// buildSymbolRefsResponse only calls labelHits on the changed subset of
+// hits, so tagging a file elsewhere in the tree would cost a Blob fetch
+// plus a ctags subprocess spawn for a result nothing uses — on a large
+// repo a common symbol can hit hundreds of tree-wide files while the PR
+// touches a handful, and that waste can plausibly exhaust the request's
+// timeout. readBlob supplies each file's content at the searched SHA,
+// which differs by mode.
+//
+// A file is also skipped — absent from the result, so its hits fall
+// back to the heuristic — when its blob cannot be read, it is too
+// large, or ctags fails on it. One awkward file must never degrade the
+// whole search. Both cases are logged at Debug, not Error: a symbol
+// search touching a file ctags cannot handle is an expected, isolated,
+// non-fatal event, not a failure worth paging on — but a ctags that
+// fails on every file should still be visible in the logs rather than
+// silently indistinguishable from "found nothing."
+//
+// The context is checked on every iteration since this loop can run
+// for many files inside the caller's shared deadline, and
+// symbolRefTagsMaxFiles bounds the file count outright; the cap is
+// logged when hit so a truncated result reads as a deliberate limit,
+// not as "we tagged everything."
+func symbolRefTags(
+	ctx context.Context,
+	hits []gitclone.SymbolHit,
+	changed map[string]bool,
+	readBlob func(path string) ([]byte, error),
+) map[string][]ctags.Tag {
+	if !ctags.Available() {
+		return nil
+	}
+	out := make(map[string][]ctags.Tag)
+	attempted := 0
+	for _, path := range distinctPaths(hits) {
+		if ctx.Err() != nil {
+			break
+		}
+		if !changed[path] {
+			continue
+		}
+		if attempted >= symbolRefTagsMaxFiles {
+			slog.Debug("symbol refs: ctags file cap reached",
+				"limit", symbolRefTagsMaxFiles)
+			break
+		}
+		attempted++
+		content, err := readBlob(path)
+		if err != nil || len(content) == 0 || len(content) > blobMaxBytes {
+			slog.Debug("symbol refs: skipping file for ctags",
+				"path", path, "err", err, "size", len(content))
+			continue
+		}
+		tags, err := tagsForContent(ctx, path, content)
+		if err != nil {
+			slog.Debug("symbol refs: ctags failed on file",
+				"path", path, "err", err)
+			continue
+		}
+		out[path] = tags
+	}
+	return out
+}
+
+// distinctPaths lists each path in hits once, preserving first-seen order
+// so behaviour is deterministic.
+func distinctPaths(hits []gitclone.SymbolHit) []string {
+	seen := make(map[string]bool, len(hits))
+	var paths []string
+	for _, h := range hits {
+		if !seen[h.Path] {
+			seen[h.Path] = true
+			paths = append(paths, h.Path)
+		}
+	}
+	return paths
+}
+
+// tagsForContent writes content to a temp file that keeps path's
+// extension and runs ctags on it. The extension is what ctags uses to
+// pick a language, and it cannot read source from stdin.
+func tagsForContent(
+	ctx context.Context, path string, content []byte,
+) ([]ctags.Tag, error) {
+	f, err := os.CreateTemp("", "symbolrefs-*"+filepath.Ext(path))
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.Write(content); err != nil {
+		f.Close()
+		return nil, err
+	}
+	if err := f.Close(); err != nil {
+		return nil, err
+	}
+	return ctags.TagsForFile(ctx, f.Name())
+}
+
+// symbolRefsClassifier names the labeller used, for the response.
+func symbolRefsClassifier() string {
+	if ctags.Available() {
+		return "ctags"
+	}
+	return "heuristic"
 }
