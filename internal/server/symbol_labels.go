@@ -10,18 +10,27 @@ import (
 // absent: an unclaimed kind falls back to the textual heuristic rather
 // than being forced into a bucket that might be wrong.
 //
+// ctags kind names are per-language, not universal: C, C++ and
+// TypeScript emit "function" for a function definition, but Go emits
+// "func" for both functions and methods instead. That is why the map
+// carries both "function" and "func" — each is the spelling a given
+// language actually produces, not a redundant synonym.
+//
 // prototype is a definition on purpose. A header declaration belongs
 // beside the definition when scanning; the problem being solved is that
 // declarations were indistinguishable FROM definitions, not that they
 // should be hidden.
 var ctagsKindBuckets = map[string]string{
 	"function":  gitclone.KindDefinition,
+	"func":      gitclone.KindDefinition,
+	"method":    gitclone.KindDefinition,
 	"class":     gitclone.KindDefinition,
 	"struct":    gitclone.KindDefinition,
 	"member":    gitclone.KindDefinition,
 	"macro":     gitclone.KindDefinition,
 	"typedef":   gitclone.KindDefinition,
 	"enum":      gitclone.KindDefinition,
+	"union":     gitclone.KindDefinition,
 	"namespace": gitclone.KindDefinition,
 	"prototype": gitclone.KindDefinition,
 }

@@ -11,8 +11,8 @@ import (
 func TestSymbolKindForCtagsKind(t *testing.T) {
 	assert := assert.New(t)
 	for _, k := range []string{
-		"function", "class", "struct", "member", "macro",
-		"typedef", "enum", "namespace", "prototype",
+		"function", "func", "method", "class", "struct", "member",
+		"macro", "typedef", "enum", "union", "namespace", "prototype",
 	} {
 		assert.Equal(gitclone.KindDefinition, symbolKindForCtagsKind(k), k)
 	}

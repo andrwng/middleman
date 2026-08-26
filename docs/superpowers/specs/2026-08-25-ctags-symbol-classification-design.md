@@ -91,8 +91,11 @@ rather than a per-line one. The endpoint, the store and the gutter keep their sh
 `kind` keeps its five closed values. Sorting, file grouping and the comment/string
 collapse all key off it, and that contract spans three layers.
 
-ctags kinds map into those buckets: `function`, `class`, `struct`, `member`, `macro`,
-`typedef`, `enum`, `namespace` and `prototype` all become `definition`. Placing
+ctags kinds map into those buckets: `function`, `func`, `method`, `class`, `struct`,
+`member`, `macro`, `typedef`, `enum`, `union`, `namespace` and `prototype` all become
+`definition`. ctags kind names are per-language rather than universal — C, C++ and
+TypeScript emit `function` for a function definition, but Go emits `func` for both
+functions and methods instead — which is why the map carries both spellings. Placing
 `prototype` there is deliberate — a header declaration belongs beside the definition
 when scanning; the problem was that declarations were indistinguishable from
 definitions, not that they should be hidden.
