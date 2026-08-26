@@ -57,6 +57,22 @@ async function openRefsPanel(page: Page): Promise<Locator> {
   return gutter;
 }
 
+// readClassifier reports which labeller produced the currently displayed
+// hits, purely from the DOM: SymbolRefsGutter renders the degraded note
+// only when the store's classifier is "heuristic" (matched on the word
+// "heuristic" rather than the note's exact wording, which could
+// reasonably be reworded later). Callers must wait for the header count
+// to settle to its expected value first -- classifier arrives in the
+// same response as the count, so reading it any earlier risks the
+// transient window where classifier is still "" and the note is absent
+// regardless of what the eventual answer will be.
+async function readClassifier(gutter: Locator): Promise<"heuristic" | "ctags"> {
+  const note = gutter.locator(".symref-degraded-note");
+  if ((await note.count()) === 0) return "ctags";
+  await expect(note).toHaveText(/heuristic/);
+  return "heuristic";
+}
+
 test.describe("symbol references gutter (git-backed)", () => {
   test.describe.configure({ mode: "serial" });
 
@@ -102,10 +118,24 @@ test.describe("symbol references gutter (git-backed)", () => {
     await expect(groupPaths.filter({ hasText: "internal/handler.go" }).first()).toBeVisible();
 
     // Definition-first ordering: the server sorts definition hits ahead
-    // of plain references, so the very first row is a definition.
+    // of plain references, so the very first row is a definition. The
+    // kind class is classifier-agnostic and stays unconditional.
     const firstRow = gutter.locator(".symref-row").first();
     await expect(firstRow.locator(".symref-row__kind")).toHaveClass(/symref-row__kind--definition/);
-    await expect(firstRow.locator(".symref-row__kind")).toHaveText("def");
+
+    // The badge TEXT is classifier-dependent in principle: ctags
+    // supplies it verbatim whenever a tag matches the hit. It reads
+    // "def" under both classifiers here only because "string" is a Go
+    // builtin type ctags never declares -- this exact hit stays
+    // untagged even with ctags active, and falls back to the same
+    // heuristic label. Guarded anyway so this isn't a latent break for
+    // whoever next changes this fixture to something ctags does tag.
+    const stringClassifier = await readClassifier(gutter);
+    if (stringClassifier === "heuristic") {
+      await expect(firstRow.locator(".symref-row__kind")).toHaveText("def");
+    } else {
+      await expect(firstRow.locator(".symref-row__kind")).toHaveText("def");
+    }
 
     // The one comment hit (cache.go's "Returns empty string if" doc
     // comment) starts collapsed behind the toggle, not as a visible row.
@@ -170,7 +200,17 @@ test.describe("symbol references gutter (git-backed)", () => {
     // Only the definition renders as a main row up front.
     await expect(gutter.locator(".symref-row")).toHaveCount(1);
     const defRow = gutter.locator(".symref-row").first();
-    await expect(defRow.locator(".symref-row__kind")).toHaveText("def");
+
+    // The badge TEXT is classifier-dependent: ctags tags HandleRequest
+    // as a real Go "func" declaration (pinned precisely in the
+    // dedicated ctags-kinds test below), so only the heuristic
+    // classifier falls back to the coarse "def" label.
+    const handleRequestClassifier = await readClassifier(gutter);
+    if (handleRequestClassifier === "heuristic") {
+      await expect(defRow.locator(".symref-row__kind")).toHaveText("def");
+    } else {
+      await expect(defRow.locator(".symref-row__kind")).toHaveText("func");
+    }
     await expect(defRow.locator(".symref-row__line")).toHaveText("10");
 
     const commentRow = gutter.locator(".symref-row", { hasText: "processes incoming HTTP requests" });
@@ -280,5 +320,46 @@ test.describe("symbol references gutter (git-backed)", () => {
     });
     await expect(line11Row).toHaveCount(1);
     await expect(line11Row.locator(".symref-row__kind")).toHaveText("string");
+  });
+
+  test("with ctags available, a Go function definition shows its precise kind while a call site keeps a plain reference", async ({ page }) => {
+    await page.goto("/pulls/acme/widgets/1/files");
+    await page.locator(".diff-file").first().waitFor({ state: "visible", timeout: 10_000 });
+
+    const handlerFile = page.locator('.diff-file[data-file-path="internal/handler.go"]');
+
+    // Same selection as the "HandleRequest" test above: a real Go func
+    // declaration, which universal-ctags tags with kind "func".
+    await dblclickToken(handlerFile, 10, "RIGHT", "HandleRequest");
+    let gutter = await openRefsPanel(page);
+    await expect(gutter.locator(".symref-header__count")).toHaveText("2", { timeout: 5000 });
+
+    // Read the classifier from the page rather than assuming it: on a
+    // machine without universal-ctags the server reports "heuristic",
+    // and asserting a ctags-specific kind there would pass vacuously
+    // (the label is never anything but the coarse fallback) while
+    // proving nothing. Skip explicitly instead of tolerating both
+    // outcomes with a lenient assertion.
+    const classifier = await readClassifier(gutter);
+    test.skip(classifier === "heuristic", "universal-ctags is not installed; kind labels stay heuristic");
+
+    const defRow = gutter.locator(".symref-row").first();
+    await expect(defRow.locator(".symref-row__kind")).toHaveClass(/symref-row__kind--definition/);
+    await expect(defRow.locator(".symref-row__kind")).toHaveText("func");
+
+    await gutter.locator(".symref-header__close").click();
+    await expect(gutter).not.toBeAttached();
+
+    // Same selection as the "Println" test above: a call site of a
+    // stdlib function this file never declares, so ctags has no tag
+    // for it and it keeps the coarse "reference" kind and "ref" label
+    // -- ctags only ever tags declarations, never call sites.
+    await dblclickToken(handlerFile, 39, "RIGHT", "Println");
+    gutter = await openRefsPanel(page);
+    await expect(gutter.locator(".symref-header__count")).toHaveText("1", { timeout: 5000 });
+
+    const refRow = gutter.locator(".symref-row").first();
+    await expect(refRow.locator(".symref-row__kind")).toHaveClass(/symref-row__kind--reference/);
+    await expect(refRow.locator(".symref-row__kind")).toHaveText("ref");
   });
 });
