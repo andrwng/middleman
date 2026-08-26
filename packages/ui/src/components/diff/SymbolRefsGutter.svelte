@@ -4,6 +4,8 @@
   import { scrollToDiffLine, clearDiffLineHighlight, type DiffJumpDeps } from "./scrollToDiffLine.js";
   import type { SymbolHit } from "../../stores/symbolRefs.svelte.js";
 
+  type SymbolTag = NonNullable<SymbolHit["tag"]>;
+
   interface Props {
     owner: string;
     name: string;
@@ -32,6 +34,7 @@
   const inPrTotal = $derived(symbolRefsStore.getInPrTotal());
   const outsidePrTotal = $derived(symbolRefsStore.getOutsidePrTotal());
   const truncated = $derived(symbolRefsStore.isTruncated());
+  const classifier = $derived(symbolRefsStore.getClassifier());
   const status = $derived(symbolRefsStore.getStatus());
   const error = $derived(symbolRefsStore.getError());
 
@@ -115,6 +118,16 @@
     }
   });
 
+  // A tagged hit's row body shows the qualified name ctags found --
+  // scope::symbol plus the signature, e.g. "Foo::bar(int x)" -- rather
+  // than the raw matched line. The `::` only belongs between a present
+  // scope and the symbol, so an empty scope must not leave one dangling,
+  // and a missing signature must not leave a trailing gap either.
+  function taggedLabel(tag: SymbolTag, symbol: string): string {
+    const scope = tag.scope ? `${tag.scope}::` : "";
+    return `${scope}${symbol}${tag.signature ?? ""}`;
+  }
+
   function kindLabel(kind: string): string {
     switch (kind) {
       case "definition":
@@ -172,8 +185,8 @@
         title={hit.text}
       >
         <span class="symref-row__line">{hit.line}</span>
-        <span class="symref-row__kind symref-row__kind--{hit.kind}">{kindLabel(hit.kind)}</span>
-        <span class="symref-row__text">{hit.text}</span>
+        <span class="symref-row__kind symref-row__kind--{hit.kind}">{hit.tag ? hit.tag.kind : kindLabel(hit.kind)}</span>
+        <span class="symref-row__text">{hit.tag ? taggedLabel(hit.tag, query) : hit.text}</span>
       </button>
       {#if isMissingJump(hit)}
         <div class="symref-row__notice">Not part of the rendered diff — nothing to jump to.</div>
@@ -203,6 +216,12 @@
       </svg>
     </button>
   </div>
+
+  {#if classifier === "heuristic"}
+    <div class="symref-degraded-note">
+      Kind labels are heuristic — install universal-ctags for exact kinds.
+    </div>
+  {/if}
 
   <div class="symref-body">
     {#if status === "loading"}
@@ -306,6 +325,15 @@
   .symref-header__close:hover {
     background: var(--bg-surface-hover);
     color: var(--text-primary);
+  }
+
+  .symref-degraded-note {
+    flex-shrink: 0;
+    padding: 4px 12px;
+    font-size: 11px;
+    color: var(--accent-amber);
+    background: var(--diff-header-bg);
+    border-bottom: 1px solid var(--diff-border);
   }
 
   .symref-body {

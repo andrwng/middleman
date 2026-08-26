@@ -45,6 +45,10 @@ interface FakeStoreOverrides {
   inPrTotal?: number;
   outsidePrTotal?: number;
   truncated?: boolean;
+  // Defaults to "ctags" -- the non-degraded case -- so every test that
+  // doesn't care about the classifier renders exactly as it did before
+  // the degraded note existed.
+  classifier?: string;
   status?: SymbolRefsStatus;
   error?: string | null;
   // Paths the fake diff store reports as part of the currently
@@ -61,6 +65,7 @@ function fakeSymbolRefsStore(overrides: FakeStoreOverrides = {}) {
     inPrTotal = hits.length,
     outsidePrTotal = 0,
     truncated = false,
+    classifier = "ctags",
     status = "ready",
     error = null,
   } = overrides;
@@ -70,6 +75,7 @@ function fakeSymbolRefsStore(overrides: FakeStoreOverrides = {}) {
     getInPrTotal: () => inPrTotal,
     getOutsidePrTotal: () => outsidePrTotal,
     isTruncated: () => truncated,
+    getClassifier: () => classifier,
     getStatus: () => status,
     getError: () => error,
     isActive: () => status !== "idle",
@@ -340,6 +346,162 @@ describe("SymbolRefsGutter", () => {
     await fireEvent.click(screen.getByText(/1 in comments\/strings/));
     expect(screen.getByText("// second")).toBeTruthy();
     expect(screen.queryByText(/nothing to jump to/)).toBeNull();
+  });
+});
+
+// ctags labelling (SymbolHit.tag) and the classifier that reports whether
+// it was available. A hit WITH a tag shows ctags' own kind, plus the
+// qualified name and signature it found, in place of the coarse
+// definition/reference badge and the raw matched line. A hit WITHOUT a
+// tag -- whether ctags is unavailable, or it just didn't match that line
+// -- renders exactly as it always has: that's the fallback, not a second
+// code path, and grouping/sorting/the noisy-kind collapse all key off the
+// coarse `kind` the server still sets on every hit either way.
+describe("SymbolRefsGutter: ctags kind, scope and signature", () => {
+  it("a tagged hit renders tag.kind as its badge, not the coarse kind", () => {
+    const hits = [
+      hit({
+        kind: "definition",
+        text: "void bar(int x) {",
+        tag: { kind: "function", scope: "Foo", signature: "(int x)" },
+      }),
+    ];
+    const { container } = renderGutter({ hits, inPrTotal: 1, query: "bar" });
+
+    const badge = container.querySelector(".symref-row__kind");
+    expect(badge?.textContent).toBe("function");
+    expect(badge?.textContent).not.toBe("def");
+    // The coarse kind still drives the badge's color/grouping modifier
+    // classes -- only the label text changes for a tagged row.
+    expect(badge?.className).toContain("symref-row__kind--definition");
+    expect(container.querySelector(".symref-row")?.className).toContain(
+      "symref-row--definition",
+    );
+  });
+
+  it("a tagged hit renders scope::symbol and the signature", () => {
+    const hits = [
+      hit({
+        kind: "definition",
+        text: "void bar(int x) {",
+        tag: { kind: "function", scope: "Foo", signature: "(int x)" },
+      }),
+    ];
+    const { container } = renderGutter({ hits, inPrTotal: 1, query: "bar" });
+
+    expect(container.querySelector(".symref-row__text")?.textContent).toBe(
+      "Foo::bar(int x)",
+    );
+  });
+
+  it("a tagged hit with no scope renders symbol + signature, with no stray \"::\"", () => {
+    const hits = [
+      hit({
+        kind: "definition",
+        text: "void bar(int x) {",
+        tag: { kind: "function", signature: "(int x)" },
+      }),
+    ];
+    const { container } = renderGutter({ hits, inPrTotal: 1, query: "bar" });
+
+    const rowText = container.querySelector(".symref-row__text")?.textContent;
+    expect(rowText).toBe("bar(int x)");
+    expect(rowText).not.toContain("::");
+  });
+
+  it("a tagged hit with no signature renders scope::symbol with nothing trailing", () => {
+    const hits = [
+      hit({
+        kind: "definition",
+        text: "class Foo {",
+        tag: { kind: "class", scope: "ns" },
+      }),
+    ];
+    const { container } = renderGutter({ hits, inPrTotal: 1, query: "Foo" });
+
+    expect(container.querySelector(".symref-row__text")?.textContent).toBe("ns::Foo");
+  });
+
+  it("a tagged hit carries the raw matched line in a title attribute", () => {
+    const hits = [
+      hit({
+        kind: "definition",
+        text: "void bar(int x) {",
+        tag: { kind: "function", scope: "Foo", signature: "(int x)" },
+      }),
+    ];
+    const { container } = renderGutter({ hits, inPrTotal: 1, query: "bar" });
+
+    const row = container.querySelector(".symref-row");
+    expect(row?.getAttribute("title")).toBe("void bar(int x) {");
+    // Confirm the raw line is recoverable ONLY via the title, not also
+    // rendered as the row's visible text (which shows the tagged label
+    // instead) -- otherwise this assertion could pass by accident.
+    expect(container.querySelector(".symref-row__text")?.textContent).toBe(
+      "Foo::bar(int x)",
+    );
+  });
+
+  it("an untagged hit renders the coarse kind badge and the raw text (today's behaviour must survive)", () => {
+    const hits = [hit({ kind: "reference", text: "return bar(x);" })];
+    const { container } = renderGutter({ hits, inPrTotal: 1, query: "bar" });
+
+    const badge = container.querySelector(".symref-row__kind");
+    expect(badge?.textContent).toBe("ref");
+    expect(container.querySelector(".symref-row__text")?.textContent).toBe(
+      "return bar(x);",
+    );
+    expect(container.querySelector(".symref-row")?.getAttribute("title")).toBe(
+      "return bar(x);",
+    );
+  });
+
+  it("shows the degraded note when the classifier is heuristic, and hides it when ctags", () => {
+    renderGutter({ hits: [hit()], inPrTotal: 1, classifier: "heuristic" });
+    expect(screen.getByText(/heuristic/i)).toBeTruthy();
+    cleanup();
+
+    renderGutter({ hits: [hit()], inPrTotal: 1, classifier: "ctags" });
+    expect(screen.queryByText(/heuristic/i)).toBeNull();
+  });
+
+  it("grouping and the comments/strings collapse still work with a mix of tagged and untagged hits", async () => {
+    const hits = [
+      hit({
+        path: "a.go",
+        line: 1,
+        kind: "definition",
+        text: "func Foo() {",
+        tag: { kind: "function", signature: "()" },
+      }),
+      hit({ path: "a.go", line: 42, kind: "comment", text: "// Foo does a thing" }),
+      hit({ path: "b.go", line: 9, kind: "reference", text: "return Foo();" }),
+    ];
+    const { container } = renderGutter({ hits, inPrTotal: hits.length, query: "Foo" });
+
+    const groupPaths = Array.from(
+      container.querySelectorAll(".symref-group__path"),
+    ).map((el) => el.textContent);
+    expect(groupPaths).toEqual(["a.go", "b.go"]);
+
+    const rows = container.querySelectorAll(".symref-row");
+    expect(rows).toHaveLength(2);
+    // a.go: tagged definition -- badge is ctags' own kind, body is the
+    // synthesized qualified name/signature, not the raw line.
+    expect(rows[0]?.querySelector(".symref-row__kind")?.textContent).toBe("function");
+    expect(rows[0]?.querySelector(".symref-row__text")?.textContent).toBe("Foo()");
+    // b.go: untagged reference -- coarse badge, raw line verbatim.
+    expect(rows[1]?.querySelector(".symref-row__kind")?.textContent).toBe("ref");
+    expect(rows[1]?.querySelector(".symref-row__text")?.textContent).toBe(
+      "return Foo();",
+    );
+
+    expect(screen.queryByText("// Foo does a thing")).toBeNull();
+    const toggle = screen.getByText(/1 in comments\/strings/);
+    await fireEvent.click(toggle);
+    expect(screen.getByText("// Foo does a thing")).toBeTruthy();
+    await fireEvent.click(toggle);
+    expect(screen.queryByText("// Foo does a thing")).toBeNull();
   });
 });
 

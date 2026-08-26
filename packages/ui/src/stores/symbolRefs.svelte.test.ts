@@ -21,6 +21,7 @@ function makeResponse(
     in_pr_total: hits?.length ?? 0,
     outside_pr_total: 0,
     truncated: false,
+    classifier: "ctags",
     ...over,
   };
 }

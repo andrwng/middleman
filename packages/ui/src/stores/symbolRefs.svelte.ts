@@ -46,6 +46,10 @@ export function createSymbolRefsStore(opts: SymbolRefsStoreOptions) {
   let inPrTotal = $state(0);
   let outsidePrTotal = $state(0);
   let truncated = $state(false);
+  // Which labeller produced hits[].kind/tag for the current result set:
+  // "ctags" or "heuristic" (empty while idle/loading, matching the other
+  // response-derived fields above).
+  let classifier = $state("");
   let status = $state<SymbolRefsStatus>("idle");
   let errorMsg = $state<string | null>(null);
 
@@ -68,6 +72,9 @@ export function createSymbolRefsStore(opts: SymbolRefsStoreOptions) {
   }
   function isTruncated(): boolean {
     return truncated;
+  }
+  function getClassifier(): string {
+    return classifier;
   }
   function getStatus(): SymbolRefsStatus {
     return status;
@@ -101,6 +108,7 @@ export function createSymbolRefsStore(opts: SymbolRefsStoreOptions) {
     inPrTotal = 0;
     outsidePrTotal = 0;
     truncated = false;
+    classifier = "";
 
     const { data, error: err } = await client.GET(
       "/repos/{owner}/{name}/pulls/{number}/symbol-refs",
@@ -116,6 +124,7 @@ export function createSymbolRefsStore(opts: SymbolRefsStoreOptions) {
     inPrTotal = data.in_pr_total ?? 0;
     outsidePrTotal = data.outside_pr_total ?? 0;
     truncated = data.truncated ?? false;
+    classifier = data.classifier ?? "heuristic";
     status = "ready";
   }
 
@@ -127,13 +136,14 @@ export function createSymbolRefsStore(opts: SymbolRefsStoreOptions) {
     inPrTotal = 0;
     outsidePrTotal = 0;
     truncated = false;
+    classifier = "";
     status = "idle";
     errorMsg = null;
   }
 
   return {
     getQuery, getSearchedSha, getHits, getInPrTotal, getOutsidePrTotal, isTruncated,
-    getStatus, getError, isActive, search, close,
+    getClassifier, getStatus, getError, isActive, search, close,
   };
 }
 
