@@ -398,11 +398,15 @@ test.describe("symbol references gutter (git-backed)", () => {
     await gutter.locator(".symref-header__close").click();
     await expect(gutter).not.toBeAttached();
 
-    // Same selection as the "Println" test above: a call site of a
-    // stdlib function this file never declares, so ctags has no tag
-    // for it and it keeps the coarse "reference" kind and "ref" label
-    // -- ctags only ever tags declarations, never call sites.
-    await dblclickToken(handlerFile, 39, "RIGHT", "Println");
+    // Same selection as the "Println" test above, and it uses
+    // installTokenSelection for the same reason: "Println" is the tail
+    // of a qualified "fmt.Println" call, and WebKit's double-click word
+    // expansion crosses the "." and would search a different query.
+    // The hit itself is a call site of a stdlib function this file never
+    // declares, so ctags has no tag for it and it keeps the coarse
+    // "reference" kind and "ref" label -- ctags only ever tags
+    // declarations, never call sites.
+    await installTokenSelection(handlerFile, 39, "RIGHT", "Println");
     gutter = await openRefsPanel(page);
     await expect(gutter.locator(".symref-header__count")).toHaveText("1", { timeout: 5000 });
 
