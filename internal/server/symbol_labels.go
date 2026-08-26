@@ -10,29 +10,41 @@ import (
 // absent: an unclaimed kind falls back to the textual heuristic rather
 // than being forced into a bucket that might be wrong.
 //
-// ctags kind names are per-language, not universal: C, C++ and
-// TypeScript emit "function" for a function definition, but Go emits
-// "func" for both functions and methods instead. That is why the map
-// carries both "function" and "func" — each is the spelling a given
-// language actually produces, not a redundant synonym.
+// ctags kind names are per-language, not universal, so the same concept
+// is spelled differently across languages: "function" (C, C++,
+// TypeScript) vs "func" (Go); "prototype" (C++) vs "methodSpec" (Go);
+// "constant" (TypeScript) vs "const" (Go). This map exists to enumerate
+// those spellings, not to make a per-kind judgment call about whether
+// something "counts" as a definition — this code never passes
+// `--extras=+r`, the flag that makes ctags also emit reference tags for
+// call sites, so every kind it emits here already is a declaration by
+// construction.
 //
-// prototype is a definition on purpose. A header declaration belongs
-// beside the definition when scanning; the problem being solved is that
-// declarations were indistinguishable FROM definitions, not that they
-// should be hidden.
+// The one deliberate exclusion is "package": ctags emits a Go package
+// clause as a declaration like everything else, but it is not a symbol
+// anyone searches for as a definition.
 var ctagsKindBuckets = map[string]string{
-	"function":  gitclone.KindDefinition,
-	"func":      gitclone.KindDefinition,
-	"method":    gitclone.KindDefinition,
-	"class":     gitclone.KindDefinition,
-	"struct":    gitclone.KindDefinition,
-	"member":    gitclone.KindDefinition,
-	"macro":     gitclone.KindDefinition,
-	"typedef":   gitclone.KindDefinition,
-	"enum":      gitclone.KindDefinition,
-	"union":     gitclone.KindDefinition,
-	"namespace": gitclone.KindDefinition,
-	"prototype": gitclone.KindDefinition,
+	"function":   gitclone.KindDefinition,
+	"func":       gitclone.KindDefinition,
+	"method":     gitclone.KindDefinition,
+	"class":      gitclone.KindDefinition,
+	"struct":     gitclone.KindDefinition,
+	"member":     gitclone.KindDefinition,
+	"macro":      gitclone.KindDefinition,
+	"typedef":    gitclone.KindDefinition,
+	"enum":       gitclone.KindDefinition,
+	"union":      gitclone.KindDefinition,
+	"namespace":  gitclone.KindDefinition,
+	"prototype":  gitclone.KindDefinition,
+	"interface":  gitclone.KindDefinition,
+	"methodSpec": gitclone.KindDefinition,
+	"talias":     gitclone.KindDefinition,
+	"alias":      gitclone.KindDefinition,
+	"property":   gitclone.KindDefinition,
+	"const":      gitclone.KindDefinition,
+	"constant":   gitclone.KindDefinition,
+	"var":        gitclone.KindDefinition,
+	"enumerator": gitclone.KindDefinition,
 }
 
 // symbolKindForCtagsKind returns the coarse kind for a ctags kind, or ""

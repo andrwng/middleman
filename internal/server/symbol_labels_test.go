@@ -13,10 +13,18 @@ func TestSymbolKindForCtagsKind(t *testing.T) {
 	for _, k := range []string{
 		"function", "func", "method", "class", "struct", "member",
 		"macro", "typedef", "enum", "union", "namespace", "prototype",
+		"interface", "methodSpec", "talias", "alias", "property",
+		"const", "constant", "var", "enumerator",
 	} {
 		assert.Equal(gitclone.KindDefinition, symbolKindForCtagsKind(k), k)
 	}
 	// Kinds this feature does not claim fall back to the heuristic.
+	// "package" is the one deliberate exclusion, called out on its own
+	// rather than lumped in with the generic placeholders below: ctags
+	// emits it as a declaration like everything else in the positive
+	// set above, but a Go package clause is not a symbol anyone
+	// searches for as a definition.
+	assert.Empty(symbolKindForCtagsKind("package"))
 	assert.Empty(symbolKindForCtagsKind("local"))
 	assert.Empty(symbolKindForCtagsKind("parameter"))
 	assert.Empty(symbolKindForCtagsKind(""))

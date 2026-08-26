@@ -92,13 +92,17 @@ rather than a per-line one. The endpoint, the store and the gutter keep their sh
 collapse all key off it, and that contract spans three layers.
 
 ctags kinds map into those buckets: `function`, `func`, `method`, `class`, `struct`,
-`member`, `macro`, `typedef`, `enum`, `union`, `namespace` and `prototype` all become
-`definition`. ctags kind names are per-language rather than universal — C, C++ and
-TypeScript emit `function` for a function definition, but Go emits `func` for both
-functions and methods instead — which is why the map carries both spellings. Placing
-`prototype` there is deliberate — a header declaration belongs beside the definition
-when scanning; the problem was that declarations were indistinguishable from
-definitions, not that they should be hidden.
+`member`, `macro`, `typedef`, `enum`, `union`, `namespace`, `prototype`, `interface`,
+`methodSpec`, `talias`, `alias`, `property`, `const`, `constant`, `var` and
+`enumerator` all become `definition`. ctags kind names are per-language rather than
+universal, so the same concept is spelled differently across languages: `function`
+(C, C++, TypeScript) vs `func` (Go); `prototype` (C++) vs `methodSpec` (Go); `constant`
+(TypeScript) vs `const` (Go). The map exists to enumerate those spellings, not to make
+a per-kind judgment call about whether something counts as a definition — this code
+never passes `--extras=+r`, the flag that makes ctags also emit reference tags for call
+sites, so every kind it emits here is already a declaration by construction. The one
+deliberate exclusion is `package`: ctags emits a Go package clause as a declaration
+like everything else, but it is not a symbol anyone searches for as a definition.
 
 Precision arrives as one optional object per hit rather than a scatter of flat fields:
 
