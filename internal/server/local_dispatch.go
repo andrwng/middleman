@@ -460,7 +460,6 @@ func (s *Server) getSymbolRefsLocal(
 	changedSet := changedPathSet(ds.Files)
 	tagsByPath := symbolRefTags(gctx, hits, changedSet, readBlob)
 	resp := buildSymbolRefsResponse(symbol, hits, changedSet, tagsByPath)
-	resp.Classifier = symbolRefsClassifier()
 	return &getSymbolRefsOutput{Body: resp}, nil
 }
 

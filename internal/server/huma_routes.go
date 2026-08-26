@@ -2625,7 +2625,6 @@ func (s *Server) getSymbolRefs(
 	changedSet := changedPathSet(changed)
 	tagsByPath := symbolRefTags(gctx, hits, changedSet, readBlob)
 	resp := buildSymbolRefsResponse(symbol, hits, changedSet, tagsByPath)
-	resp.Classifier = symbolRefsClassifier()
 	return &getSymbolRefsOutput{Body: resp}, nil
 }
 
@@ -2658,15 +2657,17 @@ func changedPathSet(files []gitcloneDiffFile) map[string]bool {
 }
 
 // buildSymbolRefsResponse partitions hits against the PR's changed
-// files, labels and orders the ones inside it, and caps the list.
-// tagsByPath supplies ctags labels for the hits that have one; a path
-// absent from it (including when tagsByPath is nil, meaning ctags was
-// unavailable) falls back to the textual heuristic.
+// files, labels and orders the ones inside it, and caps the list. It
+// also sets Classifier itself, so a caller cannot forget it and ship a
+// response that silently claims exact labels while actually showing
+// heuristic ones. tagsByPath supplies ctags labels for the hits that
+// have one; a path absent from it (including when tagsByPath is nil,
+// meaning ctags was unavailable) falls back to the textual heuristic.
 func buildSymbolRefsResponse(
 	symbol string, hits []gitclone.SymbolHit, changed map[string]bool,
 	tagsByPath map[string][]ctags.Tag,
 ) symbolRefsResponse {
-	resp := symbolRefsResponse{Query: symbol}
+	resp := symbolRefsResponse{Query: symbol, Classifier: symbolRefsClassifier()}
 	// make guarantees inPR is never nil, which is what makes
 	// resp.Hits marshal as `[]` rather than `null` below — the TS
 	// client depends on it.
