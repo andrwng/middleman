@@ -377,10 +377,10 @@ func TestSymbolRefsEndpointE2E(t *testing.T) {
 				assert.EqualValues(4, h.Line)
 				assert.Equal(gitclone.KindDefinition, h.Kind)
 				require.NotNil(h.Tag)
-				assert.Contains([]string{
-					"function", "class", "struct", "member", "macro",
-					"typedef", "enum", "namespace", "prototype",
-				}, h.Tag.Kind)
+				// Through the real function rather than a hand-copied
+				// list of ctags kinds, so this cannot drift from
+				// ctagsKindBuckets the way the list it replaces had.
+				assert.Equal(gitclone.KindDefinition, symbolKindForCtagsKind(h.Tag.Kind))
 				require.NotNil(h.Tag.Scope)
 				assert.NotEmpty(*h.Tag.Scope)
 			})
