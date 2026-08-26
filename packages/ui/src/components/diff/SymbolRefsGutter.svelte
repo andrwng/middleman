@@ -3,6 +3,7 @@
   import { getStores } from "../../context.js";
   import { scrollToDiffLine, clearDiffLineHighlight, type DiffJumpDeps } from "./scrollToDiffLine.js";
   import type { SymbolHit } from "../../stores/symbolRefs.svelte.js";
+  import { langFromPath } from "../../utils/highlight.js";
 
   type SymbolTag = NonNullable<SymbolHit["tag"]>;
 
@@ -123,8 +124,23 @@
   // than the raw matched line. The `::` only belongs between a present
   // scope and the symbol, so an empty scope must not leave one dangling,
   // and a missing signature must not leave a trailing gap either.
-  function taggedLabel(tag: SymbolTag, symbol: string): string {
-    const scope = tag.scope ? `${tag.scope}::` : "";
+  // Which punctuation joins an enclosing scope to the symbol it
+  // contains is the language's business, not ours: C++ qualifies with
+  // "::" while Go, Python, TypeScript and the rest use ".". ctags
+  // already formats the scope string itself per language (C++ gives
+  // "kafka::handler_template", Go gives "main.Cache"), so the only
+  // choice left is the separator we add between scope and name.
+  //
+  // langFromPath routes every C-family extension to "cpp", so this one
+  // comparison covers .c/.h/.cc/.cpp/.cxx/.hpp and friends. Rust also
+  // qualifies with "::" but maps to "rust"; add it here if Rust ever
+  // lands in the tree.
+  function scopeSeparator(path: string): string {
+    return langFromPath(path) === "cpp" ? "::" : ".";
+  }
+
+  function taggedLabel(tag: SymbolTag, symbol: string, path: string): string {
+    const scope = tag.scope ? `${tag.scope}${scopeSeparator(path)}` : "";
     return `${scope}${symbol}${tag.signature ?? ""}`;
   }
 
@@ -186,7 +202,7 @@
       >
         <span class="symref-row__line">{hit.line}</span>
         <span class="symref-row__kind symref-row__kind--{hit.kind}">{hit.tag ? hit.tag.kind : kindLabel(hit.kind)}</span>
-        <span class="symref-row__text">{hit.tag ? taggedLabel(hit.tag, query) : hit.text}</span>
+        <span class="symref-row__text">{hit.tag ? taggedLabel(hit.tag, query, hit.path) : hit.text}</span>
       </button>
       {#if isMissingJump(hit)}
         <div class="symref-row__notice">Not part of the rendered diff — nothing to jump to.</div>

@@ -379,9 +379,14 @@ describe("SymbolRefsGutter: ctags kind, scope and signature", () => {
     );
   });
 
-  it("a tagged hit renders scope::symbol and the signature", () => {
+  // Which punctuation joins scope to symbol belongs to the language:
+  // C++ uses "::", Go and Python use ".". These three pin that per
+  // language, because a single hardcoded separator renders C++
+  // punctuation onto dotted Go and Python scopes.
+  it("a C++ hit joins scope to symbol with \"::\"", () => {
     const hits = [
       hit({
+        path: "src/v/kafka/handler.cc",
         kind: "definition",
         text: "void bar(int x) {",
         tag: { kind: "function", scope: "Foo", signature: "(int x)" },
@@ -392,6 +397,38 @@ describe("SymbolRefsGutter: ctags kind, scope and signature", () => {
     expect(container.querySelector(".symref-row__text")?.textContent).toBe(
       "Foo::bar(int x)",
     );
+  });
+
+  it("a Go hit joins scope to symbol with \".\", not C++ punctuation", () => {
+    const hits = [
+      hit({
+        path: "internal/cache.go",
+        kind: "definition",
+        text: "func (c *Cache) Get(k string) string {",
+        tag: { kind: "func", scope: "main.Cache", signature: "(k string)" },
+      }),
+    ];
+    const { container } = renderGutter({ hits, inPrTotal: 1, query: "Get" });
+
+    const rowText = container.querySelector(".symref-row__text")?.textContent;
+    expect(rowText).toBe("main.Cache.Get(k string)");
+    expect(rowText).not.toContain("::");
+  });
+
+  it("a Python hit joins scope to symbol with \".\"", () => {
+    const hits = [
+      hit({
+        path: "tools/cache.py",
+        kind: "definition",
+        text: "    def get(self, k):",
+        tag: { kind: "member", scope: "Cache", signature: "(self, k)" },
+      }),
+    ];
+    const { container } = renderGutter({ hits, inPrTotal: 1, query: "get" });
+
+    const rowText = container.querySelector(".symref-row__text")?.textContent;
+    expect(rowText).toBe("Cache.get(self, k)");
+    expect(rowText).not.toContain("::");
   });
 
   it("a tagged hit with no scope renders symbol + signature, with no stray \"::\"", () => {
@@ -412,6 +449,7 @@ describe("SymbolRefsGutter: ctags kind, scope and signature", () => {
   it("a tagged hit with no signature renders scope::symbol with nothing trailing", () => {
     const hits = [
       hit({
+        path: "src/v/kafka/handler.hpp",
         kind: "definition",
         text: "class Foo {",
         tag: { kind: "class", scope: "ns" },
@@ -436,9 +474,11 @@ describe("SymbolRefsGutter: ctags kind, scope and signature", () => {
     expect(row?.getAttribute("title")).toBe("void bar(int x) {");
     // Confirm the raw line is recoverable ONLY via the title, not also
     // rendered as the row's visible text (which shows the tagged label
-    // instead) -- otherwise this assertion could pass by accident.
+    // instead) -- otherwise this assertion could pass by accident. The
+    // fixture path is a .go file, so the label joins with "." here; the
+    // separator itself is pinned per language by the tests above.
     expect(container.querySelector(".symref-row__text")?.textContent).toBe(
-      "Foo::bar(int x)",
+      "Foo.bar(int x)",
     );
   });
 
