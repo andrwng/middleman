@@ -2559,16 +2559,25 @@ type symbolRefsResponse struct {
 	Classifier string `json:"classifier"`
 }
 
-// symbolRefTags runs ctags over the distinct files among hits and returns
-// their tags keyed by repo-relative path. readBlob supplies each file's
-// content at the searched SHA, which differs by mode.
+// symbolRefTags runs ctags over the distinct files among hits that are
+// in the PR's changed set, and returns their tags keyed by repo-relative
+// path. Paths outside changed are skipped before ever reading a blob:
+// buildSymbolRefsResponse only calls labelHits on the changed subset of
+// hits, so tagging a file elsewhere in the tree would cost a Blob fetch
+// plus a ctags subprocess spawn for a result nothing uses — on a large
+// repo a common symbol can hit hundreds of tree-wide files while the PR
+// touches a handful, and that waste can plausibly exhaust the request's
+// timeout. readBlob supplies each file's content at the searched SHA,
+// which differs by mode.
 //
-// A file is skipped — absent from the result, so its hits fall back to
-// the heuristic — when its blob cannot be read, it is too large, or ctags
-// fails on it. One awkward file must never degrade the whole search.
+// A file is also skipped — absent from the result, so its hits fall
+// back to the heuristic — when its blob cannot be read, it is too
+// large, or ctags fails on it. One awkward file must never degrade the
+// whole search.
 func symbolRefTags(
 	ctx context.Context,
 	hits []gitclone.SymbolHit,
+	changed map[string]bool,
 	readBlob func(path string) ([]byte, error),
 ) map[string][]ctags.Tag {
 	if !ctags.Available() {
@@ -2576,6 +2585,9 @@ func symbolRefTags(
 	}
 	out := make(map[string][]ctags.Tag)
 	for _, path := range distinctPaths(hits) {
+		if !changed[path] {
+			continue
+		}
 		content, err := readBlob(path)
 		if err != nil || len(content) == 0 || len(content) > blobMaxBytes {
 			continue
@@ -2697,8 +2709,9 @@ func (s *Server) getSymbolRefs(
 	readBlob := func(p string) ([]byte, error) {
 		return s.clones.Blob(gctx, host, input.Owner, input.Name, input.SHA, p)
 	}
-	tagsByPath := symbolRefTags(gctx, hits, readBlob)
-	resp := buildSymbolRefsResponse(symbol, hits, changedPathSet(changed), tagsByPath)
+	changedSet := changedPathSet(changed)
+	tagsByPath := symbolRefTags(gctx, hits, changedSet, readBlob)
+	resp := buildSymbolRefsResponse(symbol, hits, changedSet, tagsByPath)
 	resp.Classifier = symbolRefsClassifier()
 	return &getSymbolRefsOutput{Body: resp}, nil
 }

@@ -457,8 +457,9 @@ func (s *Server) getSymbolRefsLocal(
 	readBlob := func(p string) ([]byte, error) {
 		return worktrees.Blob(gctx, w.Path, input.SHA, p)
 	}
-	tagsByPath := symbolRefTags(gctx, hits, readBlob)
-	resp := buildSymbolRefsResponse(symbol, hits, changedPathSet(ds.Files), tagsByPath)
+	changedSet := changedPathSet(ds.Files)
+	tagsByPath := symbolRefTags(gctx, hits, changedSet, readBlob)
+	resp := buildSymbolRefsResponse(symbol, hits, changedSet, tagsByPath)
 	resp.Classifier = symbolRefsClassifier()
 	return &getSymbolRefsOutput{Body: resp}, nil
 }

@@ -173,6 +173,37 @@ func TestBuildSymbolRefsResponse(t *testing.T) {
 	})
 }
 
+// TestSymbolRefTagsSkipsFilesOutsideChanged covers symbolRefTags in
+// isolation: a path outside the supplied changed set must never reach
+// readBlob, since buildSymbolRefsResponse only ever labels the changed
+// subset of hits and a tag computed for anything else is pure waste
+// (an unnecessary Blob fetch plus a ctags subprocess spawn).
+func TestSymbolRefTagsSkipsFilesOutsideChanged(t *testing.T) {
+	if !ctags.Available() {
+		t.Skip("universal-ctags not installed")
+	}
+	assert := Assert.New(t)
+
+	hits := []gitclone.SymbolHit{
+		{Path: "in.cc", Line: 1, Text: "void handle() {}"},
+		{Path: "out.cc", Line: 1, Text: "void handle() {}"},
+	}
+	changed := map[string]bool{"in.cc": true}
+
+	var readCalls []string
+	readBlob := func(p string) ([]byte, error) {
+		readCalls = append(readCalls, p)
+		return []byte("void handle() {}\n"), nil
+	}
+
+	tagsByPath := symbolRefTags(context.Background(), hits, changed, readBlob)
+
+	assert.Equal([]string{"in.cc"}, readCalls,
+		"out.cc is outside changed and must never be read")
+	assert.Contains(tagsByPath, "in.cc")
+	assert.NotContains(tagsByPath, "out.cc")
+}
+
 // setupSymbolRefsPRServer builds a clones-backed test server with PR
 // #1 in acme/widget. base.go is committed on main and left untouched
 // by the PR; changed.go is added by the PR and refers to the same
@@ -535,6 +566,86 @@ func TestSymbolRefsEndpointE2E(t *testing.T) {
 		require.NotNil(hits[0].Tag)
 		assert.Equal("function", hits[0].Tag.Kind)
 		assert.Equal("ctags", resp.JSON200.Classifier)
+	})
+
+	t.Run("local mode: an oversized file's hits fall back to the heuristic without failing the search, and a healthy file alongside it still gets tagged", func(t *testing.T) {
+		if !ctags.Available() {
+			t.Skip("universal-ctags not installed")
+		}
+		assert := Assert.New(t)
+		require := require.New(t)
+
+		dir := t.TempDir()
+		runGitWT(t, "", "init", "--initial-branch=main", dir)
+		runGitWT(t, dir, "config", "user.email", "test@example.com")
+		runGitWT(t, dir, "config", "user.name", "Test")
+
+		// A baseline commit so DiffAgainstBase's no-upstream fallback
+		// (base = HEAD) has a HEAD to fall back to.
+		require.NoError(os.WriteFile(filepath.Join(dir, "base.txt"), []byte("base\n"), 0o644))
+		runGitWT(t, dir, "add", "base.txt")
+		runGitWT(t, dir, "commit", "-m", "base commit")
+
+		require.NoError(os.WriteFile(filepath.Join(dir, "healthy.cc"),
+			[]byte("void isolationProbe() {}\n"), 0o644))
+
+		// Padded well past blobMaxBytes so it is symbolRefTags's size
+		// cap — not ctags, and not the changed-set filter, since both
+		// files are staged as additions relative to the base commit —
+		// that skips this file. The padding sits in a single comment
+		// line; ctags would tag a real definition shaped like
+		// healthy.cc's (verified above) if it were ever allowed to
+		// run on this file.
+		huge := "// " + strings.Repeat("a", blobMaxBytes+1024) + " isolationProbe\n"
+		require.NoError(os.WriteFile(filepath.Join(dir, "huge.cc"), []byte(huge), 0o644))
+
+		// Staged, not committed: DiffAgainstBase's `git diff HEAD
+		// --raw` reports a staged-but-uncommitted new file as an
+		// addition (verified directly against git), which is enough
+		// to land both paths in the changed set without a second
+		// commit. `git grep` with no revision (the sentinel path)
+		// likewise searches the working tree's tracked content, so
+		// it finds them the same way.
+		runGitWT(t, dir, "add", "healthy.cc", "huge.cc")
+
+		srv, database := setupTestServer(t)
+		client := setupTestClient(t, srv)
+		ctx := context.Background()
+
+		repoID, err := database.UpsertLocalRepo(ctx, "demo")
+		require.NoError(err)
+		canonDir, err := filepath.EvalSymlinks(dir)
+		require.NoError(err)
+		w, err := database.UpsertWorktree(ctx, repoID, db.ScannedWorktree{
+			Path:   canonDir,
+			Branch: "main",
+		})
+		require.NoError(err)
+
+		q := "isolationProbe"
+		sentinel := worktrees.WorkingTreeSentinel
+		resp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberSymbolRefsWithResponse(
+			ctx, "local", "demo", w.ID,
+			&generated.GetReposByOwnerByNamePullsByNumberSymbolRefsParams{Q: &q, Sha: &sentinel},
+		)
+		require.NoError(err)
+		require.Equal(http.StatusOK, resp.StatusCode())
+		require.NotNil(resp.JSON200)
+		require.NotNil(resp.JSON200.Hits)
+
+		// Definition (healthy.cc) ranks before comment (huge.cc), so
+		// this order is exact, not incidental.
+		hits := *resp.JSON200.Hits
+		require.Len(hits, 2)
+
+		assert.Equal("healthy.cc", hits[0].Path)
+		assert.Equal(gitclone.KindDefinition, hits[0].Kind)
+		require.NotNil(hits[0].Tag)
+		assert.Equal("function", hits[0].Tag.Kind)
+
+		assert.Equal("huge.cc", hits[1].Path)
+		assert.Equal(gitclone.KindComment, hits[1].Kind)
+		assert.Nil(hits[1].Tag)
 	})
 
 	t.Run("local mode: a symbol absent from the worktree returns 200 with empty hits", func(t *testing.T) {
