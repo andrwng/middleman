@@ -10,7 +10,7 @@ Runs on your machine. One Go binary, one SQLite database, one TOML config. No ho
 
 ## Quick start
 
-Requirements: Go 1.26+, [Bun](https://bun.sh/), a GitHub token (env var or the `gh` CLI), and `claude` on `PATH` for the AI features.
+Requirements: Go 1.26+, [Bun](https://bun.sh/), a GitHub token (env var or the `gh` CLI), `claude` on `PATH` for the AI features, and `ctags` (Universal Ctags) on `PATH` for exact symbol kinds in the references gutter — without it, labels fall back to a heuristic.
 
 ```sh
 git clone https://github.com/andrwng/middleman
