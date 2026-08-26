@@ -13,10 +13,24 @@ import (
 // SymbolHit is one word-boundary match for a symbol, addressed by
 // repo-relative path and 1-based line number in the searched tree.
 type SymbolHit struct {
-	Path string `json:"path"`
-	Line int    `json:"line"`
-	Text string `json:"text"`
-	Kind string `json:"kind"`
+	Path string     `json:"path"`
+	Line int        `json:"line"`
+	Text string     `json:"text"`
+	Kind string     `json:"kind"`
+	Tag  *SymbolTag `json:"tag,omitempty"`
+}
+
+// SymbolTag is what a real parser knew about a hit that a textual
+// heuristic cannot: the precise declaration kind, the enclosing scope,
+// and the signature. Nil when no parser labelled the hit, which is what
+// lets the UI fall back to plain text without a second code path.
+//
+// Declared here rather than reusing ctags.Tag so this package, which
+// owns the API response shape, does not depend on the ctags package.
+type SymbolTag struct {
+	Kind      string `json:"kind"`
+	Scope     string `json:"scope,omitempty"`
+	Signature string `json:"signature,omitempty"`
 }
 
 // Hit kinds assigned by Classify.

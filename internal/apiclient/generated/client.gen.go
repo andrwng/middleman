@@ -1152,10 +1152,11 @@ type SubmitTurnOutputBody struct {
 
 // SymbolHit defines model for SymbolHit.
 type SymbolHit struct {
-	Kind string `json:"kind"`
-	Line int64  `json:"line"`
-	Path string `json:"path"`
-	Text string `json:"text"`
+	Kind string     `json:"kind"`
+	Line int64      `json:"line"`
+	Path string     `json:"path"`
+	Tag  *SymbolTag `json:"tag,omitempty"`
+	Text string     `json:"text"`
 }
 
 // SymbolRefsResponse defines model for SymbolRefsResponse.
@@ -1167,6 +1168,13 @@ type SymbolRefsResponse struct {
 	OutsidePrTotal int64        `json:"outside_pr_total"`
 	Query          string       `json:"query"`
 	Truncated      bool         `json:"truncated"`
+}
+
+// SymbolTag defines model for SymbolTag.
+type SymbolTag struct {
+	Kind      string  `json:"kind"`
+	Scope     *string `json:"scope,omitempty"`
+	Signature *string `json:"signature,omitempty"`
 }
 
 // SyncStatus defines model for SyncStatus.

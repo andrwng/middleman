@@ -2594,6 +2594,7 @@ export interface components {
             /** Format: int64 */
             line: number;
             path: string;
+            tag?: components["schemas"]["SymbolTag"];
             text: string;
         };
         SymbolRefsResponse: {
@@ -2610,6 +2611,11 @@ export interface components {
             outside_pr_total: number;
             query: string;
             truncated: boolean;
+        };
+        SymbolTag: {
+            kind: string;
+            scope?: string;
+            signature?: string;
         };
         SyncStatus: {
             /**
