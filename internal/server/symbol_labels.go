@@ -10,45 +10,73 @@ import (
 	"github.com/wesm/middleman/internal/gitclone"
 )
 
-// ctagsKindBuckets maps the universal-ctags kinds this feature claims to
-// the coarse kind the API exposes. Everything else is deliberately
-// absent: an unclaimed kind falls back to the textual heuristic rather
-// than being forced into a bucket that might be wrong.
+// ctagsKindBuckets maps every universal-ctags kind this feature claims
+// to the coarse kind the API exposes. An unclaimed kind falls back to
+// the textual heuristic rather than being forced into a bucket that
+// might be wrong.
 //
 // ctags kind names are per-language, not universal, so the same concept
 // is spelled differently across languages: "function" (C, C++,
 // TypeScript) vs "func" (Go); "prototype" (C++) vs "methodSpec" (Go);
-// "constant" (TypeScript) vs "const" (Go). This map exists to enumerate
-// those spellings, not to make a per-kind judgment call about whether
-// something "counts" as a definition — this code never passes
-// `--extras=+r`, the flag that makes ctags also emit reference tags for
-// call sites, so every kind it emits here already is a declaration by
-// construction.
+// "constant" (TypeScript) vs "const" (Go). Because of that, this map
+// cannot be maintained by adding whatever kind a failing case happens to
+// name — that is how it has already needed two follow-up widenings and
+// still shipped with a gap in the most mainstream case (a plain C++
+// variable definition, kind "variable", was missing). The authoritative
+// source is `ctags --list-kinds-full=<LANG>`, run against the installed
+// binary for every language this design targets — C, C++, Go,
+// TypeScript and Python — read down the ENABLED column. Recompute it
+// from that command before adding or removing an entry, not from memory
+// of what "usually" shows up.
 //
-// The one deliberate exclusion is "package": ctags emits a Go package
-// clause as a declaration like everything else, but it is not a symbol
-// anyone searches for as a definition.
+// This code never passes `--extras=+r`, the flag that makes ctags also
+// emit reference-role tags for call sites, so every kind it emits here
+// is already a declaration by construction: there is no per-kind
+// judgment call to make about whether something "counts" as a
+// definition. The map therefore claims every kind each of those
+// languages emits enabled-by-default, plus "prototype" (which C and C++
+// emit only because this code passes --kinds-C=+p --kinds-C++=+p; see
+// ctags.baseArgs), except the five named below — each excluded for a
+// stated reason, not by omission:
+//
+//   - "header" (C, C++): names a #include target. It is a file, not a
+//     symbol anyone searches for as a definition.
+//   - "package" (Go), "module" (Python): the unit a file belongs to,
+//     not a declaration within it.
+//   - "packageName" (Go): the local alias an import binds a package to
+//     (the "f" in `import f "fmt"`). Every line it appears on is already
+//     classified "import" by the heuristic that unclaimed kinds fall
+//     back to; forcing it into "definition" would only make that worse,
+//     for a kind that names an imported dependency rather than anything
+//     the file itself declares.
+//   - "unknown" (Go, Python): ctags' own could-not-classify bucket.
+//     Claiming it would assert a definition the parser explicitly
+//     declined to make.
 var ctagsKindBuckets = map[string]string{
 	"function":   gitclone.KindDefinition,
 	"func":       gitclone.KindDefinition,
 	"method":     gitclone.KindDefinition,
+	"generator":  gitclone.KindDefinition,
 	"class":      gitclone.KindDefinition,
 	"struct":     gitclone.KindDefinition,
 	"member":     gitclone.KindDefinition,
+	"anonMember": gitclone.KindDefinition,
 	"macro":      gitclone.KindDefinition,
 	"typedef":    gitclone.KindDefinition,
+	"talias":     gitclone.KindDefinition,
+	"type":       gitclone.KindDefinition,
+	"alias":      gitclone.KindDefinition,
 	"enum":       gitclone.KindDefinition,
 	"union":      gitclone.KindDefinition,
 	"namespace":  gitclone.KindDefinition,
 	"prototype":  gitclone.KindDefinition,
 	"interface":  gitclone.KindDefinition,
 	"methodSpec": gitclone.KindDefinition,
-	"talias":     gitclone.KindDefinition,
-	"alias":      gitclone.KindDefinition,
 	"property":   gitclone.KindDefinition,
 	"const":      gitclone.KindDefinition,
 	"constant":   gitclone.KindDefinition,
 	"var":        gitclone.KindDefinition,
+	"variable":   gitclone.KindDefinition,
 	"enumerator": gitclone.KindDefinition,
 }
 

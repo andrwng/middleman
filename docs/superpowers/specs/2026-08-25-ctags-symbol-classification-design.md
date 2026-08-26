@@ -91,18 +91,39 @@ rather than a per-line one. The endpoint, the store and the gutter keep their sh
 `kind` keeps its five closed values. Sorting, file grouping and the comment/string
 collapse all key off it, and that contract spans three layers.
 
-ctags kinds map into those buckets: `function`, `func`, `method`, `class`, `struct`,
-`member`, `macro`, `typedef`, `enum`, `union`, `namespace`, `prototype`, `interface`,
-`methodSpec`, `talias`, `alias`, `property`, `const`, `constant`, `var` and
-`enumerator` all become `definition`. ctags kind names are per-language rather than
-universal, so the same concept is spelled differently across languages: `function`
-(C, C++, TypeScript) vs `func` (Go); `prototype` (C++) vs `methodSpec` (Go); `constant`
-(TypeScript) vs `const` (Go). The map exists to enumerate those spellings, not to make
-a per-kind judgment call about whether something counts as a definition — this code
-never passes `--extras=+r`, the flag that makes ctags also emit reference tags for call
-sites, so every kind it emits here is already a declaration by construction. The one
-deliberate exclusion is `package`: ctags emits a Go package clause as a declaration
-like everything else, but it is not a symbol anyone searches for as a definition.
+ctags kinds map into those buckets: `function`, `func`, `method`, `generator`, `class`,
+`struct`, `member`, `anonMember`, `macro`, `typedef`, `talias`, `type`, `alias`, `enum`,
+`union`, `namespace`, `prototype`, `interface`, `methodSpec`, `property`, `const`,
+`constant`, `var`, `variable` and `enumerator` all become `definition`. ctags kind names
+are per-language rather than universal, so the same concept is spelled differently
+across languages: `function` (C, C++, TypeScript) vs `func` (Go); `prototype` (C++) vs
+`methodSpec` (Go); `constant` (TypeScript) vs `const` (Go). The set is derived, not
+enumerated from instances: for each language this design covers (C, C++, Go,
+TypeScript, Python), `ctags --list-kinds-full=<LANG>` on the installed binary lists
+every kind that language can emit and whether it ships enabled by default; the map
+claims the union of those enabled-by-default kinds, plus `prototype` (disabled by
+default for C and C++, enabled here via `--kinds-C=+p --kinds-C++=+p`), minus the five
+named exclusions below. This code never passes `--extras=+r`, the flag that makes ctags
+also emit reference-role tags for call sites, so every kind in that union is already a
+declaration by construction — there is no per-kind judgment call to make about whether
+something counts as a definition, only the question of which command's output the kind
+came from. Recomputing that command's output is how this map is meant to be extended;
+adding just the kind a new failing case names is the pattern that already left it
+short a plain C++ variable definition (kind `variable`) through two prior widenings.
+
+Five kinds are deliberately excluded, each for a stated reason:
+
+- `package` (Go) and `module` (Python): the unit a file belongs to, not a declaration
+  within it.
+- `packageName` (Go): the local alias an import binds a package to (the `f` in
+  `import f "fmt"`). Every line it appears on is already classified `import` by the
+  heuristic that unclaimed kinds fall back to; claiming it as `definition` would only
+  make that classification worse, for a kind that names an imported dependency rather
+  than anything the file itself declares.
+- `header` (C, C++): names a `#include` target. It is a file, not a symbol anyone
+  searches for as a definition.
+- `unknown` (Go, Python): ctags' own could-not-classify bucket. Claiming it would
+  assert a definition the parser explicitly declined to make.
 
 Precision arrives as one optional object per hit rather than a scatter of flat fields:
 

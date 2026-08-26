@@ -11,20 +11,36 @@ import (
 func TestSymbolKindForCtagsKind(t *testing.T) {
 	assert := assert.New(t)
 	for _, k := range []string{
-		"function", "func", "method", "class", "struct", "member",
-		"macro", "typedef", "enum", "union", "namespace", "prototype",
-		"interface", "methodSpec", "talias", "alias", "property",
-		"const", "constant", "var", "enumerator",
+		"function", "func", "method", "generator", "class", "struct",
+		"member", "anonMember", "macro", "typedef", "talias", "type",
+		"alias", "enum", "union", "namespace", "prototype", "interface",
+		"methodSpec", "property", "const", "constant", "var", "variable",
+		"enumerator",
 	} {
 		assert.Equal(gitclone.KindDefinition, symbolKindForCtagsKind(k), k)
 	}
 	// Kinds this feature does not claim fall back to the heuristic.
-	// "package" is the one deliberate exclusion, called out on its own
-	// rather than lumped in with the generic placeholders below: ctags
-	// emits it as a declaration like everything else in the positive
-	// set above, but a Go package clause is not a symbol anyone
-	// searches for as a definition.
+	// Each deliberate exclusion is pinned on its own rather than lumped
+	// in with the generic placeholders below, so a future widening pass
+	// cannot accidentally erase one:
+	//   - "package" (Go) and "module" (Python) are declarations like
+	//     everything else in the positive set above, but the unit a
+	//     file belongs to is not a symbol anyone searches for as a
+	//     definition.
+	//   - "packageName" (Go) is the local alias an import binds a
+	//     package to; every line it appears on is already classified
+	//     "import" by the heuristic, so claiming it here would only
+	//     make that worse.
+	//   - "header" (C, C++) names a #include target -- a file, not a
+	//     symbol.
+	//   - "unknown" (Go, Python) is ctags' own could-not-classify
+	//     bucket; claiming it would assert a definition the parser
+	//     explicitly declined to make.
 	assert.Empty(symbolKindForCtagsKind("package"))
+	assert.Empty(symbolKindForCtagsKind("module"))
+	assert.Empty(symbolKindForCtagsKind("packageName"))
+	assert.Empty(symbolKindForCtagsKind("header"))
+	assert.Empty(symbolKindForCtagsKind("unknown"))
 	assert.Empty(symbolKindForCtagsKind("local"))
 	assert.Empty(symbolKindForCtagsKind("parameter"))
 	assert.Empty(symbolKindForCtagsKind(""))
