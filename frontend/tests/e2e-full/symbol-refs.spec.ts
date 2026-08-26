@@ -45,6 +45,54 @@ async function dblclickToken(
   await token.dblclick();
 }
 
+// installTokenSelection is dblclickToken's counterpart for the one
+// selection a real double-click cannot make deterministic across
+// browsers. WebKit's double-click word-expansion crosses a "." in a
+// qualified call -- clicking inside "Println" in "fmt.Println" selects
+// the whole "fmt.Println" -- while Chromium and Firefox stop at the
+// "." and select just "Println", so the same double-click would search
+// a different query per browser. This locates the exact token span the
+// same way dblclickToken does, then builds a Range over its text node
+// and installs it as the page's Selection directly via page.evaluate,
+// bypassing native double-click word-boundary semantics entirely.
+// DiffFile's selectionchange listener reacts to a script-driven
+// selection change exactly as it would a user-driven one, so the Refs
+// affordance appears the same way it does after a real double-click.
+async function installTokenSelection(
+  fileLoc: Locator,
+  line: number,
+  side: "LEFT" | "RIGHT",
+  exactSpanText: string,
+): Promise<void> {
+  await fileLoc.scrollIntoViewIfNeeded();
+  const wrap = fileLoc.locator(
+    `.line-wrap[data-anchor-line="${line}"][data-anchor-side="${side}"]`,
+  );
+  await wrap.scrollIntoViewIfNeeded();
+  const escaped = exactSpanText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const token = wrap
+    .locator(".code span")
+    .filter({ hasText: new RegExp(`^${escaped}$`) })
+    .first();
+  await token.waitFor({ state: "visible", timeout: 10_000 });
+  const handle = await token.elementHandle();
+  if (!handle) {
+    throw new Error(`no token span with exact text "${exactSpanText}"`);
+  }
+  await fileLoc.page().evaluate((el) => {
+    const textNode = el.firstChild;
+    if (!textNode || textNode.nodeType !== Node.TEXT_NODE) {
+      throw new Error("token span does not wrap a single text node");
+    }
+    const range = document.createRange();
+    range.selectNodeContents(textNode);
+    const sel = window.getSelection();
+    if (!sel) throw new Error("window.getSelection() returned null");
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }, handle);
+}
+
 // openRefsPanel clicks the floating toolbar's Refs button (which only
 // the preceding double-click makes visible) and returns the gutter
 // locator once it is attached and visible.
@@ -226,7 +274,13 @@ test.describe("symbol references gutter (git-backed)", () => {
     // and once outside it (main.go's unchanged fmt.Println), which is
     // exactly what makes one hit listed and one counted as outside.
     const handlerFile = page.locator('.diff-file[data-file-path="internal/handler.go"]');
-    await dblclickToken(handlerFile, 39, "RIGHT", "Println");
+    // Not dblclickToken: "Println" here is the tail of the qualified
+    // call "fmt.Println", and WebKit's double-click word-expansion
+    // crosses the "." to select "fmt.Println" while Chromium and
+    // Firefox stop at the "." and select "Println" -- a different
+    // query per browser. installTokenSelection selects exactly
+    // "Println" programmatically so the query is deterministic.
+    await installTokenSelection(handlerFile, 39, "RIGHT", "Println");
 
     const gutter = await openRefsPanel(page);
     await expect(gutter.locator(".symref-header__query")).toHaveText("Println");
