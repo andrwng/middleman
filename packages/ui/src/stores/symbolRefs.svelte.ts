@@ -4,7 +4,13 @@ import type { components } from "../api/generated/schema.js";
 // Use the exact generated names Task 4 reported.
 export type SymbolHit = components["schemas"]["SymbolHit"];
 
-export type SymbolRefsStatus = "idle" | "loading" | "ready" | "error";
+// "prompt" is the search box open with nothing searched yet: active (so
+// the gutter mounts) but with no query, no hits and no request in
+// flight. It sits between "idle" and "loading" in the lifecycle, and
+// exists because isActive() is `status !== "idle"` -- a distinct
+// non-idle status is all it takes to open a blank gutter, with no change
+// to the mount condition in DiffView.
+export type SymbolRefsStatus = "idle" | "prompt" | "loading" | "ready" | "error";
 
 // The longest selection worth searching, matching the server's
 // symbolRefsMaxQueryBytes: 128 bytes of UTF-8, not UTF-16 code units.
@@ -53,6 +59,13 @@ export function createSymbolRefsStore(opts: SymbolRefsStoreOptions) {
   let status = $state<SymbolRefsStatus>("idle");
   let errorMsg = $state<string | null>(null);
 
+  // A monotonic "focus the search input" signal. The gutter watches it in
+  // an $effect and focuses + selects its input on every change. A counter
+  // rather than a boolean because the same request can legitimately arrive
+  // twice in a row (pressing `s` while the box is already open should
+  // refocus it), and a boolean would coalesce the second request away.
+  let focusSeq = $state(0);
+
   let seq = 0;
 
   function getQuery(): string {
@@ -81,6 +94,9 @@ export function createSymbolRefsStore(opts: SymbolRefsStoreOptions) {
   }
   function getError(): string | null {
     return errorMsg;
+  }
+  function getFocusSeq(): number {
+    return focusSeq;
   }
   function isActive(): boolean {
     return status !== "idle";
@@ -128,6 +144,21 @@ export function createSymbolRefsStore(opts: SymbolRefsStoreOptions) {
     status = "ready";
   }
 
+  // openBlank opens the search box. It moves an idle store to "prompt" so
+  // the gutter mounts with an empty query, and always signals a focus
+  // request.
+  //
+  // When the store is NOT idle it deliberately changes nothing but the
+  // focus signal: reaching for the search box while results are on screen
+  // must not discard them. The gutter seeds its input from getQuery() and
+  // selects the text, so typing still replaces the query immediately.
+  function openBlank(): void {
+    if (status === "idle") {
+      status = "prompt";
+    }
+    focusSeq++;
+  }
+
   function close(): void {
     seq++;
     query = "";
@@ -143,7 +174,7 @@ export function createSymbolRefsStore(opts: SymbolRefsStoreOptions) {
 
   return {
     getQuery, getSearchedSha, getHits, getInPrTotal, getOutsidePrTotal, isTruncated,
-    getClassifier, getStatus, getError, isActive, search, close,
+    getClassifier, getStatus, getError, isActive, getFocusSeq, search, close, openBlank,
   };
 }
 

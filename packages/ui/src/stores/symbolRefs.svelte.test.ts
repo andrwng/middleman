@@ -269,3 +269,58 @@ describe("symbolRefs store", () => {
     expect(store.getStatus()).toBe("ready");
   });
 });
+
+describe("createSymbolRefsStore: openBlank", () => {
+  it("moves an idle store to prompt and makes it active", () => {
+    const store = createSymbolRefsStore({ client: stubClient() });
+    expect(store.getStatus()).toBe("idle");
+    expect(store.isActive()).toBe(false);
+
+    store.openBlank();
+
+    expect(store.getStatus()).toBe("prompt");
+    expect(store.isActive()).toBe(true);
+    expect(store.getQuery()).toBe("");
+    expect(store.getHits()).toEqual([]);
+  });
+
+  it("bumps focusSeq on every call, including when already in prompt", () => {
+    const store = createSymbolRefsStore({ client: stubClient() });
+    const before = store.getFocusSeq();
+
+    store.openBlank();
+    const afterFirst = store.getFocusSeq();
+    store.openBlank();
+
+    expect(afterFirst).toBeGreaterThan(before);
+    expect(store.getFocusSeq()).toBeGreaterThan(afterFirst);
+  });
+
+  // The whole point of openBlank: reaching for the search box must never
+  // discard a result list the user is reading.
+  it("leaves an existing result set completely untouched", async () => {
+    const hits = [makeHit({ line: 7 })];
+    const store = createSymbolRefsStore({
+      client: stubClient({
+        GET: vi.fn(async () => ({ data: makeResponse("Foo", hits), error: undefined })),
+      }),
+    });
+    await store.search("o", "n", 1, "abc123", "Foo");
+    expect(store.getStatus()).toBe("ready");
+
+    store.openBlank();
+
+    expect(store.getStatus()).toBe("ready");
+    expect(store.getQuery()).toBe("Foo");
+    expect(store.getHits()).toEqual(hits);
+    expect(store.getInPrTotal()).toBe(1);
+  });
+
+  it("returns to idle on close, so a later openBlank prompts again", () => {
+    const store = createSymbolRefsStore({ client: stubClient() });
+    store.openBlank();
+    store.close();
+    expect(store.getStatus()).toBe("idle");
+    expect(store.isActive()).toBe(false);
+  });
+});
