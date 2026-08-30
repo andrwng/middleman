@@ -308,12 +308,14 @@ describe("createSymbolRefsStore: openBlank", () => {
     await store.search("o", "n", 1, "abc123", "Foo");
     expect(store.getStatus()).toBe("ready");
 
+    const focusSeqBefore = store.getFocusSeq();
     store.openBlank();
 
     expect(store.getStatus()).toBe("ready");
     expect(store.getQuery()).toBe("Foo");
     expect(store.getHits()).toEqual(hits);
     expect(store.getInPrTotal()).toBe(1);
+    expect(store.getFocusSeq()).toBeGreaterThan(focusSeqBefore);
   });
 
   it("returns to idle on close, so a later openBlank prompts again", () => {
@@ -322,5 +324,77 @@ describe("createSymbolRefsStore: openBlank", () => {
     store.close();
     expect(store.getStatus()).toBe("idle");
     expect(store.isActive()).toBe(false);
+  });
+});
+
+describe("createSymbolRefsStore: the back stack", () => {
+  function pos(line: number): { path: string; line: number } {
+    return { path: "a.go", line };
+  }
+
+  it("starts empty and pops nothing", () => {
+    const store = createSymbolRefsStore({ client: stubClient() });
+    expect(store.canGoBack()).toBe(false);
+    expect(store.popPosition()).toBeNull();
+  });
+
+  it("pops in last-in-first-out order and drains to empty", () => {
+    const store = createSymbolRefsStore({ client: stubClient() });
+    store.pushPosition(pos(10));
+    store.pushPosition(pos(20));
+
+    expect(store.canGoBack()).toBe(true);
+    expect(store.popPosition()).toEqual(pos(20));
+    expect(store.popPosition()).toEqual(pos(10));
+    expect(store.canGoBack()).toBe(false);
+    expect(store.popPosition()).toBeNull();
+  });
+
+  it("keeps the newest 10 entries, dropping the oldest", () => {
+    const store = createSymbolRefsStore({ client: stubClient() });
+    for (let i = 1; i <= 12; i++) store.pushPosition(pos(i));
+
+    const drained: number[] = [];
+    for (;;) {
+      const p = store.popPosition();
+      if (p === null) break;
+      drained.push(p.line);
+    }
+
+    // 1 and 2 fell off the bottom; the rest survive, newest first.
+    expect(drained).toEqual([12, 11, 10, 9, 8, 7, 6, 5, 4, 3]);
+  });
+
+  it("preserves the side of a captured position", () => {
+    const store = createSymbolRefsStore({ client: stubClient() });
+    store.pushPosition({ path: "a.go", line: 5, side: "LEFT" });
+
+    expect(store.popPosition()).toEqual({ path: "a.go", line: 5, side: "LEFT" });
+  });
+
+  it("clears the stack on close, since the gutter's trail dies with it", () => {
+    const store = createSymbolRefsStore({ client: stubClient() });
+    store.pushPosition(pos(10));
+
+    store.close();
+
+    expect(store.canGoBack()).toBe(false);
+  });
+
+  // The trail deliberately survives a new search: the positions are still
+  // valid for the same SHA, and DiffView closes the store outright when
+  // the scope or SHA moves -- which is what clears them.
+  it("does NOT clear the stack on a new search", async () => {
+    const store = createSymbolRefsStore({
+      client: stubClient({
+        GET: vi.fn(async () => ({ data: makeResponse("Foo", [makeHit()]), error: undefined })),
+      }),
+    });
+    store.pushPosition(pos(10));
+
+    await store.search("o", "n", 1, "abc123", "Foo");
+
+    expect(store.canGoBack()).toBe(true);
+    expect(store.popPosition()).toEqual(pos(10));
   });
 });

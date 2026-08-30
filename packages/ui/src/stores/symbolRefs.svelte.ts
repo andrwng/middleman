@@ -16,6 +16,25 @@ export type SymbolRefsStatus = "idle" | "prompt" | "loading" | "ready" | "error"
 // symbolRefsMaxQueryBytes: 128 bytes of UTF-8, not UTF-16 code units.
 const MAX_QUERY_BYTES = 128;
 
+// How many jump-back entries to keep. Small on purpose: the stack is a
+// short "walk back the way I came" trail, not a session history.
+const MAX_BACK_DEPTH = 10;
+
+// A diff position the user jumped away from, in the same shape the DOM
+// addresses lines by.
+//
+// Declared here rather than imported from
+// components/diff/scrollToDiffLine.ts's structurally identical
+// DiffJumpTarget, so a store does not depend on a component module. The
+// two are deliberately compatible: a position popped from this stack is
+// handed straight to scrollToDiffLine(). `side` is carried because the
+// topmost visible line can be a deleted line, which anchors LEFT.
+export interface DiffPosition {
+  path: string;
+  line: number;
+  side?: "LEFT" | "RIGHT";
+}
+
 // isSymbolQuery gates the "Refs" affordance: a searchable symbol is a
 // single run of non-whitespace within the server's byte-length bound.
 // A multi-word or multi-line selection can never match a line-based
@@ -65,6 +84,11 @@ export function createSymbolRefsStore(opts: SymbolRefsStoreOptions) {
   // twice in a row (pressing `s` while the box is already open should
   // refocus it), and a boolean would coalesce the second request away.
   let focusSeq = $state(0);
+
+  // Positions the user jumped away from, oldest first. Pushed on jump
+  // only -- never on search -- and popped by the gutter's Back button,
+  // which never pushes what it leaves, so the stack strictly drains.
+  let backStack = $state<DiffPosition[]>([]);
 
   let seq = 0;
 
@@ -159,6 +183,22 @@ export function createSymbolRefsStore(opts: SymbolRefsStoreOptions) {
     focusSeq++;
   }
 
+  function pushPosition(p: DiffPosition): void {
+    const next = [...backStack, p];
+    backStack = next.length > MAX_BACK_DEPTH ? next.slice(next.length - MAX_BACK_DEPTH) : next;
+  }
+
+  function popPosition(): DiffPosition | null {
+    if (backStack.length === 0) return null;
+    const p = backStack[backStack.length - 1]!;
+    backStack = backStack.slice(0, -1);
+    return p;
+  }
+
+  function canGoBack(): boolean {
+    return backStack.length > 0;
+  }
+
   function close(): void {
     seq++;
     query = "";
@@ -170,11 +210,13 @@ export function createSymbolRefsStore(opts: SymbolRefsStoreOptions) {
     classifier = "";
     status = "idle";
     errorMsg = null;
+    backStack = [];
   }
 
   return {
     getQuery, getSearchedSha, getHits, getInPrTotal, getOutsidePrTotal, isTruncated,
     getClassifier, getStatus, getError, isActive, getFocusSeq, search, close, openBlank,
+    pushPosition, popPosition, canGoBack,
   };
 }
 
