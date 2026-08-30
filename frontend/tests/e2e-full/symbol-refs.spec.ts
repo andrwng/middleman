@@ -414,4 +414,55 @@ test.describe("symbol references gutter (git-backed)", () => {
     await expect(refRow.locator(".symref-row__kind")).toHaveClass(/symref-row__kind--reference/);
     await expect(refRow.locator(".symref-row__kind")).toHaveText("ref");
   });
+
+  test("the toolbar button and the s key both open a focused search box, and a typed query returns rows without any selection", async ({ page }) => {
+    await page.goto("/pulls/acme/widgets/1/files");
+    await page.locator(".diff-file").first().waitFor({ state: "visible", timeout: 10_000 });
+
+    const gutter = page.locator(".symref-gutter");
+    await expect(gutter).toHaveCount(0);
+
+    // The key path: no selection, no scrolling to an occurrence.
+    await page.keyboard.press("s");
+    await expect(gutter).toBeVisible({ timeout: 5000 });
+
+    const input = gutter.locator("[data-testid='symref-search']");
+    await expect(input).toBeFocused();
+    await expect(gutter.locator(".symref-prompt")).toBeVisible();
+
+    await input.fill("HandleRequest");
+    await input.press("Enter");
+
+    await expect(gutter.locator(".symref-row").first()).toBeVisible({ timeout: 10_000 });
+    await expect(gutter.locator(".symref-prompt")).toHaveCount(0);
+
+    // Closing and reopening via the toolbar button reaches the same state.
+    await gutter.getByRole("button", { name: /close symbol references/i }).click();
+    await expect(gutter).toHaveCount(0);
+
+    // Not getByRole("button", { name: /^Refs$/ }): DiffFile's floating
+    // selection-toolbar button (openRefsPanel's target above) carries the
+    // identical visible text "Refs" and would make that locator match two
+    // elements once something is selected. This is the persistent
+    // DiffToolbar button, so it is located by its own title instead --
+    // keeping both title-based makes the two "Refs" buttons easy to tell
+    // apart.
+    await page.getByTitle("Find references to a symbol (s)").click();
+    await expect(gutter).toBeVisible({ timeout: 5000 });
+    await expect(gutter.locator("[data-testid='symref-search']")).toBeFocused();
+  });
+
+  test("a multi-word query is refused with a reason rather than searching", async ({ page }) => {
+    await page.goto("/pulls/acme/widgets/1/files");
+    await page.locator(".diff-file").first().waitFor({ state: "visible", timeout: 10_000 });
+
+    await page.keyboard.press("s");
+    const gutter = page.locator(".symref-gutter");
+    const input = gutter.locator("[data-testid='symref-search']");
+    await input.fill("Handle Request");
+    await input.press("Enter");
+
+    await expect(gutter.locator(".symref-invalid")).toContainText(/whitespace/i);
+    await expect(gutter.locator(".symref-row")).toHaveCount(0);
+  });
 });
