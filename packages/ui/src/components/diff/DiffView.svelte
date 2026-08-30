@@ -318,7 +318,10 @@
       </div>
     {:else if diff}
       <div class="diff-main">
-        <DiffToolbar onReviewClick={() => { reviewPanelOpen = true; }} />
+        <DiffToolbar
+          onReviewClick={() => { reviewPanelOpen = true; }}
+          onRefsClick={() => symbolRefsStore.openBlank()}
+        />
         <div class="diff-area-row" bind:this={diffAreaRow}>
           <div
             class="diff-area"
