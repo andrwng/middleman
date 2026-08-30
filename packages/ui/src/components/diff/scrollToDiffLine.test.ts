@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearDiffLineHighlight,
+  currentDiffPosition,
   findDiffLineEl,
   scrollToDiffLine,
   type DiffJumpDeps,
@@ -225,5 +226,92 @@ describe("scrollToDiffLine", () => {
 
     expect(outcome).toBe("missing");
     expect(deps.clearRevealTarget).not.toHaveBeenCalled();
+  });
+});
+
+// currentDiffPosition reads layout, which jsdom does not implement -- so
+// every element's rect is stubbed explicitly here. stubRect fakes only
+// the two edges the function compares.
+function stubRect(el: HTMLElement, top: number, bottom: number): void {
+  // NOTE: deviates from the brief's literal line-wrapping. The brief put
+  // `as DOMRect` on its own line after the closing `)`; this repo's esbuild
+  // (0.27.7, used by Vite's transform) inserts an ASI semicolon right after
+  // that `)` in that layout, splitting the statement and producing a parse
+  // error ("Expected ';' but found 'DOMRect'") -- verified with an isolated
+  // esbuild repro outside this file before changing anything. Moving
+  // `as DOMRect` onto the same line as the object literal it casts, inside
+  // the parens, is token-for-token the same assertion with no ASI boundary
+  // in between; behavior is unchanged.
+  el.getBoundingClientRect = () =>
+    ({ top, bottom, left: 0, right: 0, width: 0, height: bottom - top, x: 0, y: top } as DOMRect);
+}
+
+function makeDiffArea(): HTMLElement {
+  const area = document.createElement("div");
+  area.className = "diff-area";
+  document.body.appendChild(area);
+  return area;
+}
+
+describe("currentDiffPosition", () => {
+  it("returns null when there is no diff area", () => {
+    expect(currentDiffPosition()).toBeNull();
+  });
+
+  it("returns null when the diff area has no anchored lines", () => {
+    const area = makeDiffArea();
+    stubRect(area, 100, 500);
+
+    expect(currentDiffPosition()).toBeNull();
+  });
+
+  it("returns the first line not scrolled fully above the viewport", () => {
+    const area = makeDiffArea();
+    stubRect(area, 100, 500);
+    const file = document.createElement("div");
+    file.className = "diff-file";
+    file.dataset.filePath = "internal/handler.go";
+    area.appendChild(file);
+
+    const above = appendLineWrap(file, 10, "RIGHT");
+    const straddling = appendLineWrap(file, 11, "RIGHT");
+    const below = appendLineWrap(file, 12, "RIGHT");
+    stubRect(above, 60, 80);        // entirely above area.top
+    stubRect(straddling, 90, 110);  // crosses area.top -- partially visible
+    stubRect(below, 110, 130);
+
+    expect(currentDiffPosition()).toEqual({
+      path: "internal/handler.go",
+      line: 11,
+      side: "RIGHT",
+    });
+  });
+
+  // The topmost visible line can be a deleted line, which anchors LEFT.
+  // Losing the side would send a later jump to the wrong column.
+  it("carries the LEFT side of a deleted line", () => {
+    const area = makeDiffArea();
+    stubRect(area, 100, 500);
+    const file = document.createElement("div");
+    file.className = "diff-file";
+    file.dataset.filePath = "config.yaml";
+    area.appendChild(file);
+
+    const del = appendLineWrap(file, 4, "LEFT");
+    stubRect(del, 105, 125);
+
+    expect(currentDiffPosition()).toEqual({ path: "config.yaml", line: 4, side: "LEFT" });
+  });
+
+  it("skips an anchored line that is not inside a .diff-file", () => {
+    const area = makeDiffArea();
+    stubRect(area, 100, 500);
+    const orphan = document.createElement("div");
+    orphan.dataset.anchorLine = "3";
+    orphan.dataset.anchorSide = "RIGHT";
+    area.appendChild(orphan);
+    stubRect(orphan, 105, 125);
+
+    expect(currentDiffPosition()).toBeNull();
   });
 });
