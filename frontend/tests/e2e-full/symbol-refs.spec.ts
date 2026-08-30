@@ -465,4 +465,54 @@ test.describe("symbol references gutter (git-backed)", () => {
     await expect(gutter.locator(".symref-invalid")).toContainText(/whitespace/i);
     await expect(gutter.locator(".symref-row")).toHaveCount(0);
   });
+
+  test("Back walks the reader home through the positions each jump left, then disables itself", async ({ page }) => {
+    await page.goto("/pulls/acme/widgets/1/files");
+    await page.locator(".diff-file").first().waitFor({ state: "visible", timeout: 10_000 });
+
+    await page.keyboard.press("s");
+    const gutter = page.locator(".symref-gutter");
+    const input = gutter.locator("[data-testid='symref-search']");
+    // Not "HandleRequest": its only other occurrence is the doc comment
+    // above it, which the comments/strings toggle collapses -- exactly
+    // one visible row (the "doc-comment hit" test above asserts this
+    // directly with toHaveCount(1)), too few to walk a trail through.
+    // "path" has 3 visible rows -- handler.go lines 12, 13 and 18 (the
+    // "empty path" and log-key hits at lines 11 and 14 are "string"
+    // kind and collapse behind the toggle, as the "collapsed context
+    // gap" test above establishes). Lines 12 and 13, clicked below,
+    // both sit inside the hunk that is already rendered -- unlike line
+    // 18, they need no collapsed-region expansion to land on.
+    await input.fill("path");
+    await input.press("Enter");
+
+    const rows = gutter.locator(".symref-row");
+    await expect(rows.first()).toBeVisible({ timeout: 10_000 });
+    expect(await rows.count()).toBeGreaterThan(1);
+
+    const back = gutter.getByRole("button", { name: /back to previous position/i });
+    await expect(back).toBeDisabled();
+
+    await rows.nth(0).click();
+    await expect(page.locator(".line-wrap--jump-highlight")).toHaveCount(1);
+    await expect(back).toBeEnabled();
+
+    await rows.nth(1).click();
+    const secondLanding = await page
+      .locator(".line-wrap--jump-highlight")
+      .getAttribute("data-anchor-line");
+
+    await back.click();
+    // We left the second landing behind, so the highlight moved off it.
+    await expect
+      .poll(async () =>
+        page.locator(".line-wrap--jump-highlight").getAttribute("data-anchor-line"),
+      )
+      .not.toBe(secondLanding);
+
+    // One entry left, then the trail is exhausted.
+    await expect(back).toBeEnabled();
+    await back.click();
+    await expect(back).toBeDisabled();
+  });
 });
