@@ -51,6 +51,10 @@ interface FakeStoreOverrides {
   classifier?: string;
   status?: SymbolRefsStatus;
   error?: string | null;
+  // Backs getFocusSeq(). Static here -- the fake is a plain object, not
+  // reactive -- so a test that needs the value to CHANGE must build the
+  // real store instead (see the focus test below).
+  focusSeq?: number;
   // Paths the fake diff store reports as part of the currently
   // rendered diff (backs diffStore.getDiff()?.files). Defaults to
   // every hit's own path, so tests that don't care about the
@@ -68,6 +72,7 @@ function fakeSymbolRefsStore(overrides: FakeStoreOverrides = {}) {
     classifier = "ctags",
     status = "ready",
     error = null,
+    focusSeq = 0,
   } = overrides;
   return {
     getQuery: () => query,
@@ -79,8 +84,10 @@ function fakeSymbolRefsStore(overrides: FakeStoreOverrides = {}) {
     getStatus: () => status,
     getError: () => error,
     isActive: () => status !== "idle",
+    getFocusSeq: () => focusSeq,
     search: vi.fn(async () => {}),
     close: vi.fn(),
+    openBlank: vi.fn(),
   };
 }
 
@@ -91,6 +98,7 @@ function fakeDiffStore(files: string[]) {
     requestRevealLine: vi.fn(),
     consumeRevealTarget: vi.fn(),
     getDiff: vi.fn(() => ({ files: files.map((path) => ({ path })) })),
+    getCurrentCommitSha: () => "abc123",
   };
 }
 
@@ -145,8 +153,12 @@ describe("SymbolRefsGutter", () => {
   });
 
   it("renders the query and the in-PR count in the header", () => {
-    renderGutter({ query: "Frobnicate", hits: [hit()], inPrTotal: 7 });
-    expect(screen.getByText("Frobnicate")).toBeTruthy();
+    // The query now lives in the header's search input (an editable
+    // control has no textContent to match on), not in a read-only span,
+    // so it's read via .value rather than screen.getByText.
+    const { container } = renderGutter({ query: "Frobnicate", hits: [hit()], inPrTotal: 7 });
+    const input = container.querySelector<HTMLInputElement>("[data-testid='symref-search']");
+    expect(input?.value).toBe("Frobnicate");
     expect(screen.getByText("7")).toBeTruthy();
   });
 
@@ -800,5 +812,91 @@ describe("SymbolRefsGutter: anonymous namespace scopes", () => {
     expect(container.querySelector(".symref-row__text")?.textContent).toBe(
       "main.Cache.Get(k string)",
     );
+  });
+});
+
+// The header's query text is now an editable input, present in every
+// status, so a query can be retyped in place. "prompt" is the status the
+// toolbar button and the `s` hotkey open into: active (so the gutter is
+// mounted) with nothing searched yet.
+describe("SymbolRefsGutter: header search input", () => {
+  it("renders a hint and no rows in the prompt status", () => {
+    const { container } = renderGutter({ status: "prompt", hits: [], inPrTotal: 0 });
+
+    expect(container.querySelector(".symref-prompt")).not.toBeNull();
+    expect(container.querySelectorAll(".symref-row")).toHaveLength(0);
+  });
+
+  it("seeds the input from the current query so it can be edited in place", () => {
+    const { container } = renderGutter({ query: "handle", hits: [hit()], inPrTotal: 1 });
+
+    const input = container.querySelector<HTMLInputElement>("[data-testid='symref-search']");
+    expect(input?.value).toBe("handle");
+  });
+
+  it("searches on Enter with the diff store's current SHA", async () => {
+    const { container, symbolRefsStore } = renderGutter({ status: "prompt" });
+    const input = container.querySelector<HTMLInputElement>("[data-testid='symref-search']")!;
+
+    await fireEvent.input(input, { target: { value: "HandleRequest" } });
+    await fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(symbolRefsStore.search).toHaveBeenCalledWith("o", "n", 1, "abc123", "HandleRequest");
+  });
+
+  // isSymbolQuery rejects any whitespace, because a word-boundary
+  // fixed-string grep can never match a multi-word query. Saying so beats
+  // a search box that silently does nothing.
+  it("refuses a multi-word query and says why instead of searching", async () => {
+    const { container, symbolRefsStore } = renderGutter({ status: "prompt" });
+    const input = container.querySelector<HTMLInputElement>("[data-testid='symref-search']")!;
+
+    await fireEvent.input(input, { target: { value: "group manager" } });
+    await fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(symbolRefsStore.search).not.toHaveBeenCalled();
+    expect(container.querySelector(".symref-invalid")?.textContent).toMatch(/whitespace/i);
+  });
+
+  it("does nothing on Enter with an empty query", async () => {
+    // query: "" is load-bearing -- fakeSymbolRefsStore defaults it to
+    // "Foo", which the input seeds from, so without this the draft is
+    // non-empty and Enter legitimately searches.
+    const { container, symbolRefsStore } = renderGutter({ status: "prompt", query: "" });
+    const input = container.querySelector<HTMLInputElement>("[data-testid='symref-search']")!;
+
+    await fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(symbolRefsStore.search).not.toHaveBeenCalled();
+  });
+
+  it("closes the gutter on Escape, matching the close button", async () => {
+    const { container, symbolRefsStore } = renderGutter({ status: "prompt" });
+    const input = container.querySelector<HTMLInputElement>("[data-testid='symref-search']")!;
+
+    await fireEvent.keyDown(input, { key: "Escape" });
+
+    expect(symbolRefsStore.close).toHaveBeenCalled();
+  });
+
+  // Uses the REAL store: focusSeq must actually change to trigger the
+  // component's $effect, and the fake store above is a plain, non-reactive
+  // object.
+  it("focuses and selects the input when the store signals a focus request", async () => {
+    const store = createSymbolRefsStore({ client: stubClient([]) });
+    store.openBlank();
+    const { container } = render(SymbolRefsGutter, {
+      props: { owner: "o", name: "n", number: 1, width: 320 },
+      context: new Map<symbol, unknown>([
+        [STORES_KEY, { symbolRefs: store, diff: fakeDiffStore([]) }],
+      ]),
+    });
+    await tick();
+    const input = container.querySelector<HTMLInputElement>("[data-testid='symref-search']")!;
+
+    store.openBlank();
+    await tick();
+
+    expect(document.activeElement).toBe(input);
   });
 });

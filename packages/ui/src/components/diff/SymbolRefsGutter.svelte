@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { getStores } from "../../context.js";
   import { scrollToDiffLine, clearDiffLineHighlight, type DiffJumpDeps } from "./scrollToDiffLine.js";
-  import type { SymbolHit } from "../../stores/symbolRefs.svelte.js";
+  import { isSymbolQuery, type SymbolHit } from "../../stores/symbolRefs.svelte.js";
   import { langFromPath } from "../../utils/highlight.js";
 
   type SymbolTag = NonNullable<SymbolHit["tag"]>;
@@ -38,6 +38,74 @@
   const classifier = $derived(symbolRefsStore.getClassifier());
   const status = $derived(symbolRefsStore.getStatus());
   const error = $derived(symbolRefsStore.getError());
+
+  const focusSeq = $derived(symbolRefsStore.getFocusSeq());
+
+  // The text being typed, kept separate from the store's committed query
+  // so an abandoned edit never changes what is displayed as searched.
+  // Seeded from the store on mount and re-seeded whenever a search
+  // commits a different query (e.g. the selection-toolbar Refs button
+  // searching while this gutter is already open).
+  let draft = $state(symbolRefsStore.getQuery());
+  let invalidReason = $state<string | null>(null);
+  let inputEl = $state<HTMLInputElement>();
+
+  $effect(() => {
+    const committed = symbolRefsStore.getQuery();
+    if (committed !== "") draft = committed;
+  });
+
+  // Focus and select on every focusSeq change, so pressing `s` (or the
+  // toolbar button) with results already showing puts the cursor in the
+  // box with the old query selected -- ready to be replaced by typing,
+  // without the results having been discarded.
+  //
+  // The last-seen guard is what makes focusSeq a read with meaning: a bare
+  // `focusSeq;` expression statement would register the dependency too,
+  // but eslint's no-unused-expressions would reject it and fail
+  // make frontend-check.
+  let lastFocusSeq = -1;
+  $effect(() => {
+    if (focusSeq === lastFocusSeq) return;
+    lastFocusSeq = focusSeq;
+    inputEl?.focus();
+    inputEl?.select();
+  });
+
+  // whyInvalid explains a rejected query in the terms isSymbolQuery
+  // actually enforces. Whitespace is called out by name because it is the
+  // only rule a reasonable person would trip by accident.
+  function whyInvalid(text: string): string | null {
+    const t = text.trim();
+    if (t.length === 0) return null;
+    if (/\s/.test(t)) return "A symbol cannot contain whitespace.";
+    if (!isSymbolQuery(t)) return "That symbol is too long to search.";
+    return null;
+  }
+
+  function submitSearch(): void {
+    const t = draft.trim();
+    if (t.length === 0) return;
+    const reason = whyInvalid(t);
+    if (reason !== null) {
+      invalidReason = reason;
+      return;
+    }
+    invalidReason = null;
+    void symbolRefsStore.search(owner, name, number, diffStore.getCurrentCommitSha(), t);
+  }
+
+  function onSearchKeydown(e: KeyboardEvent): void {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      submitSearch();
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      symbolRefsStore.close();
+    }
+  }
 
   // Classify.go's noisy kinds: real code hits (definition/reference/import)
   // are shown directly; comment/string hits are collapsed behind a toggle
@@ -256,7 +324,19 @@
   aria-label="Symbol references"
 >
   <div class="symref-header">
-    <span class="symref-header__query" title={query}>{query}</span>
+    <input
+      class="symref-header__query"
+      data-testid="symref-search"
+      type="text"
+      spellcheck="false"
+      autocomplete="off"
+      placeholder="find a symbol..."
+      aria-label="Symbol to find references for"
+      bind:this={inputEl}
+      bind:value={draft}
+      oninput={() => (invalidReason = null)}
+      onkeydown={onSearchKeydown}
+    />
     <span class="symref-header__count" title="Occurrences in this PR's changed files">{inPrTotal}</span>
     <button
       type="button"
@@ -271,6 +351,10 @@
     </button>
   </div>
 
+  {#if invalidReason}
+    <div class="symref-invalid">{invalidReason}</div>
+  {/if}
+
   {#if classifier === "heuristic"}
     <div class="symref-degraded-note">
       Kind labels are heuristic — install universal-ctags for exact kinds.
@@ -278,7 +362,9 @@
   {/if}
 
   <div class="symref-body">
-    {#if status === "loading"}
+    {#if status === "prompt"}
+      <div class="symref-prompt">Type a symbol name and press Enter.</div>
+    {:else if status === "loading"}
       <div class="symref-state">Searching…</div>
     {:else if status === "error"}
       <div class="symref-state symref-state--error">{error ?? "Symbol search failed"}</div>
@@ -349,9 +435,15 @@
     font-weight: 600;
     font-size: 12px;
     color: var(--diff-text);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    background: var(--bg-inset);
+    border: 1px solid var(--diff-border);
+    border-radius: var(--radius-sm);
+    padding: 2px 6px;
+  }
+
+  .symref-header__query:focus {
+    outline: none;
+    border-color: var(--accent-blue);
   }
 
   .symref-header__count {
@@ -381,6 +473,15 @@
     color: var(--text-primary);
   }
 
+  .symref-invalid {
+    flex-shrink: 0;
+    padding: 4px 12px;
+    font-size: 11px;
+    color: var(--accent-red);
+    background: var(--diff-header-bg);
+    border-bottom: 1px solid var(--diff-border);
+  }
+
   .symref-degraded-note {
     flex-shrink: 0;
     padding: 4px 12px;
@@ -394,6 +495,13 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
+  }
+
+  .symref-prompt {
+    padding: 16px 12px;
+    font-size: 12px;
+    color: var(--text-muted);
+    font-style: italic;
   }
 
   .symref-state {
