@@ -195,6 +195,20 @@
       e.preventDefault();
       diffStore.jumpToNextUnreviewed();
     }
+
+    // Opens the symbol-refs search box. Gated on a resolvable SHA for the
+    // same reason the toolbar button is: hits numbered against no SHA
+    // cannot be resolved back to rendered lines.
+    //
+    // Like the other single-letter shortcuts here, this fires even when a
+    // modal is open over the diff. That is this handler's established
+    // behaviour; making one key modal-aware where j/k/m/[/] are not would
+    // be the surprising choice.
+    if (e.key === "s") {
+      if (currentSha === "") return;
+      e.preventDefault();
+      symbolRefsStore.openBlank();
+    }
   }
 
   $effect(() => {

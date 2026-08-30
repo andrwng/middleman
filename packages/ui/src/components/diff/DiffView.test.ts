@@ -1,4 +1,4 @@
-import { cleanup, render, waitFor } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/svelte";
 import { tick } from "svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { STORES_KEY } from "../../context.js";
@@ -201,5 +201,60 @@ describe("DiffView symbol-refs scope guard", () => {
     await tick();
 
     expect(symbolRefsStore.isActive()).toBe(true);
+  });
+});
+
+// `s` is the keyboard twin of the toolbar's Refs button. It rides
+// DiffView's existing window-level handleKeydown, whose guards already
+// skip form fields and modified keys -- so these four cases pin that the
+// new key inherits them rather than reimplementing them.
+describe("DiffView: the s hotkey", () => {
+  it("opens the refs search box", async () => {
+    installCommitsFetch(() => "sha-head-1");
+    const { diffStore, symbolRefsStore } = renderDiffView();
+    await waitFor(() => {
+      expect(diffStore.getCurrentCommitSha()).toBe("sha-head-1");
+    });
+
+    await fireEvent.keyDown(window, { key: "s" });
+
+    expect(symbolRefsStore.getStatus()).toBe("prompt");
+  });
+
+  it("is ignored while a text field has focus, so typing an s is safe", async () => {
+    installCommitsFetch(() => "sha-head-1");
+    const { diffStore, symbolRefsStore } = renderDiffView();
+    await waitFor(() => {
+      expect(diffStore.getCurrentCommitSha()).toBe("sha-head-1");
+    });
+    const field = document.createElement("input");
+    document.body.appendChild(field);
+
+    await fireEvent.keyDown(field, { key: "s", bubbles: true });
+
+    expect(symbolRefsStore.getStatus()).toBe("idle");
+    field.remove();
+  });
+
+  it("is ignored with a modifier, leaving Cmd/Ctrl-S alone", async () => {
+    installCommitsFetch(() => "sha-head-1");
+    const { diffStore, symbolRefsStore } = renderDiffView();
+    await waitFor(() => {
+      expect(diffStore.getCurrentCommitSha()).toBe("sha-head-1");
+    });
+
+    await fireEvent.keyDown(window, { key: "s", metaKey: true });
+    await fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+
+    expect(symbolRefsStore.getStatus()).toBe("idle");
+  });
+
+  it("does nothing when the scope has no resolvable SHA", async () => {
+    const { symbolRefsStore } = renderDiffView();
+    await tick();
+
+    await fireEvent.keyDown(window, { key: "s" });
+
+    expect(symbolRefsStore.getStatus()).toBe("idle");
   });
 });
