@@ -204,8 +204,13 @@
     // modal is open over the diff. That is this handler's established
     // behaviour; making one key modal-aware where j/k/m/[/] are not would
     // be the surprising choice.
-    if (e.key === "s") {
-      if (currentSha === "") return;
+    //
+    // The SHA gate is a condition ON THIS BLOCK, not an early return from
+    // the handler: `s` happens to be the last key handled here today, so a
+    // return would be equivalent -- right up until the next key is
+    // appended below it and silently stops firing whenever the scope has
+    // no resolvable SHA.
+    if (e.key === "s" && currentSha !== "") {
       e.preventDefault();
       symbolRefsStore.openBlank();
     }

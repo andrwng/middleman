@@ -58,7 +58,14 @@
 
   $effect(() => {
     const committed = symbolRefsStore.getQuery();
-    if (committed !== "") draft = committed;
+    if (committed === "") return;
+    draft = committed;
+    // A newly committed query makes both of this gutter's notices stale:
+    // they describe a refused query or a failed Back from before, and
+    // leaving either pinned above a fresh result set reads as a complaint
+    // about the results now on screen.
+    invalidReason = null;
+    backNote = null;
   });
 
   // Focus and select on every focusSeq change, so pressing `s` (or the
@@ -70,7 +77,19 @@
   // `focusSeq;` expression statement would register the dependency too,
   // but eslint's no-unused-expressions would reject it and fail
   // make frontend-check.
-  let lastFocusSeq = -1;
+  //
+  // Only openBlank() asks for focus, and the seed is what keeps the
+  // effect's unavoidable first run (at mount) from counting as a request.
+  // Seeding it from the store rather than from -1 is the whole point: a
+  // mount caused by the selection-side Refs button -- DiffFile's floating
+  // toolbar calls search() directly and never bumps focusSeq -- must leave
+  // focus where the reader put it. Stealing it there would put an INPUT
+  // under DiffView's window keydown handler, which ignores keys while one
+  // is focused, silently dropping j/k/[/]/m/s until the reader clicks away.
+  let lastFocusSeq =
+    symbolRefsStore.getStatus() === "prompt"
+      ? -1 // this mount IS an openBlank (the only thing that sets "prompt")
+      : symbolRefsStore.getFocusSeq(); // someone else opened us; do not focus
   $effect(() => {
     if (focusSeq === lastFocusSeq) return;
     lastFocusSeq = focusSeq;
@@ -97,8 +116,18 @@
       invalidReason = reason;
       return;
     }
+    // The toolbar's Refs button and the `s` key both refuse to open
+    // without a resolvable commit (a Refresh in flight leaves the SHA
+    // empty), so Enter refuses for the same reason and says the same
+    // thing -- rather than issuing a request the server rejects with a
+    // bare "sha is required" that lands in the gutter verbatim.
+    const sha = diffStore.getCurrentCommitSha();
+    if (sha === "") {
+      invalidReason = "This diff scope has no resolvable commit to search.";
+      return;
+    }
     invalidReason = null;
-    void symbolRefsStore.search(owner, name, number, diffStore.getCurrentCommitSha(), t);
+    void symbolRefsStore.search(owner, name, number, sha, t);
   }
 
   function onSearchKeydown(e: KeyboardEvent): void {
@@ -294,17 +323,31 @@
   async function jumpTo(hit: SymbolHit): Promise<void> {
     missingJump = null;
     backNote = null;
-    // Record where we are leaving from, so Back can return here. Skipped
-    // when the position is unknown, and when it is the row being clicked
-    // -- stacking the position you are already parked on would make Back
-    // look broken.
+    // Record where we are leaving from, so Back can return here. The
+    // position has to be READ before the jump (afterwards it is the
+    // destination) but PUSHED after it, because a jump that resolves
+    // "missing" never moves the reader -- pushing then would enable Back
+    // on an entry that returns to where they already stand.
+    //
+    // Skipped when the position is unknown, and when it is the row being
+    // clicked -- stacking the position you are already parked on would
+    // make Back look broken. Side is part of that identity: a deletion's
+    // LEFT line 40 and the new file's RIGHT line 40 are different places,
+    // and hits always land RIGHT (see DiffJumpTarget), so a LEFT departure
+    // is a real jump worth recording.
     const from = currentDiffPosition();
-    if (from !== null && !(from.path === hit.path && from.line === hit.line)) {
-      symbolRefsStore.pushPosition(from);
-    }
+    const selfRef =
+      from !== null &&
+      from.path === hit.path &&
+      from.line === hit.line &&
+      (from.side ?? "RIGHT") === "RIGHT";
     const outcome = await scrollToDiffLine({ path: hit.path, line: hit.line }, jumpDeps());
     if (outcome === "missing") {
       missingJump = { path: hit.path, line: hit.line };
+      return;
+    }
+    if (from !== null && !selfRef) {
+      symbolRefsStore.pushPosition(from);
     }
   }
 
@@ -320,8 +363,20 @@
     const target = symbolRefsStore.popPosition();
     if (target === null) return;
     const outcome = await scrollToDiffLine(target, jumpDeps());
-    if (outcome === "missing") {
+    // "pending" normally means "a collapsed region was asked to reveal the
+    // line, and the landing follows once it mounts" -- but that reveal is
+    // side-blind (requestRevealLine takes only a path and a line) and
+    // CollapsedRegion only ever anchors the context lines it reveals as
+    // RIGHT. So an unrendered LEFT target -- a deleted line, reachable
+    // with no scope or SHA change at all via hide-whitespace dropping
+    // whitespace-only deletions -- can never resolve: it would sit
+    // "pending" forever, with no note and a reveal target left armed to
+    // fire later against an unrelated region that happens to cover that
+    // new-side line number. Treat it as the failure it is.
+    const leftSidePendingForever = target.side === "LEFT" && outcome !== "line";
+    if (outcome === "missing" || leftSidePendingForever) {
       backNote = `${target.path}:${target.line} is no longer in the rendered diff.`;
+      diffStore.consumeRevealTarget();
     }
   }
 
@@ -393,7 +448,11 @@
       oninput={() => (invalidReason = null)}
       onkeydown={onSearchKeydown}
     />
-    <span class="symref-header__count" title="Occurrences in this PR's changed files">{inPrTotal}</span>
+    <!-- Nothing has been searched in the prompt state, so a count would
+         only ever read a meaningless 0. -->
+    {#if status !== "prompt"}
+      <span class="symref-header__count" title="Occurrences in this PR's changed files">{inPrTotal}</span>
+    {/if}
     <button
       type="button"
       class="symref-header__close"
@@ -407,12 +466,14 @@
     </button>
   </div>
 
+  <!-- role="status" (matching DiffView's interdiff banner) so a refused
+       query or a failed Back is announced, not just coloured. -->
   {#if invalidReason}
-    <div class="symref-invalid">{invalidReason}</div>
+    <div class="symref-invalid" role="status">{invalidReason}</div>
   {/if}
 
   {#if backNote}
-    <div class="symref-back-note">{backNote}</div>
+    <div class="symref-back-note" role="status">{backNote}</div>
   {/if}
 
   {#if classifier === "heuristic"}

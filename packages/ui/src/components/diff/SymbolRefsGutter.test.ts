@@ -70,7 +70,13 @@ interface FakeStoreOverrides {
   diffFiles?: string[];
   // Backs canGoBack(). The push/pop spies are asserted on directly.
   canGoBack?: boolean;
-  popsTo?: { path: string; line: number } | null;
+  // Backs popPosition(). Carries an optional side because a popped
+  // LEFT-side (deleted) line resolves differently from a RIGHT one -- see
+  // the LEFT-side Back tests below.
+  popsTo?: { path: string; line: number; side?: "LEFT" | "RIGHT" } | null;
+  // Backs diffStore.getCurrentCommitSha(). Defaults to a resolvable SHA;
+  // "" models a scope with no commit to search (e.g. a Refresh in flight).
+  sha?: string;
 }
 
 function fakeSymbolRefsStore(overrides: FakeStoreOverrides = {}) {
@@ -107,21 +113,21 @@ function fakeSymbolRefsStore(overrides: FakeStoreOverrides = {}) {
   };
 }
 
-function fakeDiffStore(files: string[]) {
+function fakeDiffStore(files: string[], sha = "abc123") {
   return {
     isFileCollapsed: vi.fn(() => false),
     toggleFileCollapsed: vi.fn(),
     requestRevealLine: vi.fn(),
     consumeRevealTarget: vi.fn(),
     getDiff: vi.fn(() => ({ files: files.map((path) => ({ path })) })),
-    getCurrentCommitSha: () => "abc123",
+    getCurrentCommitSha: () => sha,
   };
 }
 
 function renderGutter(overrides: FakeStoreOverrides = {}) {
   const symbolRefsStore = fakeSymbolRefsStore(overrides);
   const diffFiles = overrides.diffFiles ?? (overrides.hits ?? []).map((h) => h.path);
-  const diffStore = fakeDiffStore(diffFiles);
+  const diffStore = fakeDiffStore(diffFiles, overrides.sha);
   const rendered = render(SymbolRefsGutter, {
     props: { owner: "o", name: "n", number: 1, width: 320 },
     context: new Map<symbol, unknown>([
@@ -151,6 +157,7 @@ afterEach(() => {
   cleanup();
   scrollToDiffLineMock.mockClear();
   clearDiffLineHighlightMock.mockClear();
+  currentDiffPositionMock.mockClear();
   currentDiffPositionMock.mockReturnValue(null);
 });
 
@@ -844,6 +851,16 @@ describe("SymbolRefsGutter: header search input", () => {
     expect(container.querySelectorAll(".symref-row")).toHaveLength(0);
   });
 
+  // Nothing has been searched yet, so the badge would read a meaningless 0.
+  it("renders no count badge in the prompt status, and does once results exist", () => {
+    const prompt = renderGutter({ status: "prompt", hits: [], inPrTotal: 0 });
+    expect(prompt.container.querySelector(".symref-header__count")).toBeNull();
+    cleanup();
+
+    const ready = renderGutter({ hits: [hit()], inPrTotal: 1 });
+    expect(ready.container.querySelector(".symref-header__count")?.textContent).toBe("1");
+  });
+
   it("seeds the input from the current query so it can be edited in place", () => {
     const { container } = renderGutter({ query: "handle", hits: [hit()], inPrTotal: 1 });
 
@@ -873,6 +890,53 @@ describe("SymbolRefsGutter: header search input", () => {
 
     expect(symbolRefsStore.search).not.toHaveBeenCalled();
     expect(container.querySelector(".symref-invalid")?.textContent).toMatch(/whitespace/i);
+  });
+
+  // The toolbar button and the `s` key both refuse to open without a
+  // resolvable commit; Enter must refuse for the same reason instead of
+  // firing a request the server rejects with a bare "sha is required".
+  it("refuses Enter while the scope has no resolvable commit, and says why", async () => {
+    const { container, symbolRefsStore } = renderGutter({ status: "prompt", sha: "" });
+    const input = container.querySelector<HTMLInputElement>("[data-testid='symref-search']")!;
+
+    await fireEvent.input(input, { target: { value: "HandleRequest" } });
+    await fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(symbolRefsStore.search).not.toHaveBeenCalled();
+    expect(container.querySelector(".symref-invalid")?.textContent).toMatch(
+      /no resolvable commit/i,
+    );
+  });
+
+  // Uses the REAL store: the notice-clearing effect keys off the store's
+  // committed query actually CHANGING, which the static fake cannot do.
+  // This models the selection-side Refs button (DiffFile calls search()
+  // directly) committing a query while this gutter sits open showing a
+  // refusal from a query the reader typed here.
+  it("drops a stale refusal when another entry point commits a query", async () => {
+    const store = createSymbolRefsStore({
+      client: stubClient([
+        { query: "Handler", hits: [], in_pr_total: 0, outside_pr_total: 0, truncated: false },
+      ]),
+    });
+    store.openBlank();
+    const { container } = render(SymbolRefsGutter, {
+      props: { owner: "o", name: "n", number: 1, width: 320 },
+      context: new Map<symbol, unknown>([
+        [STORES_KEY, { symbolRefs: store, diff: fakeDiffStore(["a.go"]) }],
+      ]),
+    });
+    await tick();
+    const input = container.querySelector<HTMLInputElement>("[data-testid='symref-search']")!;
+
+    await fireEvent.input(input, { target: { value: "group manager" } });
+    await fireEvent.keyDown(input, { key: "Enter" });
+    expect(container.querySelector(".symref-invalid")).not.toBeNull();
+
+    await store.search("o", "n", 1, "abc123", "Handler");
+    await tick();
+
+    expect(container.querySelector(".symref-invalid")).toBeNull();
   });
 
   it("does nothing on Enter with an empty query", async () => {
@@ -924,6 +988,20 @@ describe("SymbolRefsGutter: header search input", () => {
 
     expect(document.activeElement).toBe(input);
   });
+
+  // The selection-side Refs button (DiffFile's floating toolbar) calls
+  // search() directly and never bumps focusSeq, so the gutter mounting
+  // from that path must leave focus where the reader put it. If it steals
+  // focus into its input, DiffView's window keydown handler -- which
+  // ignores keys while an INPUT is focused -- silently drops j/k/[/]/m/s
+  // until the reader clicks away.
+  it("does not steal focus when it mounts from a search it did not ask to focus", async () => {
+    const { container } = renderGutter({ hits: [hit()], inPrTotal: 1 });
+    await tick();
+    const input = container.querySelector<HTMLInputElement>("[data-testid='symref-search']")!;
+
+    expect(document.activeElement).not.toBe(input);
+  });
 });
 
 // Clicking a row jumps the diff away from wherever the reader was. The
@@ -968,6 +1046,37 @@ describe("SymbolRefsGutter: jump-back stack", () => {
     expect(symbolRefsStore.pushPosition).not.toHaveBeenCalled();
   });
 
+  // A jump that resolves "missing" leaves the reader exactly where they
+  // were, so recording a departure would enable Back on an entry that
+  // returns to where they already stand.
+  it('pushes nothing when the jump resolves "missing"', async () => {
+    scrollToDiffLineMock.mockResolvedValueOnce("missing");
+    currentDiffPositionMock.mockReturnValue({ path: "internal/handler.go", line: 40, side: "RIGHT" });
+    const hits = [hit({ path: "gone.go", line: 3, text: "ref in gone" })];
+    const { symbolRefsStore } = renderGutter({ hits, inPrTotal: 1 });
+
+    await fireEvent.click(screen.getByText("ref in gone"));
+
+    expect(symbolRefsStore.pushPosition).not.toHaveBeenCalled();
+  });
+
+  // Side is part of a position's identity: a deletion's LEFT line 1 and
+  // the new file's RIGHT line 1 are different places, so leaving one for
+  // the other is a real jump the stack must record.
+  it("pushes when the row matches the current line number but not its side", async () => {
+    currentDiffPositionMock.mockReturnValue({ path: "a.go", line: 1, side: "LEFT" });
+    const hits = [hit({ path: "a.go", line: 1, text: "ref line" })];
+    const { symbolRefsStore } = renderGutter({ hits, inPrTotal: 1 });
+
+    await fireEvent.click(screen.getByText("ref line"));
+
+    expect(symbolRefsStore.pushPosition).toHaveBeenCalledWith({
+      path: "a.go",
+      line: 1,
+      side: "LEFT",
+    });
+  });
+
   it("disables Back with an empty stack and enables it with entries", () => {
     const empty = renderGutter({ hits: [hit()], inPrTotal: 1, canGoBack: false });
     const emptyBtn = empty.getByRole("button", {
@@ -1007,5 +1116,35 @@ describe("SymbolRefsGutter: jump-back stack", () => {
     await fireEvent.click(getByRole("button", { name: /back to previous position/i }));
 
     expect(container.querySelector(".symref-back-note")).not.toBeNull();
+  });
+
+  // A LEFT-side target that is not already rendered can never arrive: the
+  // reveal request is side-blind and CollapsedRegion anchors what it
+  // reveals as RIGHT, so "pending" here means "never". It gets the same
+  // note as "missing", and the doomed reveal target is dropped rather than
+  // left armed to fire against an unrelated region later.
+  it('treats a "pending" LEFT-side Back as the failure it is', async () => {
+    scrollToDiffLineMock.mockResolvedValueOnce("pending");
+    const { getByRole, container, diffStore } = renderGutter({
+      hits: [hit()], inPrTotal: 1, canGoBack: true,
+      popsTo: { path: "config.yaml", line: 4, side: "LEFT" },
+    });
+
+    await fireEvent.click(getByRole("button", { name: /back to previous position/i }));
+
+    expect(container.querySelector(".symref-back-note")).not.toBeNull();
+    expect(diffStore.consumeRevealTarget).toHaveBeenCalled();
+  });
+
+  it('leaves a "pending" RIGHT-side Back alone -- its reveal will land', async () => {
+    scrollToDiffLineMock.mockResolvedValueOnce("pending");
+    const { getByRole, container } = renderGutter({
+      hits: [hit()], inPrTotal: 1, canGoBack: true,
+      popsTo: { path: "a.go", line: 30, side: "RIGHT" },
+    });
+
+    await fireEvent.click(getByRole("button", { name: /back to previous position/i }));
+
+    expect(container.querySelector(".symref-back-note")).toBeNull();
   });
 });

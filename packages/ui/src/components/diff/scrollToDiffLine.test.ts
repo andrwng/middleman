@@ -303,6 +303,35 @@ describe("currentDiffPosition", () => {
     expect(currentDiffPosition()).toEqual({ path: "config.yaml", line: 4, side: "LEFT" });
   });
 
+  // The integer guard exists to stop a malformed data-anchor-line from
+  // being reported as a position: Number("oops") is NaN and "0" is a line
+  // number no diff has, and either one would be handed to a later jump as
+  // if it were real -- the wrong-line failure mode this feature keeps
+  // producing. Both malformed candidates sit ABOVE a well-formed one, so
+  // dropping the guard reports the bad one instead of skipping to line 12.
+  it("skips a candidate whose anchor line is not a positive integer", () => {
+    const area = makeDiffArea();
+    stubRect(area, 100, 500);
+    const file = document.createElement("div");
+    file.className = "diff-file";
+    file.dataset.filePath = "internal/handler.go";
+    area.appendChild(file);
+
+    const malformed = appendLineWrap(file, 7, "RIGHT");
+    malformed.dataset.anchorLine = "oops";
+    const zero = appendLineWrap(file, 0, "RIGHT");
+    const good = appendLineWrap(file, 12, "RIGHT");
+    stubRect(malformed, 105, 125);
+    stubRect(zero, 125, 145);
+    stubRect(good, 145, 165);
+
+    expect(currentDiffPosition()).toEqual({
+      path: "internal/handler.go",
+      line: 12,
+      side: "RIGHT",
+    });
+  });
+
   it("skips an anchored line that is not inside a .diff-file", () => {
     const area = makeDiffArea();
     stubRect(area, 100, 500);
