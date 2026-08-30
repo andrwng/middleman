@@ -156,7 +156,7 @@ test.describe("symbol references gutter (git-backed)", () => {
     await dblclickToken(cacheFile, 30, "RIGHT", "string");
 
     const gutter = await openRefsPanel(page);
-    await expect(gutter.locator(".symref-header__query")).toHaveText("string");
+    await expect(gutter.locator(".symref-header__query")).toHaveValue("string");
     await expect(gutter.locator(".symref-header__count")).toHaveText("7", { timeout: 5000 });
 
     // Rows are grouped by file: both changed files that contain "string"
@@ -236,7 +236,7 @@ test.describe("symbol references gutter (git-backed)", () => {
     await dblclickToken(handlerFile, 10, "RIGHT", "HandleRequest");
 
     const gutter = await openRefsPanel(page);
-    await expect(gutter.locator(".symref-header__query")).toHaveText("HandleRequest");
+    await expect(gutter.locator(".symref-header__query")).toHaveValue("HandleRequest");
     await expect(gutter.locator(".symref-header__count")).toHaveText("2", { timeout: 5000 });
 
     // Only the definition renders as a main row up front.
@@ -283,7 +283,7 @@ test.describe("symbol references gutter (git-backed)", () => {
     await installTokenSelection(handlerFile, 39, "RIGHT", "Println");
 
     const gutter = await openRefsPanel(page);
-    await expect(gutter.locator(".symref-header__query")).toHaveText("Println");
+    await expect(gutter.locator(".symref-header__query")).toHaveValue("Println");
     await expect(gutter.locator(".symref-header__count")).toHaveText("1", { timeout: 5000 });
     await expect(gutter.locator(".symref-row")).toHaveCount(1);
     await expect(gutter.locator(".symref-row__line")).toHaveText("39");
@@ -320,7 +320,7 @@ test.describe("symbol references gutter (git-backed)", () => {
     expect(selectedText).toBe("path");
 
     const gutter = await openRefsPanel(page);
-    await expect(gutter.locator(".symref-header__query")).toHaveText("path");
+    await expect(gutter.locator(".symref-header__query")).toHaveValue("path");
     await expect(gutter.locator(".symref-header__count")).toHaveText("5", { timeout: 5000 });
 
     // Honesty check: line 18 -- the fmt.Fprintf(w, "OK: %s", path) call,

@@ -894,6 +894,14 @@ describe("SymbolRefsGutter: header search input", () => {
     await tick();
     const input = container.querySelector<HTMLInputElement>("[data-testid='symref-search']")!;
 
+    // jsdom never blurs on its own, so without this the FIRST openBlank()'s
+    // mount-time focus would still be sitting on the input when the final
+    // assertion runs below -- passing even if the SECOND openBlank() failed
+    // to re-trigger the effect. Blurring here first makes the final
+    // assertion prove the second call actually re-fired it.
+    input.blur();
+    expect(document.activeElement).not.toBe(input);
+
     store.openBlank();
     await tick();
 
