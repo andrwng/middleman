@@ -1,7 +1,12 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { getStores } from "../../context.js";
-  import { scrollToDiffLine, clearDiffLineHighlight, type DiffJumpDeps } from "./scrollToDiffLine.js";
+  import {
+    scrollToDiffLine,
+    clearDiffLineHighlight,
+    currentDiffPosition,
+    type DiffJumpDeps,
+  } from "./scrollToDiffLine.js";
   import { isSymbolQuery, type SymbolHit } from "../../stores/symbolRefs.svelte.js";
   import { langFromPath } from "../../utils/highlight.js";
 
@@ -40,6 +45,7 @@
   const error = $derived(symbolRefsStore.getError());
 
   const focusSeq = $derived(symbolRefsStore.getFocusSeq());
+  const canGoBack = $derived(symbolRefsStore.canGoBack());
 
   // The text being typed, kept separate from the store's committed query
   // so an abandoned edit never changes what is displayed as searched.
@@ -160,6 +166,12 @@
   // next to that row. Cleared at the start of every jump attempt.
   let missingJump = $state<{ path: string; line: number } | null>(null);
 
+  // A short note shown when Back's popped target no longer resolves in
+  // the rendered diff. Distinct from missingJump above, which marks a
+  // specific row -- Back has no row of its own, so its failure gets a
+  // one-line note in the header area instead.
+  let backNote = $state<string | null>(null);
+
   function isMissingJump(hit: SymbolHit): boolean {
     return (
       missingJump !== null &&
@@ -267,17 +279,49 @@
     }
   }
 
-  async function jumpTo(hit: SymbolHit): Promise<void> {
-    missingJump = null;
-    const deps: DiffJumpDeps = {
+  // The deps scrollToDiffLine needs, shared by row clicks and Back so the
+  // two land identically -- expanding a collapsed file, revealing a
+  // collapsed context region, scrolling, and highlighting.
+  function jumpDeps(): DiffJumpDeps {
+    return {
       isFileCollapsed: (path) => diffStore.isFileCollapsed(owner, name, number, path),
       toggleFileCollapsed: (path) => diffStore.toggleFileCollapsed(owner, name, number, path),
       requestRevealLine: (path, line) => diffStore.requestRevealLine(path, line),
       clearRevealTarget: () => diffStore.consumeRevealTarget(),
     };
-    const outcome = await scrollToDiffLine({ path: hit.path, line: hit.line }, deps);
+  }
+
+  async function jumpTo(hit: SymbolHit): Promise<void> {
+    missingJump = null;
+    backNote = null;
+    // Record where we are leaving from, so Back can return here. Skipped
+    // when the position is unknown, and when it is the row being clicked
+    // -- stacking the position you are already parked on would make Back
+    // look broken.
+    const from = currentDiffPosition();
+    if (from !== null && !(from.path === hit.path && from.line === hit.line)) {
+      symbolRefsStore.pushPosition(from);
+    }
+    const outcome = await scrollToDiffLine({ path: hit.path, line: hit.line }, jumpDeps());
     if (outcome === "missing") {
       missingJump = { path: hit.path, line: hit.line };
+    }
+  }
+
+  // goBack pops one departure point and returns to it. It never pushes
+  // what it leaves: the stack is a one-way trail out, so it drains.
+  //
+  // A popped entry that no longer resolves has already left the stack, so
+  // pressing Back again tries the next one -- with a note, rather than a
+  // click that appears to do nothing.
+  async function goBack(): Promise<void> {
+    missingJump = null;
+    backNote = null;
+    const target = symbolRefsStore.popPosition();
+    if (target === null) return;
+    const outcome = await scrollToDiffLine(target, jumpDeps());
+    if (outcome === "missing") {
+      backNote = `${target.path}:${target.line} is no longer in the rendered diff.`;
     }
   }
 
@@ -324,6 +368,18 @@
   aria-label="Symbol references"
 >
   <div class="symref-header">
+    <button
+      type="button"
+      class="symref-header__back"
+      onclick={() => void goBack()}
+      disabled={!canGoBack}
+      aria-label="Back to previous position"
+      title="Back to previous position"
+    >
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6">
+        <path d="M10 3L5 8l5 5" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+    </button>
     <input
       class="symref-header__query"
       data-testid="symref-search"
@@ -353,6 +409,10 @@
 
   {#if invalidReason}
     <div class="symref-invalid">{invalidReason}</div>
+  {/if}
+
+  {#if backNote}
+    <div class="symref-back-note">{backNote}</div>
   {/if}
 
   {#if classifier === "heuristic"}
@@ -428,6 +488,27 @@
     flex-shrink: 0;
   }
 
+  .symref-header__back {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+  }
+
+  .symref-header__back:hover:not(:disabled) {
+    background: var(--bg-surface-hover);
+    color: var(--text-primary);
+  }
+
+  .symref-header__back:disabled {
+    opacity: 0.35;
+    cursor: default;
+  }
+
   .symref-header__query {
     flex: 1;
     min-width: 0;
@@ -478,6 +559,15 @@
     padding: 4px 12px;
     font-size: 11px;
     color: var(--accent-red);
+    background: var(--diff-header-bg);
+    border-bottom: 1px solid var(--diff-border);
+  }
+
+  .symref-back-note {
+    flex-shrink: 0;
+    padding: 4px 12px;
+    font-size: 11px;
+    color: var(--accent-amber);
     background: var(--diff-header-bg);
     border-bottom: 1px solid var(--diff-border);
   }

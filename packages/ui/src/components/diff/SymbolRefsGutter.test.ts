@@ -26,10 +26,18 @@ const scrollToDiffLineMock = vi.fn(
 // wholesale rather than exercising the real DOM/classList logic, which
 // scrollToDiffLine.test.ts already covers directly.
 const clearDiffLineHighlightMock = vi.fn();
+// currentDiffPositionMock backs the jump-back tests' control over "where
+// the reader currently is" -- mocked wholesale like the two above, and
+// defaulting to null (no determinable position) so a test that doesn't
+// care about it never records a departure by surprise.
+const currentDiffPositionMock = vi.fn(
+  (): { path: string; line: number; side?: "LEFT" | "RIGHT" } | null => null,
+);
 vi.mock("./scrollToDiffLine.js", () => ({
   scrollToDiffLine: (target: { path: string; line: number }, deps: DiffJumpDeps) =>
     scrollToDiffLineMock(target, deps),
   clearDiffLineHighlight: () => clearDiffLineHighlightMock(),
+  currentDiffPosition: () => currentDiffPositionMock(),
 }));
 
 import SymbolRefsGutter from "./SymbolRefsGutter.svelte";
@@ -60,6 +68,9 @@ interface FakeStoreOverrides {
   // every hit's own path, so tests that don't care about the
   // "not in this view" marker never see it fire by surprise.
   diffFiles?: string[];
+  // Backs canGoBack(). The push/pop spies are asserted on directly.
+  canGoBack?: boolean;
+  popsTo?: { path: string; line: number } | null;
 }
 
 function fakeSymbolRefsStore(overrides: FakeStoreOverrides = {}) {
@@ -73,6 +84,8 @@ function fakeSymbolRefsStore(overrides: FakeStoreOverrides = {}) {
     status = "ready",
     error = null,
     focusSeq = 0,
+    canGoBack = false,
+    popsTo = null,
   } = overrides;
   return {
     getQuery: () => query,
@@ -88,6 +101,9 @@ function fakeSymbolRefsStore(overrides: FakeStoreOverrides = {}) {
     search: vi.fn(async () => {}),
     close: vi.fn(),
     openBlank: vi.fn(),
+    canGoBack: () => canGoBack,
+    pushPosition: vi.fn(),
+    popPosition: vi.fn(() => popsTo),
   };
 }
 
@@ -135,6 +151,7 @@ afterEach(() => {
   cleanup();
   scrollToDiffLineMock.mockClear();
   clearDiffLineHighlightMock.mockClear();
+  currentDiffPositionMock.mockReturnValue(null);
 });
 
 describe("SymbolRefsGutter", () => {
@@ -906,5 +923,89 @@ describe("SymbolRefsGutter: header search input", () => {
     await tick();
 
     expect(document.activeElement).toBe(input);
+  });
+});
+
+// Clicking a row jumps the diff away from wherever the reader was. The
+// stack records that departure point so Back can walk it back. Pushes
+// happen on jump only -- never on search -- and Back never pushes what it
+// leaves, so the trail strictly drains.
+describe("SymbolRefsGutter: jump-back stack", () => {
+  it("records the departure position before jumping", async () => {
+    currentDiffPositionMock.mockReturnValue({ path: "internal/handler.go", line: 40, side: "RIGHT" });
+    const hits = [hit({ path: "internal/cache.go", line: 12, text: "ref in cache" })];
+    const { symbolRefsStore } = renderGutter({ hits, inPrTotal: 1 });
+
+    await fireEvent.click(screen.getByText("ref in cache"));
+
+    expect(symbolRefsStore.pushPosition).toHaveBeenCalledWith({
+      path: "internal/handler.go",
+      line: 40,
+      side: "RIGHT",
+    });
+  });
+
+  it("pushes nothing when the current position cannot be determined", async () => {
+    currentDiffPositionMock.mockReturnValue(null);
+    const hits = [hit({ text: "ref line" })];
+    const { symbolRefsStore } = renderGutter({ hits, inPrTotal: 1 });
+
+    await fireEvent.click(screen.getByText("ref line"));
+
+    expect(symbolRefsStore.pushPosition).not.toHaveBeenCalled();
+    expect(scrollToDiffLineMock).toHaveBeenCalled();
+  });
+
+  // Clicking the row you are already parked on would otherwise stack a
+  // no-op entry, making Back appear to do nothing.
+  it("does not push a duplicate when the row is the current position", async () => {
+    currentDiffPositionMock.mockReturnValue({ path: "a.go", line: 1, side: "RIGHT" });
+    const hits = [hit({ path: "a.go", line: 1, text: "ref line" })];
+    const { symbolRefsStore } = renderGutter({ hits, inPrTotal: 1 });
+
+    await fireEvent.click(screen.getByText("ref line"));
+
+    expect(symbolRefsStore.pushPosition).not.toHaveBeenCalled();
+  });
+
+  it("disables Back with an empty stack and enables it with entries", () => {
+    const empty = renderGutter({ hits: [hit()], inPrTotal: 1, canGoBack: false });
+    const emptyBtn = empty.getByRole("button", {
+      name: /back to previous position/i,
+    }) as HTMLButtonElement;
+    expect(emptyBtn.disabled).toBe(true);
+    cleanup();
+
+    const filled = renderGutter({ hits: [hit()], inPrTotal: 1, canGoBack: true });
+    const filledBtn = filled.getByRole("button", {
+      name: /back to previous position/i,
+    }) as HTMLButtonElement;
+    expect(filledBtn.disabled).toBe(false);
+  });
+
+  it("jumps to the popped position on Back, and does not re-push", async () => {
+    const popsTo = { path: "internal/handler.go", line: 40 };
+    currentDiffPositionMock.mockReturnValue({ path: "internal/cache.go", line: 12, side: "RIGHT" });
+    const { symbolRefsStore, getByRole } = renderGutter({
+      hits: [hit()], inPrTotal: 1, canGoBack: true, popsTo,
+    });
+
+    await fireEvent.click(getByRole("button", { name: /back to previous position/i }));
+
+    expect(symbolRefsStore.popPosition).toHaveBeenCalled();
+    expect(scrollToDiffLineMock).toHaveBeenCalledWith(popsTo, expect.anything());
+    expect(symbolRefsStore.pushPosition).not.toHaveBeenCalled();
+  });
+
+  it("notes an unresolvable Back target instead of failing silently", async () => {
+    scrollToDiffLineMock.mockResolvedValueOnce("missing");
+    const { getByRole, container } = renderGutter({
+      hits: [hit()], inPrTotal: 1, canGoBack: true,
+      popsTo: { path: "gone.go", line: 9 },
+    });
+
+    await fireEvent.click(getByRole("button", { name: /back to previous position/i }));
+
+    expect(container.querySelector(".symref-back-note")).not.toBeNull();
   });
 });
