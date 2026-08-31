@@ -128,40 +128,59 @@ export async function scrollToDiffLine(
   return scrollToFileHeader(target.path) ? "pending" : "missing";
 }
 
-// currentDiffPosition reports where the reader currently is: the topmost
-// anchored line in the diff scroll container that has not scrolled fully
-// out of view above it. Used to record where a jump is leaving from, so a
-// Back button can return there.
+// currentDiffPosition reports where the reader currently is: the anchored
+// line under the vertical midline of the diff scroll container.
 //
-// It queries `document` for `.diff-area` rather than taking the element as
-// a parameter, following findDiffLineEl above -- callers are components
-// that do not own the scroll container, and threading a ref through them
-// buys nothing.
+// The midline, not the top edge, because flashDiffLine above scrolls with
+// block: "center" -- a jump leaves its target at the middle of the viewport,
+// so that is where the reader is looking. An earlier version returned the
+// topmost partially-visible line instead, and the mismatch was the whole
+// defect: every jump recorded a point half a viewport ABOVE the reader, so
+// Back returned them to a line they had never been on (consistently, since
+// the same target always yields the same viewport), and jumpTo's
+// self-reference guard became unreachable because the captured line could
+// never equal the line just jumped to. Keep capture and restore agreeing on
+// what "the reader's position" means; if flashDiffLine's block ever changes,
+// this must change with it.
 //
-// Returns null when there is no diff area, no anchored line qualifies, or
-// the only candidates sit outside a `.diff-file` (so their path is
-// unknowable). Callers treat null as "nothing worth recording" and skip
-// the push -- a missing trail entry is a far better failure than a
+// It queries `document` for `.diff-area` rather than taking the element as a
+// parameter, following findDiffLineEl above -- callers are components that do
+// not own the scroll container, and threading a ref through them buys nothing.
+//
+// Returns null when there is no diff area and when no candidate yields a
+// usable (path, line). Callers treat null as "nothing worth recording" and
+// skip the push -- a missing trail entry is a far better failure than a
 // position that jumps somewhere wrong.
 //
-// NOTE: jsdom reports every getBoundingClientRect() as zeros, so this
-// returns null there unless a test stubs rects. Component tests mock this
-// function wholesale; scrollToDiffLine.test.ts stubs the rects instead.
+// NOTE: jsdom reports every getBoundingClientRect() as zeros, so this returns
+// the last valid candidate there unless a test stubs rects. Component tests
+// mock this function wholesale; scrollToDiffLine.test.ts stubs the rects.
 export function currentDiffPosition(): DiffJumpTarget | null {
   const area = document.querySelector<HTMLElement>(".diff-area");
   if (!area) return null;
-  const areaTop = area.getBoundingClientRect().top;
+  const areaRect = area.getBoundingClientRect();
+  const midY = areaRect.top + areaRect.height / 2;
   const candidates = area.querySelectorAll<HTMLElement>(
     "[data-anchor-line][data-anchor-side]",
   );
+  // Tracks the last usable candidate above the midline, for the case where
+  // nothing reaches it: content shorter than the viewport, or scrolled hard to
+  // the end. The last line is then the closest thing to the reader's position,
+  // and returning null instead would silently drop trail entries.
+  let lastAbove: DiffJumpTarget | null = null;
   for (const el of candidates) {
-    // Fully above the viewport's top edge: already scrolled past.
-    if (el.getBoundingClientRect().bottom <= areaTop) continue;
     const line = Number(el.dataset.anchorLine);
     if (!Number.isInteger(line) || line <= 0) continue;
     const path = el.closest<HTMLElement>(".diff-file")?.dataset.filePath;
     if (!path) continue;
-    return { path, line, side: el.dataset.anchorSide === "LEFT" ? "LEFT" : "RIGHT" };
+    const target: DiffJumpTarget = {
+      path,
+      line,
+      side: el.dataset.anchorSide === "LEFT" ? "LEFT" : "RIGHT",
+    };
+    // The first line whose bottom reaches the midline is the line under it.
+    if (el.getBoundingClientRect().bottom >= midY) return target;
+    lastAbove = target;
   }
-  return null;
+  return lastAbove;
 }

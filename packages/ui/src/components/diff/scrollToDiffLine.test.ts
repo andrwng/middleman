@@ -265,24 +265,85 @@ describe("currentDiffPosition", () => {
     expect(currentDiffPosition()).toBeNull();
   });
 
-  it("returns the first line not scrolled fully above the viewport", () => {
+  // The reader's position is the line at the viewport's MIDLINE, not its top
+  // edge, because flashDiffLine scrolls with block: "center". Every fixture
+  // below therefore spans the full container height -- a fixture crowded into
+  // the top of the viewport cannot tell the two definitions apart, which is
+  // exactly how the original topmost-line implementation passed review.
+  it("returns the line under the viewport's midline, not the topmost visible one", () => {
     const area = makeDiffArea();
-    stubRect(area, 100, 500);
+    stubRect(area, 100, 500);   // midline at y = 300
     const file = document.createElement("div");
     file.className = "diff-file";
     file.dataset.filePath = "internal/handler.go";
     area.appendChild(file);
 
-    const above = appendLineWrap(file, 10, "RIGHT");
-    const straddling = appendLineWrap(file, 11, "RIGHT");
-    const below = appendLineWrap(file, 12, "RIGHT");
-    stubRect(above, 60, 80);        // entirely above area.top
-    stubRect(straddling, 90, 110);  // crosses area.top -- partially visible
-    stubRect(below, 110, 130);
+    const scrolledPast = appendLineWrap(file, 10, "RIGHT");
+    const topmostVisible = appendLineWrap(file, 11, "RIGHT");
+    const aboveMid = appendLineWrap(file, 12, "RIGHT");
+    const atMid = appendLineWrap(file, 13, "RIGHT");
+    const belowMid = appendLineWrap(file, 14, "RIGHT");
+    stubRect(scrolledPast, 60, 80);      // entirely above area.top
+    stubRect(topmostVisible, 90, 110);   // crosses area.top
+    stubRect(aboveMid, 110, 290);
+    stubRect(atMid, 290, 310);           // spans the midline
+    stubRect(belowMid, 310, 480);
 
     expect(currentDiffPosition()).toEqual({
       path: "internal/handler.go",
-      line: 11,
+      line: 13,
+      side: "RIGHT",
+    });
+  });
+
+  // This is the bug that shipped: a jump centres its target, so the very next
+  // capture must return that same line. When it returned the topmost visible
+  // line instead, it recorded a point half a viewport above the reader --
+  // sending Back to the wrong line, and making jumpTo's self-reference guard
+  // unreachable, since the captured line could never equal the line just
+  // jumped to.
+  it("returns the line a jump just centred, so a re-capture round-trips", () => {
+    const area = makeDiffArea();
+    stubRect(area, 100, 500);   // midline at y = 300
+    const file = document.createElement("div");
+    file.className = "diff-file";
+    file.dataset.filePath = "src/v/kafka/handler.cc";
+    area.appendChild(file);
+
+    // Geometry as it stands just after flashDiffLine centred line 3227.
+    const earlier = appendLineWrap(file, 3073, "RIGHT");
+    const centred = appendLineWrap(file, 3227, "RIGHT");
+    const later = appendLineWrap(file, 3300, "RIGHT");
+    stubRect(earlier, 100, 290);
+    stubRect(centred, 295, 305);
+    stubRect(later, 305, 495);
+
+    expect(currentDiffPosition()).toEqual({
+      path: "src/v/kafka/handler.cc",
+      line: 3227,
+      side: "RIGHT",
+    });
+  });
+
+  // Content shorter than the viewport, or scrolled hard to the end: nothing
+  // reaches the midline, so the last real line is the closest thing to where
+  // the reader is. Returning null here would silently drop trail entries.
+  it("falls back to the last valid line when nothing reaches the midline", () => {
+    const area = makeDiffArea();
+    stubRect(area, 100, 500);   // midline at y = 300
+    const file = document.createElement("div");
+    file.className = "diff-file";
+    file.dataset.filePath = "internal/cache.go";
+    area.appendChild(file);
+
+    const first = appendLineWrap(file, 1, "RIGHT");
+    const last = appendLineWrap(file, 2, "RIGHT");
+    stubRect(first, 105, 125);
+    stubRect(last, 125, 145);
+
+    expect(currentDiffPosition()).toEqual({
+      path: "internal/cache.go",
+      line: 2,
       side: "RIGHT",
     });
   });
