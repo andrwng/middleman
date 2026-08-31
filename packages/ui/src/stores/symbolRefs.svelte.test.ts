@@ -398,3 +398,65 @@ describe("createSymbolRefsStore: the back stack", () => {
     expect(store.popPosition()).toEqual(pos(10));
   });
 });
+
+// The launch point a selection-side search records, so the gutter's Back button
+// can return to the highlighted symbol rather than to the viewport's midline.
+describe("createSymbolRefsStore: the search origin", () => {
+  const origin = { path: "src/v/kafka/handler.cc", line: 3227, side: "RIGHT" as const };
+
+  it("starts empty and round-trips what was set", () => {
+    const store = createSymbolRefsStore({ client: stubClient() });
+    expect(store.getOrigin()).toBeNull();
+
+    store.setOrigin(origin);
+
+    expect(store.getOrigin()).toEqual(origin);
+  });
+
+  it("reading does not consume it -- only clearOrigin does", () => {
+    const store = createSymbolRefsStore({ client: stubClient() });
+    store.setOrigin(origin);
+
+    expect(store.getOrigin()).toEqual(origin);
+    expect(store.getOrigin()).toEqual(origin);
+    store.clearOrigin();
+
+    expect(store.getOrigin()).toBeNull();
+  });
+
+  // The toolbar button and the `s` key know no launch point, and a stale origin
+  // from an earlier selection-side search would send Back to an unrelated
+  // symbol.
+  it("is cleared by openBlank", () => {
+    const store = createSymbolRefsStore({ client: stubClient() });
+    store.setOrigin(origin);
+
+    store.openBlank();
+
+    expect(store.getOrigin()).toBeNull();
+  });
+
+  it("is cleared by close", () => {
+    const store = createSymbolRefsStore({ client: stubClient() });
+    store.setOrigin(origin);
+
+    store.close();
+
+    expect(store.getOrigin()).toBeNull();
+  });
+
+  // Deliberate: re-querying from the gutter's own input does not change where
+  // the reader began, so "return me to where I started" still holds.
+  it("survives a search, so re-querying keeps the launch point", async () => {
+    const store = createSymbolRefsStore({
+      client: stubClient({
+        GET: vi.fn(async () => ({ data: makeResponse("Foo", [makeHit()]), error: undefined })),
+      }),
+    });
+    store.setOrigin(origin);
+
+    await store.search("o", "n", 1, "abc123", "Foo");
+
+    expect(store.getOrigin()).toEqual(origin);
+  });
+});

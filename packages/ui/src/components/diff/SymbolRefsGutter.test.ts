@@ -70,6 +70,8 @@ interface FakeStoreOverrides {
   diffFiles?: string[];
   // Backs canGoBack(). The push/pop spies are asserted on directly.
   canGoBack?: boolean;
+  // Backs getOrigin(): the launch point a selection-side search records.
+  origin?: { path: string; line: number; side?: "LEFT" | "RIGHT" } | null;
   // Backs popPosition(). Carries an optional side because a popped
   // LEFT-side (deleted) line resolves differently from a RIGHT one -- see
   // the LEFT-side Back tests below.
@@ -91,6 +93,7 @@ function fakeSymbolRefsStore(overrides: FakeStoreOverrides = {}) {
     error = null,
     focusSeq = 0,
     canGoBack = false,
+    origin = null,
     popsTo = null,
   } = overrides;
   return {
@@ -108,6 +111,9 @@ function fakeSymbolRefsStore(overrides: FakeStoreOverrides = {}) {
     close: vi.fn(),
     openBlank: vi.fn(),
     canGoBack: () => canGoBack,
+    getOrigin: () => origin,
+    setOrigin: vi.fn(),
+    clearOrigin: vi.fn(),
     pushPosition: vi.fn(),
     popPosition: vi.fn(() => popsTo),
   };
@@ -1008,6 +1014,52 @@ describe("SymbolRefsGutter: header search input", () => {
 // stack records that departure point so Back can walk it back. Pushes
 // happen on jump only -- never on search -- and Back never pushes what it
 // leaves, so the trail strictly drains.
+// A search launched by highlighting a symbol records that symbol's own line as
+// the departure point. Without this, the departure point is the line at the
+// viewport's midline -- which is not where the reader was looking if the symbol
+// they highlighted happened to sit near the top or bottom of the screen.
+describe("SymbolRefsGutter: the search's launch point", () => {
+  it("prefers the recorded origin over the viewport position", async () => {
+    currentDiffPositionMock.mockReturnValue({ path: "a.go", line: 3073, side: "RIGHT" });
+    const origin = { path: "src/v/kafka/handler.cc", line: 3227, side: "RIGHT" as const };
+    const hits = [hit({ path: "internal/cache.go", line: 12, text: "ref in cache" })];
+    const { symbolRefsStore } = renderGutter({ hits, inPrTotal: 1, origin });
+
+    await fireEvent.click(screen.getByText("ref in cache"));
+
+    expect(symbolRefsStore.pushPosition).toHaveBeenCalledWith(origin);
+  });
+
+  // Only the FIRST jump returns to the launch point; after that the reader is
+  // parked on a line a jump sent them to, which the viewport reports exactly.
+  it("clears the origin once a departure point has been recorded", async () => {
+    currentDiffPositionMock.mockReturnValue({ path: "a.go", line: 3073, side: "RIGHT" });
+    const origin = { path: "src/v/kafka/handler.cc", line: 3227, side: "RIGHT" as const };
+    const hits = [hit({ path: "internal/cache.go", line: 12, text: "ref in cache" })];
+    const { symbolRefsStore } = renderGutter({ hits, inPrTotal: 1, origin });
+
+    await fireEvent.click(screen.getByText("ref in cache"));
+
+    expect(symbolRefsStore.clearOrigin).toHaveBeenCalled();
+  });
+
+  // A "missing" jump never moves the reader, so the launch point still applies
+  // to whichever valid row they click next.
+  it("keeps the origin when the jump resolves \"missing\"", async () => {
+    scrollToDiffLineMock.mockResolvedValueOnce("missing");
+    const origin = { path: "src/v/kafka/handler.cc", line: 3227, side: "RIGHT" as const };
+    const hits = [hit({ path: "gone.go", line: 9, text: "ref in gone" })];
+    const { symbolRefsStore } = renderGutter({
+      hits, inPrTotal: 1, origin, diffFiles: ["gone.go"],
+    });
+
+    await fireEvent.click(screen.getByText("ref in gone"));
+
+    expect(symbolRefsStore.pushPosition).not.toHaveBeenCalled();
+    expect(symbolRefsStore.clearOrigin).not.toHaveBeenCalled();
+  });
+});
+
 describe("SymbolRefsGutter: jump-back stack", () => {
   it("records the departure position before jumping", async () => {
     currentDiffPositionMock.mockReturnValue({ path: "internal/handler.go", line: 40, side: "RIGHT" });

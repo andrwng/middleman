@@ -335,7 +335,15 @@
     // LEFT line 40 and the new file's RIGHT line 40 are different places,
     // and hits always land RIGHT (see DiffJumpTarget), so a LEFT departure
     // is a real jump worth recording.
-    const from = currentDiffPosition();
+    // A search launched from a highlighted symbol records that symbol's own
+    // line as the departure point, because the reader means "put me back on
+    // that symbol" no matter where on screen it sat. Only the FIRST jump uses
+    // it -- cleared once a departure point is actually recorded, after which
+    // the reader is parked on a line a jump sent them to and the viewport
+    // speaks for itself. Read without consuming, so a jump that resolves
+    // "missing" (which never moves the reader) does not lose the launch point.
+    const origin = symbolRefsStore.getOrigin();
+    const from = origin ?? currentDiffPosition();
     const selfRef =
       from !== null &&
       from.path === hit.path &&
@@ -348,6 +356,7 @@
     }
     if (from !== null && !selfRef) {
       symbolRefsStore.pushPosition(from);
+      if (origin !== null) symbolRefsStore.clearOrigin();
     }
   }
 

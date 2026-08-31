@@ -90,6 +90,18 @@ export function createSymbolRefsStore(opts: SymbolRefsStoreOptions) {
   // which never pushes what it leaves, so the stack strictly drains.
   let backStack = $state<DiffPosition[]>([]);
 
+  // Where a search was launched from, when the launcher knows something more
+  // specific than "wherever the viewport happens to be". The selection-side
+  // Refs button sets it to the highlighted symbol's own line: the reader means
+  // "put me back on that symbol", regardless of where on screen it sat.
+  //
+  // It survives until the first jump actually records a departure point, then
+  // is cleared -- from then on the reader is parked on a line a jump sent them
+  // to, which currentDiffPosition() reports exactly. Deliberately NOT cleared
+  // by search(): re-querying from the gutter's own input does not change where
+  // the reader started, so "return me to where I began" still holds.
+  let origin = $state<DiffPosition | null>(null);
+
   let seq = 0;
 
   function getQuery(): string {
@@ -180,6 +192,10 @@ export function createSymbolRefsStore(opts: SymbolRefsStoreOptions) {
     if (status === "idle") {
       status = "prompt";
     }
+    // The toolbar button and the `s` key know no launch point, and a stale
+    // origin left by an earlier selection-side search would send Back to a
+    // symbol unrelated to whatever is typed next.
+    origin = null;
     focusSeq++;
   }
 
@@ -199,6 +215,22 @@ export function createSymbolRefsStore(opts: SymbolRefsStoreOptions) {
     return backStack.length > 0;
   }
 
+  function setOrigin(p: DiffPosition | null): void {
+    origin = p;
+  }
+
+  function getOrigin(): DiffPosition | null {
+    return origin;
+  }
+
+  // Cleared by the caller only once a departure point has actually been
+  // recorded, never merely on reading it: a jump that resolves "missing" never
+  // moves the reader, so consuming the origin there would silently lose the
+  // launch point for the next, valid jump.
+  function clearOrigin(): void {
+    origin = null;
+  }
+
   function close(): void {
     seq++;
     query = "";
@@ -211,12 +243,13 @@ export function createSymbolRefsStore(opts: SymbolRefsStoreOptions) {
     status = "idle";
     errorMsg = null;
     backStack = [];
+    origin = null;
   }
 
   return {
     getQuery, getSearchedSha, getHits, getInPrTotal, getOutsidePrTotal, isTruncated,
     getClassifier, getStatus, getError, isActive, getFocusSeq, search, close, openBlank,
-    pushPosition, popPosition, canGoBack,
+    pushPosition, popPosition, canGoBack, setOrigin, getOrigin, clearOrigin,
   };
 }
 

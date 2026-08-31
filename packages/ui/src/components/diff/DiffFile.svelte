@@ -174,12 +174,16 @@
   // which is inherently single-line — never populates liveSelection.
   // Kept as a separate field rather than widening liveSelection so
   // Comment/Ask's existing multi-line-only visibility is untouched.
-  // Just the selected text: searchSymbolFromToolbar always searches
-  // against currentCommitSha()'s new-side SHA regardless of which side
-  // the selection was made on, so there's no use for the side it was
-  // selected on -- narrowed to a string rather than carrying a `side`
-  // field nothing reads.
-  let liveSymbolSelection = $state<string | null>(null);
+  // Carries the selected symbol's own line and side alongside the text.
+  // The search itself only needs the text -- it always runs against
+  // currentCommitSha()'s new-side SHA regardless of which side the
+  // selection was made on -- but the refs gutter's Back button needs the
+  // launch point: having searched from a symbol, the reader means "put me
+  // back on THAT symbol", not "put me back wherever the viewport was".
+  // liveSymbolSelection stays derived from this rather than being a second
+  // $state, so the text and its position cannot drift apart.
+  let liveSymbolSelectionInfo = $state<SymbolSelection | null>(null);
+  const liveSymbolSelection = $derived(liveSymbolSelectionInfo?.symbol ?? null);
 
   // Additionally requires a resolved sha: in head scope,
   // currentCommitSha() can briefly be "" before loadCommits()
@@ -197,7 +201,7 @@
     if (typeof document === "undefined") return;
     const handler = (): void => {
       liveSelection = computeSelectionRange();
-      liveSymbolSelection = computeSymbolSelection();
+      liveSymbolSelectionInfo = computeSymbolSelection();
     };
     document.addEventListener("selectionchange", handler);
     return () => document.removeEventListener("selectionchange", handler);
@@ -250,7 +254,13 @@
   // line (LEFT or RIGHT) and isn't returned -- the search this feeds
   // always runs against the new-side SHA regardless of which side the
   // text was selected on.
-  function computeSymbolSelection(): string | null {
+  interface SymbolSelection {
+    symbol: string;
+    line: number;
+    side: "LEFT" | "RIGHT";
+  }
+
+  function computeSymbolSelection(): SymbolSelection | null {
     if (typeof window === "undefined") return null;
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || sel.rangeCount === 0) return null;
@@ -265,9 +275,14 @@
     const side = anchorWrap.dataset.anchorSide;
     if (side !== "LEFT" && side !== "RIGHT") return null;
 
+    // The line the symbol sits on. Already validated to be a single
+    // .line-wrap above, so this is the selection's one and only line.
+    const line = Number(anchorWrap.dataset.anchorLine);
+    if (!Number.isInteger(line) || line <= 0) return null;
+
     const text = sel.toString().trim();
     if (!isSymbolQuery(text)) return null;
-    return text;
+    return { symbol: text, line, side };
   }
 
   function snapshotRangeFor(side: "LEFT" | "RIGHT"): void {
@@ -383,9 +398,21 @@
   // floating toolbar — which has no other trigger to disappear — goes
   // away along with the leftover text-selection highlight.
   function searchSymbolFromToolbar(): void {
-    const sym = liveSymbolSelection ?? "";
-    if (!isSymbolQuery(sym)) return;
-    void symbolRefsStore.search(owner, name, number, currentCommitSha(), sym);
+    const selection = liveSymbolSelectionInfo;
+    if (selection === null || !isSymbolQuery(selection.symbol)) return;
+    // Tell the gutter where this search came from, so its Back button
+    // returns to the symbol itself rather than to whatever line the
+    // viewport happened to be centred on. file.path (not renderedPath,
+    // which substitutes old_path for deleted files) is what the DOM
+    // addresses lines by -- see data-file-path on the wrapper below.
+    symbolRefsStore.setOrigin({
+      path: file.path,
+      line: selection.line,
+      side: selection.side,
+    });
+    void symbolRefsStore.search(
+      owner, name, number, currentCommitSha(), selection.symbol,
+    );
     if (typeof window !== "undefined") {
       window.getSelection()?.removeAllRanges();
     }
