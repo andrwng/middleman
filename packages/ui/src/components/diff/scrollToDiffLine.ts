@@ -127,3 +127,91 @@ export async function scrollToDiffLine(
   deps.requestRevealLine(target.path, target.line);
   return scrollToFileHeader(target.path) ? "pending" : "missing";
 }
+
+// highlightedDiffPosition reports the line the most recent jump landed on, or
+// null when nothing is highlighted (nothing has been jumped to yet, or the
+// gutter closed and cleared it).
+//
+// Preferred over currentDiffPosition below when recording a departure point,
+// for two reasons. It is exact: flashDiffLine adds the highlight class
+// synchronously while scrolling with behavior: "smooth", so for a few hundred
+// milliseconds the viewport is still travelling and any geometry read lands
+// mid-animation on an arbitrary line -- which is precisely what made a second
+// ref click record somewhere the reader had never been. And it is deliberate:
+// a jump target is a place the reader chose to go, where the viewport midline
+// is merely where the content happens to sit.
+//
+// The consequence worth knowing: if the reader jumps and then scrolls away by
+// hand, this still reports the jump target rather than their new view. That is
+// intended, and the reason is not the race above -- it is that a scroll offset
+// is not a place a person can name. Scrolling is imprecise and the exact
+// position it lands on is not legible to whoever is reading the diff, so it is
+// not somewhere worth being returned to. A jumped-to line and a highlighted
+// symbol are; a viewport is only ever a fallback for having nothing better.
+// Do not "fix" this to track manual scrolling.
+export function highlightedDiffPosition(): DiffJumpTarget | null {
+  const el = highlightedEl;
+  if (!el || !el.isConnected) return null;
+  const line = Number(el.dataset.anchorLine);
+  if (!Number.isInteger(line) || line <= 0) return null;
+  const path = el.closest<HTMLElement>(".diff-file")?.dataset.filePath;
+  if (!path) return null;
+  return { path, line, side: el.dataset.anchorSide === "LEFT" ? "LEFT" : "RIGHT" };
+}
+
+// currentDiffPosition reports where the reader currently is: the anchored
+// line under the vertical midline of the diff scroll container.
+//
+// The midline, not the top edge, because flashDiffLine above scrolls with
+// block: "center" -- a jump leaves its target at the middle of the viewport,
+// so that is where the reader is looking. An earlier version returned the
+// topmost partially-visible line instead, and the mismatch was the whole
+// defect: every jump recorded a point half a viewport ABOVE the reader, so
+// Back returned them to a line they had never been on (consistently, since
+// the same target always yields the same viewport), and jumpTo's
+// self-reference guard became unreachable because the captured line could
+// never equal the line just jumped to. Keep capture and restore agreeing on
+// what "the reader's position" means; if flashDiffLine's block ever changes,
+// this must change with it.
+//
+// It queries `document` for `.diff-area` rather than taking the element as a
+// parameter, following findDiffLineEl above -- callers are components that do
+// not own the scroll container, and threading a ref through them buys nothing.
+//
+// Returns null when there is no diff area and when no candidate yields a
+// usable (path, line). Callers treat null as "nothing worth recording" and
+// skip the push -- a missing trail entry is a far better failure than a
+// position that jumps somewhere wrong.
+//
+// NOTE: jsdom reports every getBoundingClientRect() as zeros, so this returns
+// the last valid candidate there unless a test stubs rects. Component tests
+// mock this function wholesale; scrollToDiffLine.test.ts stubs the rects.
+export function currentDiffPosition(): DiffJumpTarget | null {
+  const area = document.querySelector<HTMLElement>(".diff-area");
+  if (!area) return null;
+  const areaRect = area.getBoundingClientRect();
+  const midY = areaRect.top + areaRect.height / 2;
+  const candidates = area.querySelectorAll<HTMLElement>(
+    "[data-anchor-line][data-anchor-side]",
+  );
+  // Tracks the last usable candidate above the midline, for the case where
+  // nothing reaches it: content shorter than the viewport, or scrolled hard to
+  // the end. The last line is then the closest thing to the reader's position,
+  // and returning null instead would silently drop trail entries.
+  let lastAbove: DiffJumpTarget | null = null;
+  for (const el of candidates) {
+    const line = Number(el.dataset.anchorLine);
+    if (!Number.isInteger(line) || line <= 0) continue;
+    const path = el.closest<HTMLElement>(".diff-file")?.dataset.filePath;
+    if (!path) continue;
+    const target: DiffJumpTarget = {
+      path,
+      line,
+      side: el.dataset.anchorSide === "LEFT" ? "LEFT" : "RIGHT",
+    };
+    // The first line whose bottom reaches the midline is the line under it.
+    if (el.getBoundingClientRect().bottom >= midY) return target;
+    lastAbove = target;
+  }
+  return lastAbove;
+}

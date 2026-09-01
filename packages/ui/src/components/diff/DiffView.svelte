@@ -195,6 +195,25 @@
       e.preventDefault();
       diffStore.jumpToNextUnreviewed();
     }
+
+    // Opens the symbol-refs search box. Gated on a resolvable SHA for the
+    // same reason the toolbar button is: hits numbered against no SHA
+    // cannot be resolved back to rendered lines.
+    //
+    // Like the other single-letter shortcuts here, this fires even when a
+    // modal is open over the diff. That is this handler's established
+    // behaviour; making one key modal-aware where j/k/m/[/] are not would
+    // be the surprising choice.
+    //
+    // The SHA gate is a condition ON THIS BLOCK, not an early return from
+    // the handler: `s` happens to be the last key handled here today, so a
+    // return would be equivalent -- right up until the next key is
+    // appended below it and silently stops firing whenever the scope has
+    // no resolvable SHA.
+    if (e.key === "s" && currentSha !== "") {
+      e.preventDefault();
+      symbolRefsStore.openBlank();
+    }
   }
 
   $effect(() => {
@@ -318,7 +337,10 @@
       </div>
     {:else if diff}
       <div class="diff-main">
-        <DiffToolbar onReviewClick={() => { reviewPanelOpen = true; }} />
+        <DiffToolbar
+          onReviewClick={() => { reviewPanelOpen = true; }}
+          onRefsClick={() => symbolRefsStore.openBlank()}
+        />
         <div class="diff-area-row" bind:this={diffAreaRow}>
           <div
             class="diff-area"

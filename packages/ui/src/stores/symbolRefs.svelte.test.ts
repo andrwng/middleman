@@ -269,3 +269,194 @@ describe("symbolRefs store", () => {
     expect(store.getStatus()).toBe("ready");
   });
 });
+
+describe("createSymbolRefsStore: openBlank", () => {
+  it("moves an idle store to prompt and makes it active", () => {
+    const store = createSymbolRefsStore({ client: stubClient() });
+    expect(store.getStatus()).toBe("idle");
+    expect(store.isActive()).toBe(false);
+
+    store.openBlank();
+
+    expect(store.getStatus()).toBe("prompt");
+    expect(store.isActive()).toBe(true);
+    expect(store.getQuery()).toBe("");
+    expect(store.getHits()).toEqual([]);
+  });
+
+  it("bumps focusSeq on every call, including when already in prompt", () => {
+    const store = createSymbolRefsStore({ client: stubClient() });
+    const before = store.getFocusSeq();
+
+    store.openBlank();
+    const afterFirst = store.getFocusSeq();
+    store.openBlank();
+
+    expect(afterFirst).toBeGreaterThan(before);
+    expect(store.getFocusSeq()).toBeGreaterThan(afterFirst);
+  });
+
+  // The whole point of openBlank: reaching for the search box must never
+  // discard a result list the user is reading.
+  it("leaves an existing result set completely untouched", async () => {
+    const hits = [makeHit({ line: 7 })];
+    const store = createSymbolRefsStore({
+      client: stubClient({
+        GET: vi.fn(async () => ({ data: makeResponse("Foo", hits), error: undefined })),
+      }),
+    });
+    await store.search("o", "n", 1, "abc123", "Foo");
+    expect(store.getStatus()).toBe("ready");
+
+    const focusSeqBefore = store.getFocusSeq();
+    store.openBlank();
+
+    expect(store.getStatus()).toBe("ready");
+    expect(store.getQuery()).toBe("Foo");
+    expect(store.getHits()).toEqual(hits);
+    expect(store.getInPrTotal()).toBe(1);
+    expect(store.getFocusSeq()).toBeGreaterThan(focusSeqBefore);
+  });
+
+  it("returns to idle on close, so a later openBlank prompts again", () => {
+    const store = createSymbolRefsStore({ client: stubClient() });
+    store.openBlank();
+    store.close();
+    expect(store.getStatus()).toBe("idle");
+    expect(store.isActive()).toBe(false);
+  });
+});
+
+describe("createSymbolRefsStore: the back stack", () => {
+  function pos(line: number): { path: string; line: number } {
+    return { path: "a.go", line };
+  }
+
+  it("starts empty and pops nothing", () => {
+    const store = createSymbolRefsStore({ client: stubClient() });
+    expect(store.canGoBack()).toBe(false);
+    expect(store.popPosition()).toBeNull();
+  });
+
+  it("pops in last-in-first-out order and drains to empty", () => {
+    const store = createSymbolRefsStore({ client: stubClient() });
+    store.pushPosition(pos(10));
+    store.pushPosition(pos(20));
+
+    expect(store.canGoBack()).toBe(true);
+    expect(store.popPosition()).toEqual(pos(20));
+    expect(store.popPosition()).toEqual(pos(10));
+    expect(store.canGoBack()).toBe(false);
+    expect(store.popPosition()).toBeNull();
+  });
+
+  it("keeps the newest 10 entries, dropping the oldest", () => {
+    const store = createSymbolRefsStore({ client: stubClient() });
+    for (let i = 1; i <= 12; i++) store.pushPosition(pos(i));
+
+    const drained: number[] = [];
+    for (;;) {
+      const p = store.popPosition();
+      if (p === null) break;
+      drained.push(p.line);
+    }
+
+    // 1 and 2 fell off the bottom; the rest survive, newest first.
+    expect(drained).toEqual([12, 11, 10, 9, 8, 7, 6, 5, 4, 3]);
+  });
+
+  it("preserves the side of a captured position", () => {
+    const store = createSymbolRefsStore({ client: stubClient() });
+    store.pushPosition({ path: "a.go", line: 5, side: "LEFT" });
+
+    expect(store.popPosition()).toEqual({ path: "a.go", line: 5, side: "LEFT" });
+  });
+
+  it("clears the stack on close, since the gutter's trail dies with it", () => {
+    const store = createSymbolRefsStore({ client: stubClient() });
+    store.pushPosition(pos(10));
+
+    store.close();
+
+    expect(store.canGoBack()).toBe(false);
+  });
+
+  // The trail deliberately survives a new search: the positions are still
+  // valid for the same SHA, and DiffView closes the store outright when
+  // the scope or SHA moves -- which is what clears them.
+  it("does NOT clear the stack on a new search", async () => {
+    const store = createSymbolRefsStore({
+      client: stubClient({
+        GET: vi.fn(async () => ({ data: makeResponse("Foo", [makeHit()]), error: undefined })),
+      }),
+    });
+    store.pushPosition(pos(10));
+
+    await store.search("o", "n", 1, "abc123", "Foo");
+
+    expect(store.canGoBack()).toBe(true);
+    expect(store.popPosition()).toEqual(pos(10));
+  });
+});
+
+// The launch point a selection-side search records, so the gutter's Back button
+// can return to the highlighted symbol rather than to the viewport's midline.
+describe("createSymbolRefsStore: the search origin", () => {
+  const origin = { path: "src/v/kafka/handler.cc", line: 3227, side: "RIGHT" as const };
+
+  it("starts empty and round-trips what was set", () => {
+    const store = createSymbolRefsStore({ client: stubClient() });
+    expect(store.getOrigin()).toBeNull();
+
+    store.setOrigin(origin);
+
+    expect(store.getOrigin()).toEqual(origin);
+  });
+
+  it("reading does not consume it -- only clearOrigin does", () => {
+    const store = createSymbolRefsStore({ client: stubClient() });
+    store.setOrigin(origin);
+
+    expect(store.getOrigin()).toEqual(origin);
+    expect(store.getOrigin()).toEqual(origin);
+    store.clearOrigin();
+
+    expect(store.getOrigin()).toBeNull();
+  });
+
+  // The toolbar button and the `s` key know no launch point, and a stale origin
+  // from an earlier selection-side search would send Back to an unrelated
+  // symbol.
+  it("is cleared by openBlank", () => {
+    const store = createSymbolRefsStore({ client: stubClient() });
+    store.setOrigin(origin);
+
+    store.openBlank();
+
+    expect(store.getOrigin()).toBeNull();
+  });
+
+  it("is cleared by close", () => {
+    const store = createSymbolRefsStore({ client: stubClient() });
+    store.setOrigin(origin);
+
+    store.close();
+
+    expect(store.getOrigin()).toBeNull();
+  });
+
+  // Deliberate: re-querying from the gutter's own input does not change where
+  // the reader began, so "return me to where I started" still holds.
+  it("survives a search, so re-querying keeps the launch point", async () => {
+    const store = createSymbolRefsStore({
+      client: stubClient({
+        GET: vi.fn(async () => ({ data: makeResponse("Foo", [makeHit()]), error: undefined })),
+      }),
+    });
+    store.setOrigin(origin);
+
+    await store.search("o", "n", 1, "abc123", "Foo");
+
+    expect(store.getOrigin()).toEqual(origin);
+  });
+});

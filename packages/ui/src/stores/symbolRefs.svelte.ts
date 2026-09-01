@@ -4,11 +4,36 @@ import type { components } from "../api/generated/schema.js";
 // Use the exact generated names Task 4 reported.
 export type SymbolHit = components["schemas"]["SymbolHit"];
 
-export type SymbolRefsStatus = "idle" | "loading" | "ready" | "error";
+// "prompt" is the search box open with nothing searched yet: active (so
+// the gutter mounts) but with no query, no hits and no request in
+// flight. It sits between "idle" and "loading" in the lifecycle, and
+// exists because isActive() is `status !== "idle"` -- a distinct
+// non-idle status is all it takes to open a blank gutter, with no change
+// to the mount condition in DiffView.
+export type SymbolRefsStatus = "idle" | "prompt" | "loading" | "ready" | "error";
 
 // The longest selection worth searching, matching the server's
 // symbolRefsMaxQueryBytes: 128 bytes of UTF-8, not UTF-16 code units.
 const MAX_QUERY_BYTES = 128;
+
+// How many jump-back entries to keep. Small on purpose: the stack is a
+// short "walk back the way I came" trail, not a session history.
+const MAX_BACK_DEPTH = 10;
+
+// A diff position the user jumped away from, in the same shape the DOM
+// addresses lines by.
+//
+// Declared here rather than imported from
+// components/diff/scrollToDiffLine.ts's structurally identical
+// DiffJumpTarget, so a store does not depend on a component module. The
+// two are deliberately compatible: a position popped from this stack is
+// handed straight to scrollToDiffLine(). `side` is carried because the
+// topmost visible line can be a deleted line, which anchors LEFT.
+export interface DiffPosition {
+  path: string;
+  line: number;
+  side?: "LEFT" | "RIGHT";
+}
 
 // isSymbolQuery gates the "Refs" affordance: a searchable symbol is a
 // single run of non-whitespace within the server's byte-length bound.
@@ -53,6 +78,30 @@ export function createSymbolRefsStore(opts: SymbolRefsStoreOptions) {
   let status = $state<SymbolRefsStatus>("idle");
   let errorMsg = $state<string | null>(null);
 
+  // A monotonic "focus the search input" signal. The gutter watches it in
+  // an $effect and focuses + selects its input on every change. A counter
+  // rather than a boolean because the same request can legitimately arrive
+  // twice in a row (pressing `s` while the box is already open should
+  // refocus it), and a boolean would coalesce the second request away.
+  let focusSeq = $state(0);
+
+  // Positions the user jumped away from, oldest first. Pushed on jump
+  // only -- never on search -- and popped by the gutter's Back button,
+  // which never pushes what it leaves, so the stack strictly drains.
+  let backStack = $state<DiffPosition[]>([]);
+
+  // Where a search was launched from, when the launcher knows something more
+  // specific than "wherever the viewport happens to be". The selection-side
+  // Refs button sets it to the highlighted symbol's own line: the reader means
+  // "put me back on that symbol", regardless of where on screen it sat.
+  //
+  // It survives until the first jump actually records a departure point, then
+  // is cleared -- from then on the reader is parked on a line a jump sent them
+  // to, which currentDiffPosition() reports exactly. Deliberately NOT cleared
+  // by search(): re-querying from the gutter's own input does not change where
+  // the reader started, so "return me to where I began" still holds.
+  let origin = $state<DiffPosition | null>(null);
+
   let seq = 0;
 
   function getQuery(): string {
@@ -81,6 +130,9 @@ export function createSymbolRefsStore(opts: SymbolRefsStoreOptions) {
   }
   function getError(): string | null {
     return errorMsg;
+  }
+  function getFocusSeq(): number {
+    return focusSeq;
   }
   function isActive(): boolean {
     return status !== "idle";
@@ -128,6 +180,57 @@ export function createSymbolRefsStore(opts: SymbolRefsStoreOptions) {
     status = "ready";
   }
 
+  // openBlank opens the search box. It moves an idle store to "prompt" so
+  // the gutter mounts with an empty query, and always signals a focus
+  // request.
+  //
+  // When the store is NOT idle it deliberately changes nothing but the
+  // focus signal: reaching for the search box while results are on screen
+  // must not discard them. The gutter seeds its input from getQuery() and
+  // selects the text, so typing still replaces the query immediately.
+  function openBlank(): void {
+    if (status === "idle") {
+      status = "prompt";
+    }
+    // The toolbar button and the `s` key know no launch point, and a stale
+    // origin left by an earlier selection-side search would send Back to a
+    // symbol unrelated to whatever is typed next.
+    origin = null;
+    focusSeq++;
+  }
+
+  function pushPosition(p: DiffPosition): void {
+    const next = [...backStack, p];
+    backStack = next.length > MAX_BACK_DEPTH ? next.slice(next.length - MAX_BACK_DEPTH) : next;
+  }
+
+  function popPosition(): DiffPosition | null {
+    if (backStack.length === 0) return null;
+    const p = backStack[backStack.length - 1]!;
+    backStack = backStack.slice(0, -1);
+    return p;
+  }
+
+  function canGoBack(): boolean {
+    return backStack.length > 0;
+  }
+
+  function setOrigin(p: DiffPosition | null): void {
+    origin = p;
+  }
+
+  function getOrigin(): DiffPosition | null {
+    return origin;
+  }
+
+  // Cleared by the caller only once a departure point has actually been
+  // recorded, never merely on reading it: a jump that resolves "missing" never
+  // moves the reader, so consuming the origin there would silently lose the
+  // launch point for the next, valid jump.
+  function clearOrigin(): void {
+    origin = null;
+  }
+
   function close(): void {
     seq++;
     query = "";
@@ -139,11 +242,14 @@ export function createSymbolRefsStore(opts: SymbolRefsStoreOptions) {
     classifier = "";
     status = "idle";
     errorMsg = null;
+    backStack = [];
+    origin = null;
   }
 
   return {
     getQuery, getSearchedSha, getHits, getInPrTotal, getOutsidePrTotal, isTruncated,
-    getClassifier, getStatus, getError, isActive, search, close,
+    getClassifier, getStatus, getError, isActive, getFocusSeq, search, close, openBlank,
+    pushPosition, popPosition, canGoBack, setOrigin, getOrigin, clearOrigin,
   };
 }
 

@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearDiffLineHighlight,
+  highlightedDiffPosition,
+  currentDiffPosition,
   findDiffLineEl,
+  flashDiffLine,
   scrollToDiffLine,
   type DiffJumpDeps,
 } from "./scrollToDiffLine";
@@ -225,5 +228,236 @@ describe("scrollToDiffLine", () => {
 
     expect(outcome).toBe("missing");
     expect(deps.clearRevealTarget).not.toHaveBeenCalled();
+  });
+});
+
+// currentDiffPosition reads layout, which jsdom does not implement -- so
+// every element's rect is stubbed explicitly here. stubRect fakes only
+// the two edges the function compares.
+function stubRect(el: HTMLElement, top: number, bottom: number): void {
+  // NOTE: deviates from the brief's literal line-wrapping. The brief put
+  // `as DOMRect` on its own line after the closing `)`; this repo's esbuild
+  // (0.27.7, used by Vite's transform) inserts an ASI semicolon right after
+  // that `)` in that layout, splitting the statement and producing a parse
+  // error ("Expected ';' but found 'DOMRect'") -- verified with an isolated
+  // esbuild repro outside this file before changing anything. Moving
+  // `as DOMRect` onto the same line as the object literal it casts, inside
+  // the parens, is token-for-token the same assertion with no ASI boundary
+  // in between; behavior is unchanged.
+  el.getBoundingClientRect = () =>
+    ({ top, bottom, left: 0, right: 0, width: 0, height: bottom - top, x: 0, y: top } as DOMRect);
+}
+
+function makeDiffArea(): HTMLElement {
+  const area = document.createElement("div");
+  area.className = "diff-area";
+  document.body.appendChild(area);
+  return area;
+}
+
+describe("currentDiffPosition", () => {
+  it("returns null when there is no diff area", () => {
+    expect(currentDiffPosition()).toBeNull();
+  });
+
+  it("returns null when the diff area has no anchored lines", () => {
+    const area = makeDiffArea();
+    stubRect(area, 100, 500);
+
+    expect(currentDiffPosition()).toBeNull();
+  });
+
+  // The reader's position is the line at the viewport's MIDLINE, not its top
+  // edge, because flashDiffLine scrolls with block: "center". Every fixture
+  // below therefore spans the full container height -- a fixture crowded into
+  // the top of the viewport cannot tell the two definitions apart, which is
+  // exactly how the original topmost-line implementation passed review.
+  it("returns the line under the viewport's midline, not the topmost visible one", () => {
+    const area = makeDiffArea();
+    stubRect(area, 100, 500);   // midline at y = 300
+    const file = document.createElement("div");
+    file.className = "diff-file";
+    file.dataset.filePath = "internal/handler.go";
+    area.appendChild(file);
+
+    const scrolledPast = appendLineWrap(file, 10, "RIGHT");
+    const topmostVisible = appendLineWrap(file, 11, "RIGHT");
+    const aboveMid = appendLineWrap(file, 12, "RIGHT");
+    const atMid = appendLineWrap(file, 13, "RIGHT");
+    const belowMid = appendLineWrap(file, 14, "RIGHT");
+    stubRect(scrolledPast, 60, 80);      // entirely above area.top
+    stubRect(topmostVisible, 90, 110);   // crosses area.top
+    stubRect(aboveMid, 110, 290);
+    stubRect(atMid, 290, 310);           // spans the midline
+    stubRect(belowMid, 310, 480);
+
+    expect(currentDiffPosition()).toEqual({
+      path: "internal/handler.go",
+      line: 13,
+      side: "RIGHT",
+    });
+  });
+
+  // This is the bug that shipped: a jump centres its target, so the very next
+  // capture must return that same line. When it returned the topmost visible
+  // line instead, it recorded a point half a viewport above the reader --
+  // sending Back to the wrong line, and making jumpTo's self-reference guard
+  // unreachable, since the captured line could never equal the line just
+  // jumped to.
+  it("returns the line a jump just centred, so a re-capture round-trips", () => {
+    const area = makeDiffArea();
+    stubRect(area, 100, 500);   // midline at y = 300
+    const file = document.createElement("div");
+    file.className = "diff-file";
+    file.dataset.filePath = "src/v/kafka/handler.cc";
+    area.appendChild(file);
+
+    // Geometry as it stands just after flashDiffLine centred line 3227.
+    const earlier = appendLineWrap(file, 3073, "RIGHT");
+    const centred = appendLineWrap(file, 3227, "RIGHT");
+    const later = appendLineWrap(file, 3300, "RIGHT");
+    stubRect(earlier, 100, 290);
+    stubRect(centred, 295, 305);
+    stubRect(later, 305, 495);
+
+    expect(currentDiffPosition()).toEqual({
+      path: "src/v/kafka/handler.cc",
+      line: 3227,
+      side: "RIGHT",
+    });
+  });
+
+  // Content shorter than the viewport, or scrolled hard to the end: nothing
+  // reaches the midline, so the last real line is the closest thing to where
+  // the reader is. Returning null here would silently drop trail entries.
+  it("falls back to the last valid line when nothing reaches the midline", () => {
+    const area = makeDiffArea();
+    stubRect(area, 100, 500);   // midline at y = 300
+    const file = document.createElement("div");
+    file.className = "diff-file";
+    file.dataset.filePath = "internal/cache.go";
+    area.appendChild(file);
+
+    const first = appendLineWrap(file, 1, "RIGHT");
+    const last = appendLineWrap(file, 2, "RIGHT");
+    stubRect(first, 105, 125);
+    stubRect(last, 125, 145);
+
+    expect(currentDiffPosition()).toEqual({
+      path: "internal/cache.go",
+      line: 2,
+      side: "RIGHT",
+    });
+  });
+
+  // The topmost visible line can be a deleted line, which anchors LEFT.
+  // Losing the side would send a later jump to the wrong column.
+  it("carries the LEFT side of a deleted line", () => {
+    const area = makeDiffArea();
+    stubRect(area, 100, 500);
+    const file = document.createElement("div");
+    file.className = "diff-file";
+    file.dataset.filePath = "config.yaml";
+    area.appendChild(file);
+
+    const del = appendLineWrap(file, 4, "LEFT");
+    stubRect(del, 105, 125);
+
+    expect(currentDiffPosition()).toEqual({ path: "config.yaml", line: 4, side: "LEFT" });
+  });
+
+  // The integer guard exists to stop a malformed data-anchor-line from
+  // being reported as a position: Number("oops") is NaN and "0" is a line
+  // number no diff has, and either one would be handed to a later jump as
+  // if it were real -- the wrong-line failure mode this feature keeps
+  // producing. Both malformed candidates sit ABOVE a well-formed one, so
+  // dropping the guard reports the bad one instead of skipping to line 12.
+  it("skips a candidate whose anchor line is not a positive integer", () => {
+    const area = makeDiffArea();
+    stubRect(area, 100, 500);
+    const file = document.createElement("div");
+    file.className = "diff-file";
+    file.dataset.filePath = "internal/handler.go";
+    area.appendChild(file);
+
+    const malformed = appendLineWrap(file, 7, "RIGHT");
+    malformed.dataset.anchorLine = "oops";
+    const zero = appendLineWrap(file, 0, "RIGHT");
+    const good = appendLineWrap(file, 12, "RIGHT");
+    stubRect(malformed, 105, 125);
+    stubRect(zero, 125, 145);
+    stubRect(good, 145, 165);
+
+    expect(currentDiffPosition()).toEqual({
+      path: "internal/handler.go",
+      line: 12,
+      side: "RIGHT",
+    });
+  });
+
+  it("skips an anchored line that is not inside a .diff-file", () => {
+    const area = makeDiffArea();
+    stubRect(area, 100, 500);
+    const orphan = document.createElement("div");
+    orphan.dataset.anchorLine = "3";
+    orphan.dataset.anchorSide = "RIGHT";
+    area.appendChild(orphan);
+    stubRect(orphan, 105, 125);
+
+    expect(currentDiffPosition()).toBeNull();
+  });
+});
+
+describe("highlightedDiffPosition", () => {
+  it("returns null when nothing has been highlighted", () => {
+    expect(highlightedDiffPosition()).toBeNull();
+  });
+
+  // No rects are stubbed in these tests, deliberately: reporting the last
+  // landing must not depend on layout, which is what keeps it correct while a
+  // smooth scroll is still travelling.
+  it("reports the line the last jump landed on, reading no geometry", () => {
+    const file = makeDiffFile("internal/handler.go");
+
+    flashDiffLine(appendLineWrap(file, 12, "RIGHT"));
+
+    expect(highlightedDiffPosition()).toEqual({
+      path: "internal/handler.go",
+      line: 12,
+      side: "RIGHT",
+    });
+  });
+
+  it("carries a LEFT-anchored landing", () => {
+    const file = makeDiffFile("config.yaml");
+
+    flashDiffLine(appendLineWrap(file, 4, "LEFT"));
+
+    expect(highlightedDiffPosition()).toEqual({
+      path: "config.yaml",
+      line: 4,
+      side: "LEFT",
+    });
+  });
+
+  it("returns null once the highlight is cleared", () => {
+    const file = makeDiffFile("internal/handler.go");
+    flashDiffLine(appendLineWrap(file, 12, "RIGHT"));
+
+    clearDiffLineHighlight();
+
+    expect(highlightedDiffPosition()).toBeNull();
+  });
+
+  // A highlighted line whose element has been detached -- its file collapsed,
+  // or the diff re-rendered -- is no longer a place to return to.
+  it("returns null when the highlighted element has left the document", () => {
+    const file = makeDiffFile("internal/handler.go");
+    const wrap = appendLineWrap(file, 12, "RIGHT");
+    flashDiffLine(wrap);
+
+    wrap.remove();
+
+    expect(highlightedDiffPosition()).toBeNull();
   });
 });

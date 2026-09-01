@@ -26,10 +26,22 @@ const scrollToDiffLineMock = vi.fn(
 // wholesale rather than exercising the real DOM/classList logic, which
 // scrollToDiffLine.test.ts already covers directly.
 const clearDiffLineHighlightMock = vi.fn();
+// currentDiffPositionMock backs the jump-back tests' control over "where
+// the reader currently is" -- mocked wholesale like the two above, and
+// defaulting to null (no determinable position) so a test that doesn't
+// care about it never records a departure by surprise.
+const highlightedDiffPositionMock = vi.fn(
+  (): { path: string; line: number; side?: "LEFT" | "RIGHT" } | null => null,
+);
+const currentDiffPositionMock = vi.fn(
+  (): { path: string; line: number; side?: "LEFT" | "RIGHT" } | null => null,
+);
 vi.mock("./scrollToDiffLine.js", () => ({
   scrollToDiffLine: (target: { path: string; line: number }, deps: DiffJumpDeps) =>
     scrollToDiffLineMock(target, deps),
   clearDiffLineHighlight: () => clearDiffLineHighlightMock(),
+  currentDiffPosition: () => currentDiffPositionMock(),
+  highlightedDiffPosition: () => highlightedDiffPositionMock(),
 }));
 
 import SymbolRefsGutter from "./SymbolRefsGutter.svelte";
@@ -51,11 +63,26 @@ interface FakeStoreOverrides {
   classifier?: string;
   status?: SymbolRefsStatus;
   error?: string | null;
+  // Backs getFocusSeq(). Static here -- the fake is a plain object, not
+  // reactive -- so a test that needs the value to CHANGE must build the
+  // real store instead (see the focus test below).
+  focusSeq?: number;
   // Paths the fake diff store reports as part of the currently
   // rendered diff (backs diffStore.getDiff()?.files). Defaults to
   // every hit's own path, so tests that don't care about the
   // "not in this view" marker never see it fire by surprise.
   diffFiles?: string[];
+  // Backs canGoBack(). The push/pop spies are asserted on directly.
+  canGoBack?: boolean;
+  // Backs getOrigin(): the launch point a selection-side search records.
+  origin?: { path: string; line: number; side?: "LEFT" | "RIGHT" } | null;
+  // Backs popPosition(). Carries an optional side because a popped
+  // LEFT-side (deleted) line resolves differently from a RIGHT one -- see
+  // the LEFT-side Back tests below.
+  popsTo?: { path: string; line: number; side?: "LEFT" | "RIGHT" } | null;
+  // Backs diffStore.getCurrentCommitSha(). Defaults to a resolvable SHA;
+  // "" models a scope with no commit to search (e.g. a Refresh in flight).
+  sha?: string;
 }
 
 function fakeSymbolRefsStore(overrides: FakeStoreOverrides = {}) {
@@ -68,6 +95,10 @@ function fakeSymbolRefsStore(overrides: FakeStoreOverrides = {}) {
     classifier = "ctags",
     status = "ready",
     error = null,
+    focusSeq = 0,
+    canGoBack = false,
+    origin = null,
+    popsTo = null,
   } = overrides;
   return {
     getQuery: () => query,
@@ -79,25 +110,34 @@ function fakeSymbolRefsStore(overrides: FakeStoreOverrides = {}) {
     getStatus: () => status,
     getError: () => error,
     isActive: () => status !== "idle",
+    getFocusSeq: () => focusSeq,
     search: vi.fn(async () => {}),
     close: vi.fn(),
+    openBlank: vi.fn(),
+    canGoBack: () => canGoBack,
+    getOrigin: () => origin,
+    setOrigin: vi.fn(),
+    clearOrigin: vi.fn(),
+    pushPosition: vi.fn(),
+    popPosition: vi.fn(() => popsTo),
   };
 }
 
-function fakeDiffStore(files: string[]) {
+function fakeDiffStore(files: string[], sha = "abc123") {
   return {
     isFileCollapsed: vi.fn(() => false),
     toggleFileCollapsed: vi.fn(),
     requestRevealLine: vi.fn(),
     consumeRevealTarget: vi.fn(),
     getDiff: vi.fn(() => ({ files: files.map((path) => ({ path })) })),
+    getCurrentCommitSha: () => sha,
   };
 }
 
 function renderGutter(overrides: FakeStoreOverrides = {}) {
   const symbolRefsStore = fakeSymbolRefsStore(overrides);
   const diffFiles = overrides.diffFiles ?? (overrides.hits ?? []).map((h) => h.path);
-  const diffStore = fakeDiffStore(diffFiles);
+  const diffStore = fakeDiffStore(diffFiles, overrides.sha);
   const rendered = render(SymbolRefsGutter, {
     props: { owner: "o", name: "n", number: 1, width: 320 },
     context: new Map<symbol, unknown>([
@@ -127,6 +167,10 @@ afterEach(() => {
   cleanup();
   scrollToDiffLineMock.mockClear();
   clearDiffLineHighlightMock.mockClear();
+  currentDiffPositionMock.mockClear();
+  currentDiffPositionMock.mockReturnValue(null);
+  highlightedDiffPositionMock.mockClear();
+  highlightedDiffPositionMock.mockReturnValue(null);
 });
 
 describe("SymbolRefsGutter", () => {
@@ -145,8 +189,12 @@ describe("SymbolRefsGutter", () => {
   });
 
   it("renders the query and the in-PR count in the header", () => {
-    renderGutter({ query: "Frobnicate", hits: [hit()], inPrTotal: 7 });
-    expect(screen.getByText("Frobnicate")).toBeTruthy();
+    // The query now lives in the header's search input (an editable
+    // control has no textContent to match on), not in a read-only span,
+    // so it's read via .value rather than screen.getByText.
+    const { container } = renderGutter({ query: "Frobnicate", hits: [hit()], inPrTotal: 7 });
+    const input = container.querySelector<HTMLInputElement>("[data-testid='symref-search']");
+    expect(input?.value).toBe("Frobnicate");
     expect(screen.getByText("7")).toBeTruthy();
   });
 
@@ -800,5 +848,406 @@ describe("SymbolRefsGutter: anonymous namespace scopes", () => {
     expect(container.querySelector(".symref-row__text")?.textContent).toBe(
       "main.Cache.Get(k string)",
     );
+  });
+});
+
+// The header's query text is now an editable input, present in every
+// status, so a query can be retyped in place. "prompt" is the status the
+// toolbar button and the `s` hotkey open into: active (so the gutter is
+// mounted) with nothing searched yet.
+describe("SymbolRefsGutter: header search input", () => {
+  it("renders a hint and no rows in the prompt status", () => {
+    const { container } = renderGutter({ status: "prompt", hits: [], inPrTotal: 0 });
+
+    expect(container.querySelector(".symref-prompt")).not.toBeNull();
+    expect(container.querySelectorAll(".symref-row")).toHaveLength(0);
+  });
+
+  // Nothing has been searched yet, so the badge would read a meaningless 0.
+  it("renders no count badge in the prompt status, and does once results exist", () => {
+    const prompt = renderGutter({ status: "prompt", hits: [], inPrTotal: 0 });
+    expect(prompt.container.querySelector(".symref-header__count")).toBeNull();
+    cleanup();
+
+    const ready = renderGutter({ hits: [hit()], inPrTotal: 1 });
+    expect(ready.container.querySelector(".symref-header__count")?.textContent).toBe("1");
+  });
+
+  it("seeds the input from the current query so it can be edited in place", () => {
+    const { container } = renderGutter({ query: "handle", hits: [hit()], inPrTotal: 1 });
+
+    const input = container.querySelector<HTMLInputElement>("[data-testid='symref-search']");
+    expect(input?.value).toBe("handle");
+  });
+
+  it("searches on Enter with the diff store's current SHA", async () => {
+    const { container, symbolRefsStore } = renderGutter({ status: "prompt" });
+    const input = container.querySelector<HTMLInputElement>("[data-testid='symref-search']")!;
+
+    await fireEvent.input(input, { target: { value: "HandleRequest" } });
+    await fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(symbolRefsStore.search).toHaveBeenCalledWith("o", "n", 1, "abc123", "HandleRequest");
+  });
+
+  // isSymbolQuery rejects any whitespace, because a word-boundary
+  // fixed-string grep can never match a multi-word query. Saying so beats
+  // a search box that silently does nothing.
+  it("refuses a multi-word query and says why instead of searching", async () => {
+    const { container, symbolRefsStore } = renderGutter({ status: "prompt" });
+    const input = container.querySelector<HTMLInputElement>("[data-testid='symref-search']")!;
+
+    await fireEvent.input(input, { target: { value: "group manager" } });
+    await fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(symbolRefsStore.search).not.toHaveBeenCalled();
+    expect(container.querySelector(".symref-invalid")?.textContent).toMatch(/whitespace/i);
+  });
+
+  // The toolbar button and the `s` key both refuse to open without a
+  // resolvable commit; Enter must refuse for the same reason instead of
+  // firing a request the server rejects with a bare "sha is required".
+  it("refuses Enter while the scope has no resolvable commit, and says why", async () => {
+    const { container, symbolRefsStore } = renderGutter({ status: "prompt", sha: "" });
+    const input = container.querySelector<HTMLInputElement>("[data-testid='symref-search']")!;
+
+    await fireEvent.input(input, { target: { value: "HandleRequest" } });
+    await fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(symbolRefsStore.search).not.toHaveBeenCalled();
+    expect(container.querySelector(".symref-invalid")?.textContent).toMatch(
+      /no resolvable commit/i,
+    );
+  });
+
+  // Uses the REAL store: the notice-clearing effect keys off the store's
+  // committed query actually CHANGING, which the static fake cannot do.
+  // This models the selection-side Refs button (DiffFile calls search()
+  // directly) committing a query while this gutter sits open showing a
+  // refusal from a query the reader typed here.
+  it("drops a stale refusal when another entry point commits a query", async () => {
+    const store = createSymbolRefsStore({
+      client: stubClient([
+        { query: "Handler", hits: [], in_pr_total: 0, outside_pr_total: 0, truncated: false },
+      ]),
+    });
+    store.openBlank();
+    const { container } = render(SymbolRefsGutter, {
+      props: { owner: "o", name: "n", number: 1, width: 320 },
+      context: new Map<symbol, unknown>([
+        [STORES_KEY, { symbolRefs: store, diff: fakeDiffStore(["a.go"]) }],
+      ]),
+    });
+    await tick();
+    const input = container.querySelector<HTMLInputElement>("[data-testid='symref-search']")!;
+
+    await fireEvent.input(input, { target: { value: "group manager" } });
+    await fireEvent.keyDown(input, { key: "Enter" });
+    expect(container.querySelector(".symref-invalid")).not.toBeNull();
+
+    await store.search("o", "n", 1, "abc123", "Handler");
+    await tick();
+
+    expect(container.querySelector(".symref-invalid")).toBeNull();
+  });
+
+  it("does nothing on Enter with an empty query", async () => {
+    // query: "" is load-bearing -- fakeSymbolRefsStore defaults it to
+    // "Foo", which the input seeds from, so without this the draft is
+    // non-empty and Enter legitimately searches.
+    const { container, symbolRefsStore } = renderGutter({ status: "prompt", query: "" });
+    const input = container.querySelector<HTMLInputElement>("[data-testid='symref-search']")!;
+
+    await fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(symbolRefsStore.search).not.toHaveBeenCalled();
+  });
+
+  it("closes the gutter on Escape, matching the close button", async () => {
+    const { container, symbolRefsStore } = renderGutter({ status: "prompt" });
+    const input = container.querySelector<HTMLInputElement>("[data-testid='symref-search']")!;
+
+    await fireEvent.keyDown(input, { key: "Escape" });
+
+    expect(symbolRefsStore.close).toHaveBeenCalled();
+  });
+
+  // Uses the REAL store: focusSeq must actually change to trigger the
+  // component's $effect, and the fake store above is a plain, non-reactive
+  // object.
+  it("focuses and selects the input when the store signals a focus request", async () => {
+    const store = createSymbolRefsStore({ client: stubClient([]) });
+    store.openBlank();
+    const { container } = render(SymbolRefsGutter, {
+      props: { owner: "o", name: "n", number: 1, width: 320 },
+      context: new Map<symbol, unknown>([
+        [STORES_KEY, { symbolRefs: store, diff: fakeDiffStore([]) }],
+      ]),
+    });
+    await tick();
+    const input = container.querySelector<HTMLInputElement>("[data-testid='symref-search']")!;
+
+    // jsdom never blurs on its own, so without this the FIRST openBlank()'s
+    // mount-time focus would still be sitting on the input when the final
+    // assertion runs below -- passing even if the SECOND openBlank() failed
+    // to re-trigger the effect. Blurring here first makes the final
+    // assertion prove the second call actually re-fired it.
+    input.blur();
+    expect(document.activeElement).not.toBe(input);
+
+    store.openBlank();
+    await tick();
+
+    expect(document.activeElement).toBe(input);
+  });
+
+  // The selection-side Refs button (DiffFile's floating toolbar) calls
+  // search() directly and never bumps focusSeq, so the gutter mounting
+  // from that path must leave focus where the reader put it. If it steals
+  // focus into its input, DiffView's window keydown handler -- which
+  // ignores keys while an INPUT is focused -- silently drops j/k/[/]/m/s
+  // until the reader clicks away.
+  it("does not steal focus when it mounts from a search it did not ask to focus", async () => {
+    const { container } = renderGutter({ hits: [hit()], inPrTotal: 1 });
+    await tick();
+    const input = container.querySelector<HTMLInputElement>("[data-testid='symref-search']")!;
+
+    expect(document.activeElement).not.toBe(input);
+  });
+});
+
+// Clicking a row jumps the diff away from wherever the reader was. The
+// stack records that departure point so Back can walk it back. Pushes
+// happen on jump only -- never on search -- and Back never pushes what it
+// leaves, so the trail strictly drains.
+// A search launched by highlighting a symbol records that symbol's own line as
+// the departure point. Without this, the departure point is the line at the
+// viewport's midline -- which is not where the reader was looking if the symbol
+// they highlighted happened to sit near the top or bottom of the screen.
+// The line the last jump landed on beats the viewport, because flashDiffLine
+// applies its highlight synchronously while still smooth-scrolling: a geometry
+// read taken moments later lands mid-animation on a line the reader was never
+// on. That is what made a quick second ref click record a bogus departure
+// point -- an e2e round trip caught it landing on line 8 instead of 12.
+describe("SymbolRefsGutter: departure point precedence", () => {
+  const cacheHits = [hit({ path: "internal/cache.go", line: 12, text: "ref in cache" })];
+
+  it("prefers the last jump's landing over the viewport position", async () => {
+    highlightedDiffPositionMock.mockReturnValue({ path: "a.go", line: 3227, side: "RIGHT" });
+    currentDiffPositionMock.mockReturnValue({ path: "a.go", line: 8, side: "RIGHT" });
+    const { symbolRefsStore } = renderGutter({ hits: cacheHits, inPrTotal: 1 });
+
+    await fireEvent.click(screen.getByText("ref in cache"));
+
+    expect(symbolRefsStore.pushPosition).toHaveBeenCalledWith({
+      path: "a.go", line: 3227, side: "RIGHT",
+    });
+  });
+
+  it("falls back to the viewport when nothing has been jumped to yet", async () => {
+    highlightedDiffPositionMock.mockReturnValue(null);
+    currentDiffPositionMock.mockReturnValue({ path: "a.go", line: 8, side: "RIGHT" });
+    const { symbolRefsStore } = renderGutter({ hits: cacheHits, inPrTotal: 1 });
+
+    await fireEvent.click(screen.getByText("ref in cache"));
+
+    expect(symbolRefsStore.pushPosition).toHaveBeenCalledWith({
+      path: "a.go", line: 8, side: "RIGHT",
+    });
+  });
+
+  // The search's launch point outranks both.
+  it("prefers the search origin over the last landing", async () => {
+    highlightedDiffPositionMock.mockReturnValue({ path: "a.go", line: 3227, side: "RIGHT" });
+    currentDiffPositionMock.mockReturnValue({ path: "a.go", line: 8, side: "RIGHT" });
+    const origin = { path: "src/v/kafka/handler.cc", line: 99, side: "RIGHT" as const };
+    const { symbolRefsStore } = renderGutter({ hits: cacheHits, inPrTotal: 1, origin });
+
+    await fireEvent.click(screen.getByText("ref in cache"));
+
+    expect(symbolRefsStore.pushPosition).toHaveBeenCalledWith(origin);
+  });
+});
+
+describe("SymbolRefsGutter: the search's launch point", () => {
+  it("prefers the recorded origin over the viewport position", async () => {
+    currentDiffPositionMock.mockReturnValue({ path: "a.go", line: 3073, side: "RIGHT" });
+    const origin = { path: "src/v/kafka/handler.cc", line: 3227, side: "RIGHT" as const };
+    const hits = [hit({ path: "internal/cache.go", line: 12, text: "ref in cache" })];
+    const { symbolRefsStore } = renderGutter({ hits, inPrTotal: 1, origin });
+
+    await fireEvent.click(screen.getByText("ref in cache"));
+
+    expect(symbolRefsStore.pushPosition).toHaveBeenCalledWith(origin);
+  });
+
+  // Only the FIRST jump returns to the launch point; after that the reader is
+  // parked on a line a jump sent them to, which the viewport reports exactly.
+  it("clears the origin once a departure point has been recorded", async () => {
+    currentDiffPositionMock.mockReturnValue({ path: "a.go", line: 3073, side: "RIGHT" });
+    const origin = { path: "src/v/kafka/handler.cc", line: 3227, side: "RIGHT" as const };
+    const hits = [hit({ path: "internal/cache.go", line: 12, text: "ref in cache" })];
+    const { symbolRefsStore } = renderGutter({ hits, inPrTotal: 1, origin });
+
+    await fireEvent.click(screen.getByText("ref in cache"));
+
+    expect(symbolRefsStore.clearOrigin).toHaveBeenCalled();
+  });
+
+  // A "missing" jump never moves the reader, so the launch point still applies
+  // to whichever valid row they click next.
+  it("keeps the origin when the jump resolves \"missing\"", async () => {
+    scrollToDiffLineMock.mockResolvedValueOnce("missing");
+    const origin = { path: "src/v/kafka/handler.cc", line: 3227, side: "RIGHT" as const };
+    const hits = [hit({ path: "gone.go", line: 9, text: "ref in gone" })];
+    const { symbolRefsStore } = renderGutter({
+      hits, inPrTotal: 1, origin, diffFiles: ["gone.go"],
+    });
+
+    await fireEvent.click(screen.getByText("ref in gone"));
+
+    expect(symbolRefsStore.pushPosition).not.toHaveBeenCalled();
+    expect(symbolRefsStore.clearOrigin).not.toHaveBeenCalled();
+  });
+});
+
+describe("SymbolRefsGutter: jump-back stack", () => {
+  it("records the departure position before jumping", async () => {
+    currentDiffPositionMock.mockReturnValue({ path: "internal/handler.go", line: 40, side: "RIGHT" });
+    const hits = [hit({ path: "internal/cache.go", line: 12, text: "ref in cache" })];
+    const { symbolRefsStore } = renderGutter({ hits, inPrTotal: 1 });
+
+    await fireEvent.click(screen.getByText("ref in cache"));
+
+    expect(symbolRefsStore.pushPosition).toHaveBeenCalledWith({
+      path: "internal/handler.go",
+      line: 40,
+      side: "RIGHT",
+    });
+  });
+
+  it("pushes nothing when the current position cannot be determined", async () => {
+    currentDiffPositionMock.mockReturnValue(null);
+    const hits = [hit({ text: "ref line" })];
+    const { symbolRefsStore } = renderGutter({ hits, inPrTotal: 1 });
+
+    await fireEvent.click(screen.getByText("ref line"));
+
+    expect(symbolRefsStore.pushPosition).not.toHaveBeenCalled();
+    expect(scrollToDiffLineMock).toHaveBeenCalled();
+  });
+
+  // Clicking the row you are already parked on would otherwise stack a
+  // no-op entry, making Back appear to do nothing.
+  it("does not push a duplicate when the row is the current position", async () => {
+    currentDiffPositionMock.mockReturnValue({ path: "a.go", line: 1, side: "RIGHT" });
+    const hits = [hit({ path: "a.go", line: 1, text: "ref line" })];
+    const { symbolRefsStore } = renderGutter({ hits, inPrTotal: 1 });
+
+    await fireEvent.click(screen.getByText("ref line"));
+
+    expect(symbolRefsStore.pushPosition).not.toHaveBeenCalled();
+  });
+
+  // A jump that resolves "missing" leaves the reader exactly where they
+  // were, so recording a departure would enable Back on an entry that
+  // returns to where they already stand.
+  it('pushes nothing when the jump resolves "missing"', async () => {
+    scrollToDiffLineMock.mockResolvedValueOnce("missing");
+    currentDiffPositionMock.mockReturnValue({ path: "internal/handler.go", line: 40, side: "RIGHT" });
+    const hits = [hit({ path: "gone.go", line: 3, text: "ref in gone" })];
+    const { symbolRefsStore } = renderGutter({ hits, inPrTotal: 1 });
+
+    await fireEvent.click(screen.getByText("ref in gone"));
+
+    expect(symbolRefsStore.pushPosition).not.toHaveBeenCalled();
+  });
+
+  // Side is part of a position's identity: a deletion's LEFT line 1 and
+  // the new file's RIGHT line 1 are different places, so leaving one for
+  // the other is a real jump the stack must record.
+  it("pushes when the row matches the current line number but not its side", async () => {
+    currentDiffPositionMock.mockReturnValue({ path: "a.go", line: 1, side: "LEFT" });
+    const hits = [hit({ path: "a.go", line: 1, text: "ref line" })];
+    const { symbolRefsStore } = renderGutter({ hits, inPrTotal: 1 });
+
+    await fireEvent.click(screen.getByText("ref line"));
+
+    expect(symbolRefsStore.pushPosition).toHaveBeenCalledWith({
+      path: "a.go",
+      line: 1,
+      side: "LEFT",
+    });
+  });
+
+  it("disables Back with an empty stack and enables it with entries", () => {
+    const empty = renderGutter({ hits: [hit()], inPrTotal: 1, canGoBack: false });
+    const emptyBtn = empty.getByRole("button", {
+      name: /back to previous position/i,
+    }) as HTMLButtonElement;
+    expect(emptyBtn.disabled).toBe(true);
+    cleanup();
+
+    const filled = renderGutter({ hits: [hit()], inPrTotal: 1, canGoBack: true });
+    const filledBtn = filled.getByRole("button", {
+      name: /back to previous position/i,
+    }) as HTMLButtonElement;
+    expect(filledBtn.disabled).toBe(false);
+  });
+
+  it("jumps to the popped position on Back, and does not re-push", async () => {
+    const popsTo = { path: "internal/handler.go", line: 40 };
+    currentDiffPositionMock.mockReturnValue({ path: "internal/cache.go", line: 12, side: "RIGHT" });
+    const { symbolRefsStore, getByRole } = renderGutter({
+      hits: [hit()], inPrTotal: 1, canGoBack: true, popsTo,
+    });
+
+    await fireEvent.click(getByRole("button", { name: /back to previous position/i }));
+
+    expect(symbolRefsStore.popPosition).toHaveBeenCalled();
+    expect(scrollToDiffLineMock).toHaveBeenCalledWith(popsTo, expect.anything());
+    expect(symbolRefsStore.pushPosition).not.toHaveBeenCalled();
+  });
+
+  it("notes an unresolvable Back target instead of failing silently", async () => {
+    scrollToDiffLineMock.mockResolvedValueOnce("missing");
+    const { getByRole, container } = renderGutter({
+      hits: [hit()], inPrTotal: 1, canGoBack: true,
+      popsTo: { path: "gone.go", line: 9 },
+    });
+
+    await fireEvent.click(getByRole("button", { name: /back to previous position/i }));
+
+    expect(container.querySelector(".symref-back-note")).not.toBeNull();
+  });
+
+  // A LEFT-side target that is not already rendered can never arrive: the
+  // reveal request is side-blind and CollapsedRegion anchors what it
+  // reveals as RIGHT, so "pending" here means "never". It gets the same
+  // note as "missing", and the doomed reveal target is dropped rather than
+  // left armed to fire against an unrelated region later.
+  it('treats a "pending" LEFT-side Back as the failure it is', async () => {
+    scrollToDiffLineMock.mockResolvedValueOnce("pending");
+    const { getByRole, container, diffStore } = renderGutter({
+      hits: [hit()], inPrTotal: 1, canGoBack: true,
+      popsTo: { path: "config.yaml", line: 4, side: "LEFT" },
+    });
+
+    await fireEvent.click(getByRole("button", { name: /back to previous position/i }));
+
+    expect(container.querySelector(".symref-back-note")).not.toBeNull();
+    expect(diffStore.consumeRevealTarget).toHaveBeenCalled();
+  });
+
+  it('leaves a "pending" RIGHT-side Back alone -- its reveal will land', async () => {
+    scrollToDiffLineMock.mockResolvedValueOnce("pending");
+    const { getByRole, container } = renderGutter({
+      hits: [hit()], inPrTotal: 1, canGoBack: true,
+      popsTo: { path: "a.go", line: 30, side: "RIGHT" },
+    });
+
+    await fireEvent.click(getByRole("button", { name: /back to previous position/i }));
+
+    expect(container.querySelector(".symref-back-note")).toBeNull();
   });
 });

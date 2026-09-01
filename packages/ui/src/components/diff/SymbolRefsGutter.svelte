@@ -1,8 +1,14 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { getStores } from "../../context.js";
-  import { scrollToDiffLine, clearDiffLineHighlight, type DiffJumpDeps } from "./scrollToDiffLine.js";
-  import type { SymbolHit } from "../../stores/symbolRefs.svelte.js";
+  import {
+    scrollToDiffLine,
+    clearDiffLineHighlight,
+    currentDiffPosition,
+    highlightedDiffPosition,
+    type DiffJumpDeps,
+  } from "./scrollToDiffLine.js";
+  import { isSymbolQuery, type SymbolHit } from "../../stores/symbolRefs.svelte.js";
   import { langFromPath } from "../../utils/highlight.js";
 
   type SymbolTag = NonNullable<SymbolHit["tag"]>;
@@ -38,6 +44,104 @@
   const classifier = $derived(symbolRefsStore.getClassifier());
   const status = $derived(symbolRefsStore.getStatus());
   const error = $derived(symbolRefsStore.getError());
+
+  const focusSeq = $derived(symbolRefsStore.getFocusSeq());
+  const canGoBack = $derived(symbolRefsStore.canGoBack());
+
+  // The text being typed, kept separate from the store's committed query
+  // so an abandoned edit never changes what is displayed as searched.
+  // Seeded from the store on mount and re-seeded whenever a search
+  // commits a different query (e.g. the selection-toolbar Refs button
+  // searching while this gutter is already open).
+  let draft = $state(symbolRefsStore.getQuery());
+  let invalidReason = $state<string | null>(null);
+  let inputEl = $state<HTMLInputElement>();
+
+  $effect(() => {
+    const committed = symbolRefsStore.getQuery();
+    if (committed === "") return;
+    draft = committed;
+    // A newly committed query makes both of this gutter's notices stale:
+    // they describe a refused query or a failed Back from before, and
+    // leaving either pinned above a fresh result set reads as a complaint
+    // about the results now on screen.
+    invalidReason = null;
+    backNote = null;
+  });
+
+  // Focus and select on every focusSeq change, so pressing `s` (or the
+  // toolbar button) with results already showing puts the cursor in the
+  // box with the old query selected -- ready to be replaced by typing,
+  // without the results having been discarded.
+  //
+  // The last-seen guard is what makes focusSeq a read with meaning: a bare
+  // `focusSeq;` expression statement would register the dependency too,
+  // but eslint's no-unused-expressions would reject it and fail
+  // make frontend-check.
+  //
+  // Only openBlank() asks for focus, and the seed is what keeps the
+  // effect's unavoidable first run (at mount) from counting as a request.
+  // Seeding it from the store rather than from -1 is the whole point: a
+  // mount caused by the selection-side Refs button -- DiffFile's floating
+  // toolbar calls search() directly and never bumps focusSeq -- must leave
+  // focus where the reader put it. Stealing it there would put an INPUT
+  // under DiffView's window keydown handler, which ignores keys while one
+  // is focused, silently dropping j/k/[/]/m/s until the reader clicks away.
+  let lastFocusSeq =
+    symbolRefsStore.getStatus() === "prompt"
+      ? -1 // this mount IS an openBlank (the only thing that sets "prompt")
+      : symbolRefsStore.getFocusSeq(); // someone else opened us; do not focus
+  $effect(() => {
+    if (focusSeq === lastFocusSeq) return;
+    lastFocusSeq = focusSeq;
+    inputEl?.focus();
+    inputEl?.select();
+  });
+
+  // whyInvalid explains a rejected query in the terms isSymbolQuery
+  // actually enforces. Whitespace is called out by name because it is the
+  // only rule a reasonable person would trip by accident.
+  function whyInvalid(text: string): string | null {
+    const t = text.trim();
+    if (t.length === 0) return null;
+    if (/\s/.test(t)) return "A symbol cannot contain whitespace.";
+    if (!isSymbolQuery(t)) return "That symbol is too long to search.";
+    return null;
+  }
+
+  function submitSearch(): void {
+    const t = draft.trim();
+    if (t.length === 0) return;
+    const reason = whyInvalid(t);
+    if (reason !== null) {
+      invalidReason = reason;
+      return;
+    }
+    // The toolbar's Refs button and the `s` key both refuse to open
+    // without a resolvable commit (a Refresh in flight leaves the SHA
+    // empty), so Enter refuses for the same reason and says the same
+    // thing -- rather than issuing a request the server rejects with a
+    // bare "sha is required" that lands in the gutter verbatim.
+    const sha = diffStore.getCurrentCommitSha();
+    if (sha === "") {
+      invalidReason = "This diff scope has no resolvable commit to search.";
+      return;
+    }
+    invalidReason = null;
+    void symbolRefsStore.search(owner, name, number, sha, t);
+  }
+
+  function onSearchKeydown(e: KeyboardEvent): void {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      submitSearch();
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      symbolRefsStore.close();
+    }
+  }
 
   // Classify.go's noisy kinds: real code hits (definition/reference/import)
   // are shown directly; comment/string hits are collapsed behind a toggle
@@ -91,6 +195,12 @@
   // "missing" (scrollToDiffLine.ts), so a brief explanation can render
   // next to that row. Cleared at the start of every jump attempt.
   let missingJump = $state<{ path: string; line: number } | null>(null);
+
+  // A short note shown when Back's popped target no longer resolves in
+  // the rendered diff. Distinct from missingJump above, which marks a
+  // specific row -- Back has no row of its own, so its failure gets a
+  // one-line note in the header area instead.
+  let backNote = $state<string | null>(null);
 
   function isMissingJump(hit: SymbolHit): boolean {
     return (
@@ -199,17 +309,87 @@
     }
   }
 
-  async function jumpTo(hit: SymbolHit): Promise<void> {
-    missingJump = null;
-    const deps: DiffJumpDeps = {
+  // The deps scrollToDiffLine needs, shared by row clicks and Back so the
+  // two land identically -- expanding a collapsed file, revealing a
+  // collapsed context region, scrolling, and highlighting.
+  function jumpDeps(): DiffJumpDeps {
+    return {
       isFileCollapsed: (path) => diffStore.isFileCollapsed(owner, name, number, path),
       toggleFileCollapsed: (path) => diffStore.toggleFileCollapsed(owner, name, number, path),
       requestRevealLine: (path, line) => diffStore.requestRevealLine(path, line),
       clearRevealTarget: () => diffStore.consumeRevealTarget(),
     };
-    const outcome = await scrollToDiffLine({ path: hit.path, line: hit.line }, deps);
+  }
+
+  async function jumpTo(hit: SymbolHit): Promise<void> {
+    missingJump = null;
+    backNote = null;
+    // Record where we are leaving from, so Back can return here. The
+    // position has to be READ before the jump (afterwards it is the
+    // destination) but PUSHED after it, because a jump that resolves
+    // "missing" never moves the reader -- pushing then would enable Back
+    // on an entry that returns to where they already stand.
+    //
+    // Skipped when the position is unknown, and when it is the row being
+    // clicked -- stacking the position you are already parked on would
+    // make Back look broken. Side is part of that identity: a deletion's
+    // LEFT line 40 and the new file's RIGHT line 40 are different places,
+    // and hits always land RIGHT (see DiffJumpTarget), so a LEFT departure
+    // is a real jump worth recording.
+    // A search launched from a highlighted symbol records that symbol's own
+    // line as the departure point, because the reader means "put me back on
+    // that symbol" no matter where on screen it sat. Only the FIRST jump uses
+    // it -- cleared once a departure point is actually recorded, after which
+    // the reader is parked on a line a jump sent them to and the viewport
+    // speaks for itself. Read without consuming, so a jump that resolves
+    // "missing" (which never moves the reader) does not lose the launch point.
+    const origin = symbolRefsStore.getOrigin();
+    // Deliberate positions beat incidental ones: the symbol a search was
+    // launched from, else the line the last jump landed on, else -- when
+    // neither exists, i.e. the reader scrolled here themselves -- the viewport.
+    const from = origin ?? highlightedDiffPosition() ?? currentDiffPosition();
+    const selfRef =
+      from !== null &&
+      from.path === hit.path &&
+      from.line === hit.line &&
+      (from.side ?? "RIGHT") === "RIGHT";
+    const outcome = await scrollToDiffLine({ path: hit.path, line: hit.line }, jumpDeps());
     if (outcome === "missing") {
       missingJump = { path: hit.path, line: hit.line };
+      return;
+    }
+    if (from !== null && !selfRef) {
+      symbolRefsStore.pushPosition(from);
+      if (origin !== null) symbolRefsStore.clearOrigin();
+    }
+  }
+
+  // goBack pops one departure point and returns to it. It never pushes
+  // what it leaves: the stack is a one-way trail out, so it drains.
+  //
+  // A popped entry that no longer resolves has already left the stack, so
+  // pressing Back again tries the next one -- with a note, rather than a
+  // click that appears to do nothing.
+  async function goBack(): Promise<void> {
+    missingJump = null;
+    backNote = null;
+    const target = symbolRefsStore.popPosition();
+    if (target === null) return;
+    const outcome = await scrollToDiffLine(target, jumpDeps());
+    // "pending" normally means "a collapsed region was asked to reveal the
+    // line, and the landing follows once it mounts" -- but that reveal is
+    // side-blind (requestRevealLine takes only a path and a line) and
+    // CollapsedRegion only ever anchors the context lines it reveals as
+    // RIGHT. So an unrendered LEFT target -- a deleted line, reachable
+    // with no scope or SHA change at all via hide-whitespace dropping
+    // whitespace-only deletions -- can never resolve: it would sit
+    // "pending" forever, with no note and a reveal target left armed to
+    // fire later against an unrelated region that happens to cover that
+    // new-side line number. Treat it as the failure it is.
+    const leftSidePendingForever = target.side === "LEFT" && outcome !== "line";
+    if (outcome === "missing" || leftSidePendingForever) {
+      backNote = `${target.path}:${target.line} is no longer in the rendered diff.`;
+      diffStore.consumeRevealTarget();
     }
   }
 
@@ -256,8 +436,36 @@
   aria-label="Symbol references"
 >
   <div class="symref-header">
-    <span class="symref-header__query" title={query}>{query}</span>
-    <span class="symref-header__count" title="Occurrences in this PR's changed files">{inPrTotal}</span>
+    <button
+      type="button"
+      class="symref-header__back"
+      onclick={() => void goBack()}
+      disabled={!canGoBack}
+      aria-label="Back to previous position"
+      title="Back to previous position"
+    >
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6">
+        <path d="M10 3L5 8l5 5" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+    </button>
+    <input
+      class="symref-header__query"
+      data-testid="symref-search"
+      type="text"
+      spellcheck="false"
+      autocomplete="off"
+      placeholder="find a symbol..."
+      aria-label="Symbol to find references for"
+      bind:this={inputEl}
+      bind:value={draft}
+      oninput={() => (invalidReason = null)}
+      onkeydown={onSearchKeydown}
+    />
+    <!-- Nothing has been searched in the prompt state, so a count would
+         only ever read a meaningless 0. -->
+    {#if status !== "prompt"}
+      <span class="symref-header__count" title="Occurrences in this PR's changed files">{inPrTotal}</span>
+    {/if}
     <button
       type="button"
       class="symref-header__close"
@@ -271,6 +479,16 @@
     </button>
   </div>
 
+  <!-- role="status" (matching DiffView's interdiff banner) so a refused
+       query or a failed Back is announced, not just coloured. -->
+  {#if invalidReason}
+    <div class="symref-invalid" role="status">{invalidReason}</div>
+  {/if}
+
+  {#if backNote}
+    <div class="symref-back-note" role="status">{backNote}</div>
+  {/if}
+
   {#if classifier === "heuristic"}
     <div class="symref-degraded-note">
       Kind labels are heuristic — install universal-ctags for exact kinds.
@@ -278,7 +496,9 @@
   {/if}
 
   <div class="symref-body">
-    {#if status === "loading"}
+    {#if status === "prompt"}
+      <div class="symref-prompt">Type a symbol name and press Enter.</div>
+    {:else if status === "loading"}
       <div class="symref-state">Searching…</div>
     {:else if status === "error"}
       <div class="symref-state symref-state--error">{error ?? "Symbol search failed"}</div>
@@ -342,6 +562,27 @@
     flex-shrink: 0;
   }
 
+  .symref-header__back {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+  }
+
+  .symref-header__back:hover:not(:disabled) {
+    background: var(--bg-surface-hover);
+    color: var(--text-primary);
+  }
+
+  .symref-header__back:disabled {
+    opacity: 0.35;
+    cursor: default;
+  }
+
   .symref-header__query {
     flex: 1;
     min-width: 0;
@@ -349,9 +590,15 @@
     font-weight: 600;
     font-size: 12px;
     color: var(--diff-text);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    background: var(--bg-inset);
+    border: 1px solid var(--diff-border);
+    border-radius: var(--radius-sm);
+    padding: 2px 6px;
+  }
+
+  .symref-header__query:focus {
+    outline: none;
+    border-color: var(--accent-blue);
   }
 
   .symref-header__count {
@@ -381,6 +628,24 @@
     color: var(--text-primary);
   }
 
+  .symref-invalid {
+    flex-shrink: 0;
+    padding: 4px 12px;
+    font-size: 11px;
+    color: var(--accent-red);
+    background: var(--diff-header-bg);
+    border-bottom: 1px solid var(--diff-border);
+  }
+
+  .symref-back-note {
+    flex-shrink: 0;
+    padding: 4px 12px;
+    font-size: 11px;
+    color: var(--accent-amber);
+    background: var(--diff-header-bg);
+    border-bottom: 1px solid var(--diff-border);
+  }
+
   .symref-degraded-note {
     flex-shrink: 0;
     padding: 4px 12px;
@@ -394,6 +659,13 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
+  }
+
+  .symref-prompt {
+    padding: 16px 12px;
+    font-size: 12px;
+    color: var(--text-muted);
+    font-style: italic;
   }
 
   .symref-state {

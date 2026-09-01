@@ -156,7 +156,7 @@ test.describe("symbol references gutter (git-backed)", () => {
     await dblclickToken(cacheFile, 30, "RIGHT", "string");
 
     const gutter = await openRefsPanel(page);
-    await expect(gutter.locator(".symref-header__query")).toHaveText("string");
+    await expect(gutter.locator(".symref-header__query")).toHaveValue("string");
     await expect(gutter.locator(".symref-header__count")).toHaveText("7", { timeout: 5000 });
 
     // Rows are grouped by file: both changed files that contain "string"
@@ -236,7 +236,7 @@ test.describe("symbol references gutter (git-backed)", () => {
     await dblclickToken(handlerFile, 10, "RIGHT", "HandleRequest");
 
     const gutter = await openRefsPanel(page);
-    await expect(gutter.locator(".symref-header__query")).toHaveText("HandleRequest");
+    await expect(gutter.locator(".symref-header__query")).toHaveValue("HandleRequest");
     await expect(gutter.locator(".symref-header__count")).toHaveText("2", { timeout: 5000 });
 
     // Only the definition renders as a main row up front.
@@ -283,7 +283,7 @@ test.describe("symbol references gutter (git-backed)", () => {
     await installTokenSelection(handlerFile, 39, "RIGHT", "Println");
 
     const gutter = await openRefsPanel(page);
-    await expect(gutter.locator(".symref-header__query")).toHaveText("Println");
+    await expect(gutter.locator(".symref-header__query")).toHaveValue("Println");
     await expect(gutter.locator(".symref-header__count")).toHaveText("1", { timeout: 5000 });
     await expect(gutter.locator(".symref-row")).toHaveCount(1);
     await expect(gutter.locator(".symref-row__line")).toHaveText("39");
@@ -320,7 +320,7 @@ test.describe("symbol references gutter (git-backed)", () => {
     expect(selectedText).toBe("path");
 
     const gutter = await openRefsPanel(page);
-    await expect(gutter.locator(".symref-header__query")).toHaveText("path");
+    await expect(gutter.locator(".symref-header__query")).toHaveValue("path");
     await expect(gutter.locator(".symref-header__count")).toHaveText("5", { timeout: 5000 });
 
     // Honesty check: line 18 -- the fmt.Fprintf(w, "OK: %s", path) call,
@@ -413,5 +413,151 @@ test.describe("symbol references gutter (git-backed)", () => {
     const refRow = gutter.locator(".symref-row").first();
     await expect(refRow.locator(".symref-row__kind")).toHaveClass(/symref-row__kind--reference/);
     await expect(refRow.locator(".symref-row__kind")).toHaveText("ref");
+  });
+
+  test("the toolbar button and the s key both open a focused search box, and a typed query returns rows without any selection", async ({ page }) => {
+    await page.goto("/pulls/acme/widgets/1/files");
+    await page.locator(".diff-file").first().waitFor({ state: "visible", timeout: 10_000 });
+
+    const gutter = page.locator(".symref-gutter");
+    await expect(gutter).toHaveCount(0);
+
+    // The key path: no selection, no scrolling to an occurrence.
+    await page.keyboard.press("s");
+    await expect(gutter).toBeVisible({ timeout: 5000 });
+
+    const input = gutter.locator("[data-testid='symref-search']");
+    await expect(input).toBeFocused();
+    await expect(gutter.locator(".symref-prompt")).toBeVisible();
+
+    await input.fill("HandleRequest");
+    await input.press("Enter");
+
+    await expect(gutter.locator(".symref-row").first()).toBeVisible({ timeout: 10_000 });
+    await expect(gutter.locator(".symref-prompt")).toHaveCount(0);
+
+    // Closing and reopening via the toolbar button reaches the same state.
+    await gutter.getByRole("button", { name: /close symbol references/i }).click();
+    await expect(gutter).toHaveCount(0);
+
+    // Not getByRole("button", { name: /^Refs$/ }): DiffFile's floating
+    // selection-toolbar button (openRefsPanel's target above) carries the
+    // identical visible text "Refs" and would make that locator match two
+    // elements once something is selected. This is the persistent
+    // DiffToolbar button, so it is located by its own title instead --
+    // keeping both title-based makes the two "Refs" buttons easy to tell
+    // apart.
+    await page.getByTitle("Find references to a symbol (s)").click();
+    await expect(gutter).toBeVisible({ timeout: 5000 });
+    await expect(gutter.locator("[data-testid='symref-search']")).toBeFocused();
+  });
+
+  test("a multi-word query is refused with a reason rather than searching", async ({ page }) => {
+    await page.goto("/pulls/acme/widgets/1/files");
+    await page.locator(".diff-file").first().waitFor({ state: "visible", timeout: 10_000 });
+
+    await page.keyboard.press("s");
+    const gutter = page.locator(".symref-gutter");
+    const input = gutter.locator("[data-testid='symref-search']");
+    await input.fill("Handle Request");
+    await input.press("Enter");
+
+    await expect(gutter.locator(".symref-invalid")).toContainText(/whitespace/i);
+    await expect(gutter.locator(".symref-row")).toHaveCount(0);
+  });
+
+  // Searching by highlighting a symbol records THAT symbol's line as the
+  // departure point, not whatever line the viewport is centred on. The scroll
+  // in the middle is what makes this test prove it: with the diff scrolled
+  // away, the viewport's midline is nowhere near the selected symbol, so a
+  // Back that returned to the viewport position could not land on line 13.
+  test("Back returns to the symbol a search was launched from, wherever the diff has since been scrolled", async ({ page }) => {
+    await page.goto("/pulls/acme/widgets/1/files");
+    await page.locator(".diff-file").first().waitFor({ state: "visible", timeout: 10_000 });
+
+    const handlerFile = page.locator('.diff-file[data-file-path="internal/handler.go"]');
+    // `path` is declared on line 12 and tested on line 13; selecting on 13
+    // keeps the launch point distinct from the row clicked below. The padded
+    // token text matches how Shiki spans this identifier.
+    await dblclickToken(handlerFile, 13, "RIGHT", " path ");
+    const gutter = await openRefsPanel(page);
+
+    const rows = gutter.locator(".symref-row");
+    await expect(rows.first()).toBeVisible({ timeout: 10_000 });
+
+    // Move the viewport far away from the selected symbol. Both lines 12 and
+    // 13 sit near the top of the content, so scrolling to the end guarantees
+    // the midline is in a different file entirely.
+    await page.locator(".diff-area").evaluate((el) => {
+      el.scrollTop = el.scrollHeight;
+    });
+
+    // Line 12's row: inside the already-rendered hunk, so the jump lands
+    // immediately rather than arming a collapsed-region reveal that could
+    // later move the highlight and race the assertion below.
+    await rows.filter({ hasText: /^12\s/ }).first().click();
+    await expect(page.locator(".line-wrap--jump-highlight")).toHaveCount(1);
+
+    const back = gutter.getByRole("button", { name: /back to previous position/i });
+    await expect(back).toBeEnabled();
+    await back.click();
+
+    // Back on the symbol that started the search -- same file, its own line.
+    await expect(
+      handlerFile.locator(".line-wrap--jump-highlight"),
+    ).toHaveAttribute("data-anchor-line", "13");
+    await expect(back).toBeDisabled();
+  });
+
+  test("Back walks the reader home through the positions each jump left, then disables itself", async ({ page }) => {
+    await page.goto("/pulls/acme/widgets/1/files");
+    await page.locator(".diff-file").first().waitFor({ state: "visible", timeout: 10_000 });
+
+    await page.keyboard.press("s");
+    const gutter = page.locator(".symref-gutter");
+    const input = gutter.locator("[data-testid='symref-search']");
+    // Not "HandleRequest": its only other occurrence is the doc comment
+    // above it, which the comments/strings toggle collapses -- exactly
+    // one visible row (the "doc-comment hit" test above asserts this
+    // directly with toHaveCount(1)), too few to walk a trail through.
+    // "path" has 3 visible rows -- handler.go lines 12, 13 and 18 (the
+    // "empty path" and log-key hits at lines 11 and 14 are "string"
+    // kind and collapse behind the toggle, as the "collapsed context
+    // gap" test above establishes). Lines 12 and 13, clicked below,
+    // both sit inside the hunk that is already rendered -- unlike line
+    // 18, they need no collapsed-region expansion to land on.
+    await input.fill("path");
+    await input.press("Enter");
+
+    const rows = gutter.locator(".symref-row");
+    await expect(rows.first()).toBeVisible({ timeout: 10_000 });
+    expect(await rows.count()).toBeGreaterThan(1);
+
+    const back = gutter.getByRole("button", { name: /back to previous position/i });
+    await expect(back).toBeDisabled();
+
+    await rows.nth(0).click();
+    const highlight = page.locator(".line-wrap--jump-highlight");
+    await expect(highlight).toHaveCount(1);
+    await expect(back).toBeEnabled();
+    const firstLanding = await highlight.getAttribute("data-anchor-line");
+
+    await rows.nth(1).click();
+    const secondLanding = await highlight.getAttribute("data-anchor-line");
+    expect(secondLanding).not.toBe(firstLanding);
+
+    await back.click();
+    // The round trip, and the assertion the original implementation failed:
+    // a jump centres its target, so the position recorded when leaving the
+    // first landing must BE the first landing. Asserting only "the highlight
+    // moved off the second landing" passed happily while Back was returning to
+    // a line half a viewport above where the reader had actually been.
+    await expect.poll(async () => highlight.getAttribute("data-anchor-line"))
+      .toBe(firstLanding);
+
+    // One entry left, then the trail is exhausted.
+    await expect(back).toBeEnabled();
+    await back.click();
+    await expect(back).toBeDisabled();
   });
 });

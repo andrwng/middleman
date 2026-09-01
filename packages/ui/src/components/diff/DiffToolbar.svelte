@@ -3,9 +3,10 @@
 
   interface Props {
     onReviewClick?: () => void;
+    onRefsClick?: () => void;
   }
 
-  const { onReviewClick }: Props = $props();
+  const { onReviewClick, onRefsClick }: Props = $props();
 
   const { diff, detail: detailStore, reviewThreads } = getStores();
   const tabOptions = [1, 2, 4, 8] as const;
@@ -32,6 +33,13 @@
     if (isLocal) void reviewThreads.refresh();
     else void diff.refresh();
   }
+
+  // A symbol search numbers its hits against a SHA. getCurrentCommitSha()
+  // returns "" when the current scope has no resolvable head (an
+  // unresolved patchset pair, or a PR with no commits yet), and hits
+  // found against no SHA cannot be resolved back to rendered lines --
+  // so the button is disabled there rather than searching into nothing.
+  const canSearchSymbols = $derived(diff.getCurrentCommitSha() !== "");
 </script>
 
 <div class="diff-toolbar">
@@ -108,6 +116,24 @@
         <path d="M10 3A4 4 0 1 1 6 3M10 3V1M10 3H8" stroke-linecap="round" stroke-linejoin="round" />
       </svg>
       Refresh
+    </button>
+    <button
+      type="button"
+      class="refresh-btn"
+      onclick={onRefsClick}
+      disabled={!canSearchSymbols}
+      title={canSearchSymbols
+        ? "Find references to a symbol (s)"
+        : "This diff scope has no resolvable commit to search"}
+    >
+      <svg
+        width="12" height="12" viewBox="0 0 12 12" fill="none"
+        stroke="currentColor" stroke-width="1.5"
+      >
+        <circle cx="5" cy="5" r="3.5" />
+        <path d="M7.6 7.6L11 11" stroke-linecap="round" />
+      </svg>
+      Refs
     </button>
     {#if diff.getRefreshError()}
       <span class="refresh-error" title={diff.getRefreshError()}>
