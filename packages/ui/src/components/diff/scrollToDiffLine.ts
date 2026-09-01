@@ -142,10 +142,13 @@ export async function scrollToDiffLine(
 // is merely where the content happens to sit.
 //
 // The consequence worth knowing: if the reader jumps and then scrolls away by
-// hand, this still reports the jump target rather than their new view. That
-// matches how the search origin behaves -- deliberate positions beat
-// incidental ones -- and the fallback covers the case where no jump has
-// happened at all.
+// hand, this still reports the jump target rather than their new view. That is
+// intended, and the reason is not the race above -- it is that a scroll offset
+// is not a place a person can name. Scrolling is imprecise and the exact
+// position it lands on is not legible to whoever is reading the diff, so it is
+// not somewhere worth being returned to. A jumped-to line and a highlighted
+// symbol are; a viewport is only ever a fallback for having nothing better.
+// Do not "fix" this to track manual scrolling.
 export function highlightedDiffPosition(): DiffJumpTarget | null {
   const el = highlightedEl;
   if (!el || !el.isConnected) return null;
