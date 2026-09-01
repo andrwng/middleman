@@ -29,7 +29,8 @@ serves both real GitHub PRs and local worktrees through the same component tree.
 |---|---|
 | What the Refs button expands into | An **input in the refs gutter header**, where the query text renders today. Search UI and results are one surface. Not a popup palette, not an inline toolbar field. |
 | What Back undoes | **The position you jumped from.** A jump pushes where you were leaving; Back pops and returns there. Gutter contents never change on Back. |
-| When positions are pushed | **On jump only.** Not on search. When you click the first row you are still at your reading position, so it is captured then. |
+| When positions are pushed | **On jump only**, and only once the jump has actually moved the reader — a jump that resolves `"missing"` pushes nothing. Not on search. |
+| What counts as "the position you jumped from" | The most **deliberate** position available, in this order: the symbol a search was launched from, else the line the last jump landed on, else the line under the viewport's midline. A scroll offset is not a place a person can name, so it is only ever the fallback. |
 | Bidirectional? | **No.** Back only pops. There is no Forward. |
 | Stack depth | Modest and fixed: `MAX_BACK_DEPTH = 10`, oldest dropped. |
 | Hotkey | `s`, unmodified. |
@@ -39,6 +40,12 @@ Consequence worth stating up front: because Back never pushes what it leaves, th
 strictly drains. There is no state in which Back is available forever.
 
 ## Facts this design rests on
+
+- **`flashDiffLine` scrolls with `block: "center"`.** A jump therefore leaves its target at the
+  *middle* of the viewport, and it adds its highlight class *synchronously* while the scroll is
+  still travelling. This design originally missed both halves of that, and each cost a bug — see
+  Amendments below. Anything that records "where the reader is" has to agree with this function
+  about what a jump does.
 
 Each verified against the current tree, not recalled.
 
@@ -98,11 +105,12 @@ rather than a parallel one.
 
 | File | Change |
 |---|---|
-| `packages/ui/src/stores/symbolRefs.svelte.ts` | `"prompt"` status; `openBlank()`; `focusSeq`; `pushPosition` / `popPosition` / `canGoBack` / `MAX_BACK_DEPTH`; `close()` clears the stack |
+| `packages/ui/src/stores/symbolRefs.svelte.ts` | `"prompt"` status; `openBlank()`; `focusSeq`; `pushPosition` / `popPosition` / `canGoBack` / `MAX_BACK_DEPTH`; the search `origin` (`setOrigin` / `getOrigin` / `clearOrigin`); `close()` clears the stack and the origin |
 | `packages/ui/src/components/diff/SymbolRefsGutter.svelte` | header query text becomes an input; prompt state; Back button; push-before-jump in `jumpTo` |
 | `packages/ui/src/components/diff/DiffToolbar.svelte` | Refs button beside refresh |
 | `packages/ui/src/components/diff/DiffView.svelte` | `s` in `handleKeydown`; wire the toolbar button |
-| `packages/ui/src/components/diff/scrollToDiffLine.ts` | `currentDiffPosition()` |
+| `packages/ui/src/components/diff/scrollToDiffLine.ts` | `currentDiffPosition()`, `highlightedDiffPosition()` |
+| `packages/ui/src/components/diff/DiffFile.svelte` | `computeSymbolSelection()` reports the selection's line and side, not just its text; the selection-side Refs button records the search's origin |
 
 ## Piece 1: search without selecting
 
@@ -275,3 +283,88 @@ Branch: a new branch off `main`, which the user has authorised. `main` is at mer
 `2444163` (PR #13) and every other local branch is 0 commits ahead of it — `git cherry`
 confirms even `docs-full-review`'s five commits have equivalents in `main` — so there is no
 parked work to stack on this time. No push, PR, or merge without explicit approval.
+
+## Amendments after implementation
+
+Everything above describes the shipped code. This section records what changed from the
+originally-approved design and why, because two of the three were defects in this document
+rather than in the implementation, and the reasoning is the part worth keeping.
+
+### 1. The departure point is the most deliberate position, not the viewport
+
+**Originally specified:** `currentDiffPosition()` returns "the topmost at-least-partially-visible
+anchored line", and every jump pushes that.
+
+**Why that was wrong:** `flashDiffLine` centres its target. Topmost-visible and centred differ by
+half a viewport, so every jump recorded a point well above where the jump had just put the reader.
+Back returned to a line they had never chosen — consistently, since the same target always yields
+the same viewport, which made it read as an arbitrary constant offset. The same mismatch silently
+disabled `jumpTo`'s self-reference guard: the captured line could never equal the line just jumped
+to, so clicking the row you were already parked on pushed a duplicate every time.
+
+A second, independent defect surfaced once an e2e assertion finally checked *where* Back landed:
+`flashDiffLine` applies its highlight synchronously but scrolls with `behavior: "smooth"`, so a
+second ref click a few hundred milliseconds later read the viewport mid-animation and recorded a
+line that was never on screen at rest.
+
+**Shipped rule** — resolve the departure point by how deliberate it is:
+
+1. **The search's origin** — the symbol a selection-initiated search was launched from. Read from
+   `data-anchor-line`, so no geometry is involved.
+2. **The last jump's landing** — `highlightedDiffPosition()`, read from the element
+   `flashDiffLine` already tracks. Synchronous, so an in-flight scroll cannot race it.
+3. **The viewport midline** — `currentDiffPosition()`, now matching `block: "center"` rather than
+   the top edge, falling back to the last line above the midline when nothing reaches it.
+
+The ordering is the design, not an implementation detail: a scroll offset is not a place a person
+can name. Scrolling is imprecise and where it lands is not legible to whoever is reading the diff,
+so it is only ever the fallback for having nothing better. **Do not "fix" this to track manual
+scrolling** — a reader who jumps and then scrolls away is still returned to the jump target, and
+that is intended.
+
+### 2. `DiffFile.svelte` is in scope after all
+
+**Originally specified:** "The selection-side Refs button in `DiffFile` is untouched."
+
+That held until the origin existed. `computeSymbolSelection()` already resolved and validated the
+selection's line and side and then discarded them — its own comment said there was "no use for the
+side it was selected on". It now reports `{ symbol, line, side }`, and the selection-side Refs
+button hands that to the store as the search's origin. `liveSymbolSelection` became derived from
+that record rather than a second piece of state, so the text and its position cannot drift apart.
+
+The origin is read without being consumed, so a jump that resolves `"missing"` — which never moves
+the reader — keeps the launch point for the next valid row. It is cleared by `openBlank()`, since
+the toolbar button and the `s` key know no launch point and a stale origin would send Back to an
+unrelated symbol, and by `close()`. It deliberately survives `search()`: re-querying from the
+gutter's own input does not change where the reader began.
+
+### 3. Smaller corrections from the whole-branch review
+
+- A jump whose outcome is `"missing"` no longer pushes. The reader never moved, so the entry would
+  have enabled Back on a return to where they already stood.
+- The duplicate-push guard compares `side` as well as path and line: an old-file deletion at line
+  40 and the new file's line 40 are different places.
+- A popped `LEFT`-side target that does not resolve is reported rather than failing silently.
+  `requestRevealLine` is side-blind and `CollapsedRegion` only ever emits `anchorSide="RIGHT"`, so
+  an unrendered LEFT line can never be revealed; the stale reveal target is cleared too.
+- The gutter's focus effect seeds its guard from the store rather than from `-1`, so only an actual
+  `openBlank()` focuses the input. Firing on every mount meant opening the gutter from a text
+  selection stole focus, and `DiffView`'s keydown handler ignores keys while an `INPUT` is focused
+  — silently swallowing `j`/`k`/`[`/`]`/`m`/`s` until the reader clicked away.
+- The count badge is hidden in the `"prompt"` state; stale validation and Back notices are cleared
+  when a search commits a new query; `submitSearch` applies the same empty-SHA gate as the other
+  two entry points; the `s` gate is a condition on its block rather than a `return` from the whole
+  handler; the two notice elements carry `role="status"`.
+
+### 4. Testing lessons this feature paid for
+
+- **Every geometry fixture must span the container.** The original `currentDiffPosition` tests
+  crowded their lines into the container's top fifth, where "topmost" and "centred" are
+  indistinguishable — which is how the wrong definition passed nine reviews.
+- **Assert where a jump lands, not that something moved.** "The highlight moved off the second
+  landing" passed happily while Back was returning to the wrong line. The round-trip assertion —
+  the position recorded when leaving the first landing must *be* the first landing — is what caught
+  the smooth-scroll race.
+- **`bun run playwright test` alone tests a stale frontend.** The built frontend is embedded in the
+  binary, so the e2e server serves whatever `make frontend` last produced. Skipping `make test-e2e`
+  to avoid a rebuild produced a failure that looked exactly like a real bug.
