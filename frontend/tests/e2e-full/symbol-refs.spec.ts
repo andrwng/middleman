@@ -466,6 +466,49 @@ test.describe("symbol references gutter (git-backed)", () => {
     await expect(gutter.locator(".symref-row")).toHaveCount(0);
   });
 
+  // Searching by highlighting a symbol records THAT symbol's line as the
+  // departure point, not whatever line the viewport is centred on. The scroll
+  // in the middle is what makes this test prove it: with the diff scrolled
+  // away, the viewport's midline is nowhere near the selected symbol, so a
+  // Back that returned to the viewport position could not land on line 13.
+  test("Back returns to the symbol a search was launched from, wherever the diff has since been scrolled", async ({ page }) => {
+    await page.goto("/pulls/acme/widgets/1/files");
+    await page.locator(".diff-file").first().waitFor({ state: "visible", timeout: 10_000 });
+
+    const handlerFile = page.locator('.diff-file[data-file-path="internal/handler.go"]');
+    // `path` is declared on line 12 and tested on line 13; selecting on 13
+    // keeps the launch point distinct from the row clicked below. The padded
+    // token text matches how Shiki spans this identifier.
+    await dblclickToken(handlerFile, 13, "RIGHT", " path ");
+    const gutter = await openRefsPanel(page);
+
+    const rows = gutter.locator(".symref-row");
+    await expect(rows.first()).toBeVisible({ timeout: 10_000 });
+
+    // Move the viewport far away from the selected symbol. Both lines 12 and
+    // 13 sit near the top of the content, so scrolling to the end guarantees
+    // the midline is in a different file entirely.
+    await page.locator(".diff-area").evaluate((el) => {
+      el.scrollTop = el.scrollHeight;
+    });
+
+    // Line 12's row: inside the already-rendered hunk, so the jump lands
+    // immediately rather than arming a collapsed-region reveal that could
+    // later move the highlight and race the assertion below.
+    await rows.filter({ hasText: /^12\s/ }).first().click();
+    await expect(page.locator(".line-wrap--jump-highlight")).toHaveCount(1);
+
+    const back = gutter.getByRole("button", { name: /back to previous position/i });
+    await expect(back).toBeEnabled();
+    await back.click();
+
+    // Back on the symbol that started the search -- same file, its own line.
+    await expect(
+      handlerFile.locator(".line-wrap--jump-highlight"),
+    ).toHaveAttribute("data-anchor-line", "13");
+    await expect(back).toBeDisabled();
+  });
+
   test("Back walks the reader home through the positions each jump left, then disables itself", async ({ page }) => {
     await page.goto("/pulls/acme/widgets/1/files");
     await page.locator(".diff-file").first().waitFor({ state: "visible", timeout: 10_000 });
@@ -494,21 +537,23 @@ test.describe("symbol references gutter (git-backed)", () => {
     await expect(back).toBeDisabled();
 
     await rows.nth(0).click();
-    await expect(page.locator(".line-wrap--jump-highlight")).toHaveCount(1);
+    const highlight = page.locator(".line-wrap--jump-highlight");
+    await expect(highlight).toHaveCount(1);
     await expect(back).toBeEnabled();
+    const firstLanding = await highlight.getAttribute("data-anchor-line");
 
     await rows.nth(1).click();
-    const secondLanding = await page
-      .locator(".line-wrap--jump-highlight")
-      .getAttribute("data-anchor-line");
+    const secondLanding = await highlight.getAttribute("data-anchor-line");
+    expect(secondLanding).not.toBe(firstLanding);
 
     await back.click();
-    // We left the second landing behind, so the highlight moved off it.
-    await expect
-      .poll(async () =>
-        page.locator(".line-wrap--jump-highlight").getAttribute("data-anchor-line"),
-      )
-      .not.toBe(secondLanding);
+    // The round trip, and the assertion the original implementation failed:
+    // a jump centres its target, so the position recorded when leaving the
+    // first landing must BE the first landing. Asserting only "the highlight
+    // moved off the second landing" passed happily while Back was returning to
+    // a line half a viewport above where the reader had actually been.
+    await expect.poll(async () => highlight.getAttribute("data-anchor-line"))
+      .toBe(firstLanding);
 
     // One entry left, then the trail is exhausted.
     await expect(back).toBeEnabled();

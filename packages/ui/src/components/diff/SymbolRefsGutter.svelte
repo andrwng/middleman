@@ -5,6 +5,7 @@
     scrollToDiffLine,
     clearDiffLineHighlight,
     currentDiffPosition,
+    highlightedDiffPosition,
     type DiffJumpDeps,
   } from "./scrollToDiffLine.js";
   import { isSymbolQuery, type SymbolHit } from "../../stores/symbolRefs.svelte.js";
@@ -343,7 +344,10 @@
     // speaks for itself. Read without consuming, so a jump that resolves
     // "missing" (which never moves the reader) does not lose the launch point.
     const origin = symbolRefsStore.getOrigin();
-    const from = origin ?? currentDiffPosition();
+    // Deliberate positions beat incidental ones: the symbol a search was
+    // launched from, else the line the last jump landed on, else -- when
+    // neither exists, i.e. the reader scrolled here themselves -- the viewport.
+    const from = origin ?? highlightedDiffPosition() ?? currentDiffPosition();
     const selfRef =
       from !== null &&
       from.path === hit.path &&

@@ -128,6 +128,34 @@ export async function scrollToDiffLine(
   return scrollToFileHeader(target.path) ? "pending" : "missing";
 }
 
+// highlightedDiffPosition reports the line the most recent jump landed on, or
+// null when nothing is highlighted (nothing has been jumped to yet, or the
+// gutter closed and cleared it).
+//
+// Preferred over currentDiffPosition below when recording a departure point,
+// for two reasons. It is exact: flashDiffLine adds the highlight class
+// synchronously while scrolling with behavior: "smooth", so for a few hundred
+// milliseconds the viewport is still travelling and any geometry read lands
+// mid-animation on an arbitrary line -- which is precisely what made a second
+// ref click record somewhere the reader had never been. And it is deliberate:
+// a jump target is a place the reader chose to go, where the viewport midline
+// is merely where the content happens to sit.
+//
+// The consequence worth knowing: if the reader jumps and then scrolls away by
+// hand, this still reports the jump target rather than their new view. That
+// matches how the search origin behaves -- deliberate positions beat
+// incidental ones -- and the fallback covers the case where no jump has
+// happened at all.
+export function highlightedDiffPosition(): DiffJumpTarget | null {
+  const el = highlightedEl;
+  if (!el || !el.isConnected) return null;
+  const line = Number(el.dataset.anchorLine);
+  if (!Number.isInteger(line) || line <= 0) return null;
+  const path = el.closest<HTMLElement>(".diff-file")?.dataset.filePath;
+  if (!path) return null;
+  return { path, line, side: el.dataset.anchorSide === "LEFT" ? "LEFT" : "RIGHT" };
+}
+
 // currentDiffPosition reports where the reader currently is: the anchored
 // line under the vertical midline of the diff scroll container.
 //

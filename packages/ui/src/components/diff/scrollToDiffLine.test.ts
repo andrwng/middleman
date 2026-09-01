@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearDiffLineHighlight,
+  highlightedDiffPosition,
   currentDiffPosition,
   findDiffLineEl,
+  flashDiffLine,
   scrollToDiffLine,
   type DiffJumpDeps,
 } from "./scrollToDiffLine";
@@ -403,5 +405,59 @@ describe("currentDiffPosition", () => {
     stubRect(orphan, 105, 125);
 
     expect(currentDiffPosition()).toBeNull();
+  });
+});
+
+describe("highlightedDiffPosition", () => {
+  it("returns null when nothing has been highlighted", () => {
+    expect(highlightedDiffPosition()).toBeNull();
+  });
+
+  // No rects are stubbed in these tests, deliberately: reporting the last
+  // landing must not depend on layout, which is what keeps it correct while a
+  // smooth scroll is still travelling.
+  it("reports the line the last jump landed on, reading no geometry", () => {
+    const file = makeDiffFile("internal/handler.go");
+
+    flashDiffLine(appendLineWrap(file, 12, "RIGHT"));
+
+    expect(highlightedDiffPosition()).toEqual({
+      path: "internal/handler.go",
+      line: 12,
+      side: "RIGHT",
+    });
+  });
+
+  it("carries a LEFT-anchored landing", () => {
+    const file = makeDiffFile("config.yaml");
+
+    flashDiffLine(appendLineWrap(file, 4, "LEFT"));
+
+    expect(highlightedDiffPosition()).toEqual({
+      path: "config.yaml",
+      line: 4,
+      side: "LEFT",
+    });
+  });
+
+  it("returns null once the highlight is cleared", () => {
+    const file = makeDiffFile("internal/handler.go");
+    flashDiffLine(appendLineWrap(file, 12, "RIGHT"));
+
+    clearDiffLineHighlight();
+
+    expect(highlightedDiffPosition()).toBeNull();
+  });
+
+  // A highlighted line whose element has been detached -- its file collapsed,
+  // or the diff re-rendered -- is no longer a place to return to.
+  it("returns null when the highlighted element has left the document", () => {
+    const file = makeDiffFile("internal/handler.go");
+    const wrap = appendLineWrap(file, 12, "RIGHT");
+    flashDiffLine(wrap);
+
+    wrap.remove();
+
+    expect(highlightedDiffPosition()).toBeNull();
   });
 });

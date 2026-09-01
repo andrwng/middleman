@@ -30,6 +30,9 @@ const clearDiffLineHighlightMock = vi.fn();
 // the reader currently is" -- mocked wholesale like the two above, and
 // defaulting to null (no determinable position) so a test that doesn't
 // care about it never records a departure by surprise.
+const highlightedDiffPositionMock = vi.fn(
+  (): { path: string; line: number; side?: "LEFT" | "RIGHT" } | null => null,
+);
 const currentDiffPositionMock = vi.fn(
   (): { path: string; line: number; side?: "LEFT" | "RIGHT" } | null => null,
 );
@@ -38,6 +41,7 @@ vi.mock("./scrollToDiffLine.js", () => ({
     scrollToDiffLineMock(target, deps),
   clearDiffLineHighlight: () => clearDiffLineHighlightMock(),
   currentDiffPosition: () => currentDiffPositionMock(),
+  highlightedDiffPosition: () => highlightedDiffPositionMock(),
 }));
 
 import SymbolRefsGutter from "./SymbolRefsGutter.svelte";
@@ -165,6 +169,8 @@ afterEach(() => {
   clearDiffLineHighlightMock.mockClear();
   currentDiffPositionMock.mockClear();
   currentDiffPositionMock.mockReturnValue(null);
+  highlightedDiffPositionMock.mockClear();
+  highlightedDiffPositionMock.mockReturnValue(null);
 });
 
 describe("SymbolRefsGutter", () => {
@@ -1018,6 +1024,51 @@ describe("SymbolRefsGutter: header search input", () => {
 // the departure point. Without this, the departure point is the line at the
 // viewport's midline -- which is not where the reader was looking if the symbol
 // they highlighted happened to sit near the top or bottom of the screen.
+// The line the last jump landed on beats the viewport, because flashDiffLine
+// applies its highlight synchronously while still smooth-scrolling: a geometry
+// read taken moments later lands mid-animation on a line the reader was never
+// on. That is what made a quick second ref click record a bogus departure
+// point -- an e2e round trip caught it landing on line 8 instead of 12.
+describe("SymbolRefsGutter: departure point precedence", () => {
+  const cacheHits = [hit({ path: "internal/cache.go", line: 12, text: "ref in cache" })];
+
+  it("prefers the last jump's landing over the viewport position", async () => {
+    highlightedDiffPositionMock.mockReturnValue({ path: "a.go", line: 3227, side: "RIGHT" });
+    currentDiffPositionMock.mockReturnValue({ path: "a.go", line: 8, side: "RIGHT" });
+    const { symbolRefsStore } = renderGutter({ hits: cacheHits, inPrTotal: 1 });
+
+    await fireEvent.click(screen.getByText("ref in cache"));
+
+    expect(symbolRefsStore.pushPosition).toHaveBeenCalledWith({
+      path: "a.go", line: 3227, side: "RIGHT",
+    });
+  });
+
+  it("falls back to the viewport when nothing has been jumped to yet", async () => {
+    highlightedDiffPositionMock.mockReturnValue(null);
+    currentDiffPositionMock.mockReturnValue({ path: "a.go", line: 8, side: "RIGHT" });
+    const { symbolRefsStore } = renderGutter({ hits: cacheHits, inPrTotal: 1 });
+
+    await fireEvent.click(screen.getByText("ref in cache"));
+
+    expect(symbolRefsStore.pushPosition).toHaveBeenCalledWith({
+      path: "a.go", line: 8, side: "RIGHT",
+    });
+  });
+
+  // The search's launch point outranks both.
+  it("prefers the search origin over the last landing", async () => {
+    highlightedDiffPositionMock.mockReturnValue({ path: "a.go", line: 3227, side: "RIGHT" });
+    currentDiffPositionMock.mockReturnValue({ path: "a.go", line: 8, side: "RIGHT" });
+    const origin = { path: "src/v/kafka/handler.cc", line: 99, side: "RIGHT" as const };
+    const { symbolRefsStore } = renderGutter({ hits: cacheHits, inPrTotal: 1, origin });
+
+    await fireEvent.click(screen.getByText("ref in cache"));
+
+    expect(symbolRefsStore.pushPosition).toHaveBeenCalledWith(origin);
+  });
+});
+
 describe("SymbolRefsGutter: the search's launch point", () => {
   it("prefers the recorded origin over the viewport position", async () => {
     currentDiffPositionMock.mockReturnValue({ path: "a.go", line: 3073, side: "RIGHT" });
