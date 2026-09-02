@@ -30,6 +30,7 @@ vi.mock("../../context.js", () => ({
 }));
 
 import ReviewThreadsSection from "./ReviewThreadsSection.svelte";
+import { clearSectionHeight, setSectionHeight } from "./sectionHeights.svelte.js";
 
 function thread(over: Record<string, unknown> = {}) {
   return {
@@ -47,6 +48,7 @@ afterEach(() => {
   threadsRef.value = [];
   commitsRef.value = [];
   scopeRef.value = { kind: "head" };
+  clearSectionHeight("threads");
 });
 
 describe("ReviewThreadsSection", () => {
@@ -190,5 +192,41 @@ describe("ReviewThreadsSection — click-to-navigate", () => {
     const { getByTitle } = render(ReviewThreadsSection);
     const btn = getByTitle(t.path) as HTMLButtonElement;
     expect(btn.getAttribute("aria-label") ?? "").toMatch(/anchored to a commit no longer in this branch/);
+  });
+
+  it("offers a resize boundary below the thread list", () => {
+    threadsRef.value = [thread()];
+    const { container } = render(ReviewThreadsSection);
+    const handle = container.querySelector('[data-section-resize="threads"]');
+    expect(handle).not.toBeNull();
+    // The boundary must sit after the body, since dragging it sizes the
+    // section above it.
+    const body = container.querySelector(".threads-section__body");
+    expect(body?.nextElementSibling).toBe(handle);
+  });
+
+  it("drops the resize boundary while the section is collapsed", async () => {
+    threadsRef.value = [thread()];
+    const { container, getByText } = render(ReviewThreadsSection);
+    expect(container.querySelector('[data-section-resize="threads"]')).not.toBeNull();
+    await fireEvent.click(getByText("Review threads"));
+    expect(container.querySelector(".threads-section__body")).toBeNull();
+    // Nothing to resize once the body is gone.
+    expect(container.querySelector('[data-section-resize="threads"]')).toBeNull();
+  });
+
+  it("caps the body at a height carried over from an earlier session", () => {
+    setSectionHeight("threads", 260);
+    threadsRef.value = [thread()];
+    const { container } = render(ReviewThreadsSection);
+    const body = container.querySelector(".threads-section__body") as HTMLElement;
+    expect(body.style.maxHeight).toBe("260px");
+  });
+
+  it("leaves the stylesheet default in charge when unsized", () => {
+    threadsRef.value = [thread()];
+    const { container } = render(ReviewThreadsSection);
+    const body = container.querySelector(".threads-section__body") as HTMLElement;
+    expect(body.style.maxHeight).toBe("");
   });
 });

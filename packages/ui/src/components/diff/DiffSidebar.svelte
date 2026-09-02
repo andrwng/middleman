@@ -217,6 +217,16 @@
     border-bottom: 1px solid var(--border-muted);
     padding: 4px 0;
     overflow-y: auto;
+    /* The elastic pane of the sidebar column: the sections above cap
+       themselves (see sectionHeights), and the file list takes whatever
+       height is left. It was already the only child flexbox would shrink --
+       an overflow other than `visible` zeroes a flex item's automatic
+       minimum size, which the section wrappers do not set -- so this makes
+       the arrangement explicit and lets a short file list claim the slack
+       instead of leaving it blank. min-height:0 keeps that true even if the
+       overflow above is ever changed. */
+    flex: 1 1 0;
+    min-height: 0;
   }
 
   .diff-files-filter {

@@ -2,8 +2,18 @@
   import { getStores } from "../../context.js";
   import ScopePill from "./ScopePill.svelte";
   import CommitListItem from "./CommitListItem.svelte";
+  import SectionResizeHandle from "./SectionResizeHandle.svelte";
+  import { getSectionHeight } from "./sectionHeights.svelte.js";
 
   const { diff: diffStore } = getStores();
+
+  // Reader-chosen height for this section's body. null leaves the
+  // stylesheet's default cap in charge -- see sectionHeights for why
+  // the cap is a max-height rather than a height.
+  const bodyMax = $derived.by(() => {
+    const h = getSectionHeight("commits");
+    return h === null ? null : `${h}px`;
+  });
 
   // Open by default — the commit list is the main way reviewers
   // navigate a PR, so it's more annoying to hide it than to show
@@ -148,7 +158,7 @@
   </div>
 
   {#if expanded}
-    <div class="commit-section__body" bind:this={bodyEl}>
+    <div class="commit-section__body" bind:this={bodyEl} style:max-height={bodyMax}>
       {#if commitsLoading}
         <div class="commit-section__state">Loading...</div>
       {:else if commitsError}
@@ -166,6 +176,7 @@
         <div class="commit-section__state">No commits</div>
       {/if}
     </div>
+    <SectionResizeHandle id="commits" body={bodyEl} label="Resize Commits" />
   {/if}
 </div>
 

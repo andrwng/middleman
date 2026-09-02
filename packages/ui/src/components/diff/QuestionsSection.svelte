@@ -2,8 +2,19 @@
   import { tick } from "svelte";
   import { getStores } from "../../context.js";
   import type { AIThread, AIQuestion } from "../../stores/ai.svelte.js";
+  import SectionResizeHandle from "./SectionResizeHandle.svelte";
+  import { getSectionHeight } from "./sectionHeights.svelte.js";
 
   const { ai: aiStore, diff: diffStore } = getStores();
+  let bodyEl: HTMLDivElement | undefined = $state();
+
+  // Reader-chosen height for this section's body. null leaves the
+  // stylesheet's default cap in charge -- see sectionHeights for why
+  // the cap is a max-height rather than a height.
+  const bodyMax = $derived.by(() => {
+    const h = getSectionHeight("questions");
+    return h === null ? null : `${h}px`;
+  });
 
   const data = $derived(aiStore.all());
   const threads = $derived(data.threads);
@@ -158,7 +169,7 @@
     </div>
 
     {#if expanded}
-      <div class="q-section__body">
+      <div class="q-section__body" bind:this={bodyEl} style:max-height={bodyMax}>
         {#each threads as thread (thread.id)}
           {@const status = threadStatus(thread)}
           {@const latest = latestQuestion(thread.id)}
@@ -206,6 +217,7 @@
           </div>
         {/each}
       </div>
+      <SectionResizeHandle id="questions" body={bodyEl} label="Resize Questions" />
     {/if}
   </div>
 {/if}
