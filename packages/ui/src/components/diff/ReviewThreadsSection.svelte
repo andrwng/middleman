@@ -2,8 +2,19 @@
   import { tick } from "svelte";
   import { getStores } from "../../context.js";
   import type { ReviewThread } from "../../stores/reviewThreads.svelte.js";
+  import SectionResizeHandle from "./SectionResizeHandle.svelte";
+  import { getSectionHeight } from "./sectionHeights.svelte.js";
 
   const { reviewThreads, worktreeSession, diff } = getStores();
+  let bodyEl: HTMLDivElement | undefined = $state();
+
+  // Reader-chosen height for this section's body. null leaves the
+  // stylesheet's default cap in charge -- see sectionHeights for why
+  // the cap is a max-height rather than a height.
+  const bodyMax = $derived.by(() => {
+    const h = getSectionHeight("threads");
+    return h === null ? null : `${h}px`;
+  });
 
   const threads = $derived(reviewThreads.getThreads().filter((t) => !t.hidden));
   const applicable = $derived(
@@ -111,7 +122,7 @@
     </div>
 
     {#if expanded}
-      <div class="threads-section__body">
+      <div class="threads-section__body" bind:this={bodyEl} style:max-height={bodyMax}>
         {#each threads as t (t.id)}
           {@const orphan = isOrphan(t)}
           <div class="thread-item-row" class:thread-item-row--active={activeId === t.id}>
@@ -144,6 +155,7 @@
           </div>
         {/each}
       </div>
+      <SectionResizeHandle id="threads" body={bodyEl} label="Resize Review threads" />
     {/if}
   </div>
 {/if}

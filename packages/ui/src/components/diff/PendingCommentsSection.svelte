@@ -1,8 +1,19 @@
 <script lang="ts">
   import { getStores } from "../../context.js";
   import type { DraftComment } from "../../stores/diff.svelte.js";
+  import SectionResizeHandle from "./SectionResizeHandle.svelte";
+  import { getSectionHeight } from "./sectionHeights.svelte.js";
 
   const { diff: diffStore } = getStores();
+  let bodyEl: HTMLDivElement | undefined = $state();
+
+  // Reader-chosen height for this section's body. null leaves the
+  // stylesheet's default cap in charge -- see sectionHeights for why
+  // the cap is a max-height rather than a height.
+  const bodyMax = $derived.by(() => {
+    const h = getSectionHeight("drafts");
+    return h === null ? null : `${h}px`;
+  });
 
   const comments = $derived(diffStore.getDraft().comments);
   const commits = $derived(diffStore.getCommits());
@@ -101,7 +112,7 @@
     </div>
 
     {#if expanded}
-      <div class="drafts-section__body">
+      <div class="drafts-section__body" bind:this={bodyEl} style:max-height={bodyMax}>
         {#each comments as c (c.id)}
           <div class="draft-item" class:draft-item--drifted={isDrifted(c)}>
             <button
@@ -148,6 +159,7 @@
           </div>
         {/each}
       </div>
+      <SectionResizeHandle id="drafts" body={bodyEl} label="Resize Drafts" />
     {/if}
   </div>
 {/if}

@@ -2,6 +2,8 @@
   import { tick } from "svelte";
   import { getStores } from "../../context.js";
   import type { PublishedReviewComment } from "../../stores/detail.svelte.js";
+  import SectionResizeHandle from "./SectionResizeHandle.svelte";
+  import { getSectionHeight } from "./sectionHeights.svelte.js";
 
   // Lists published top-of-thread review comments on this PR with
   // click-to-jump. "Top of thread" means `in_reply_to === 0` —
@@ -11,6 +13,15 @@
   // here; they're surfaced via the existing outdated-banner.
 
   const { detail: detailStore, diff: diffStore, viewer: viewerStore } = getStores();
+  let bodyEl: HTMLDivElement | undefined = $state();
+
+  // Reader-chosen height for this section's body. null leaves the
+  // stylesheet's default cap in charge -- see sectionHeights for why
+  // the cap is a max-height rather than a height.
+  const bodyMax = $derived.by(() => {
+    const h = getSectionHeight("review-comments");
+    return h === null ? null : `${h}px`;
+  });
 
   const roots = $derived.by<PublishedReviewComment[]>(() => {
     const byPath = detailStore.getReviewCommentsByFilePath();
@@ -134,7 +145,7 @@
     </div>
 
     {#if expanded}
-      <div class="rc-section__body">
+      <div class="rc-section__body" bind:this={bodyEl} style:max-height={bodyMax}>
         {#if mine.length > 0}
           <div class="rc-subhead">Mine</div>
           {#each mine as c (c.id)}
@@ -175,6 +186,7 @@
           {/each}
         {/if}
       </div>
+      <SectionResizeHandle id="review-comments" body={bodyEl} label="Resize Review comments" />
     {/if}
   </div>
 {/if}
