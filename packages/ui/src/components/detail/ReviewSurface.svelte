@@ -116,6 +116,7 @@
 <div class="review-layout">
   <aside
     class="review-sidebar"
+    data-resize-column
     class:review-sidebar--collapsed={isReviewNavCollapsed()}
     style:width={isReviewNavCollapsed() ? "30px" : `${reviewNavWidth}px`}
   >
@@ -134,7 +135,7 @@
       ></div>
     {/if}
   </aside>
-  <div class="review-main">
+  <div class="review-main" data-resize-column>
     <div class="top-sections" class:top-sections--consolidated={topConsolidated}>
       {#if !topConsolidated}
         <button

@@ -7,10 +7,11 @@
     type SectionId,
   } from "./sectionHeights.svelte.js";
 
-  // The draggable boundary at the bottom of a sidebar section. Dragging it
-  // sizes the section above; whatever sits below slides, and the file list at
-  // the foot of the column absorbs the difference. See sectionHeights for why
-  // the space comes from there.
+  // The draggable boundary at the bottom of a resizable section. Dragging it
+  // sizes the section above; whatever sits below slides, and the elastic pane
+  // at the foot of the column absorbs the difference -- the file list in the
+  // review nav, the diff itself in the review-main column. See sectionHeights
+  // for why the space comes from there.
 
   interface Props {
     id: SectionId;
@@ -31,9 +32,11 @@
     dragging = true;
     startY = e.clientY;
     startHeight = body.getBoundingClientRect().height;
-    // The column bounds how tall the section may get. Measured once per drag:
-    // re-reading it per move would cost a layout on every pixel.
-    const column = body.closest(".review-sidebar");
+    // The column bounds how tall the section may get. A column opts in with
+    // data-resize-column rather than being matched by class name, so the same
+    // handle serves both stacks. Measured once per drag: re-reading it per
+    // move would cost a layout on every pixel.
+    const column = body.closest("[data-resize-column]");
     columnHeight = column
       ? column.getBoundingClientRect().height
       : window.innerHeight;
