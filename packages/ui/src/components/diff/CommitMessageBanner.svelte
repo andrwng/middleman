@@ -1,6 +1,24 @@
 <script lang="ts">
   import { getStores } from "../../context.js";
   import { renderMarkdown } from "../../utils/markdown.js";
+  import SectionResizeHandle from "./SectionResizeHandle.svelte";
+  import { getSectionHeight } from "./sectionHeights.svelte.js";
+
+  let messageEl: HTMLDivElement | undefined = $state();
+  // Reader-chosen height for this body. null leaves the stylesheet's
+  // default cap in charge -- see sectionHeights.
+  const messageMax = $derived.by(() => {
+    const h = getSectionHeight("commit-message");
+    return h === null ? null : `${h}px`;
+  });
+
+  let analysisEl: HTMLDivElement | undefined = $state();
+  // Reader-chosen height for this body. null leaves the stylesheet's
+  // default cap in charge -- see sectionHeights.
+  const analysisMax = $derived.by(() => {
+    const h = getSectionHeight("commit-analysis");
+    return h === null ? null : `${h}px`;
+  });
 
   // Pinned commit-message banner for the Review surface. Mirrors
   // ReviewCoverBanner's pattern: a chevron-toggleable header with a
@@ -111,7 +129,8 @@
       <span class="commit-banner__author">{activeCommit.author_name}</span>
     </button>
     {#if (!collapsed || forceExpanded) && activeCommit.body}
-      <div class="commit-banner__body">{activeCommit.body}</div>
+      <div bind:this={messageEl} style:max-height={messageMax} class="commit-banner__body">{activeCommit.body}</div>
+      <SectionResizeHandle id="commit-message" body={messageEl} label="Resize the commit message" />
     {/if}
     {#if !collapsed || forceExpanded}
       <div class="commit-banner__analysis">
@@ -152,9 +171,10 @@
             Analysis failed: {analysis.error || "unknown error"}
           </div>
         {:else if analysis && analysis.status === "done" && analysis.content}
-          <div class="commit-banner__analysis-body markdown-body">
+          <div bind:this={analysisEl} style:max-height={analysisMax} class="commit-banner__analysis-body markdown-body">
             {@html renderMarkdown(analysis.content, { owner, name, sha: activeCommit.sha })}
           </div>
+          <SectionResizeHandle id="commit-analysis" body={analysisEl} label="Resize the AI summary" />
         {/if}
       </div>
     {/if}

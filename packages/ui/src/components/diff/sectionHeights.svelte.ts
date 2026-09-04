@@ -1,37 +1,48 @@
 // sectionHeights.svelte.ts
-// Per-section heights for the review-nav sidebar's stacked sections.
+// Per-section heights for the stacked sections of the review surface.
 //
-// The sidebar (`.review-sidebar` in ReviewSurface) is a fixed-height flex
-// column, so its children are squeezed to fit rather than overflowing it.
-// Which child gives way is decided by one flexbox rule: a flex item whose own
-// overflow is not `visible` has an automatic minimum size of zero. The file
-// list sets `overflow-y: auto`, so it can shrink to nothing; the section
-// wrappers set no overflow, so their minimum is content-based and they refuse
-// to shrink. The file list therefore absorbed the entire squeeze no matter how
-// tall the sections above it grew.
+// Both of ReviewSurface's columns -- the review nav (`.review-sidebar`) and
+// the main column (`.review-main`) -- are fixed-height flex columns, so their
+// children are squeezed to fit rather than overflowing. Which child gives way
+// is decided by one flexbox rule: a flex item whose own overflow is not
+// `visible` has an automatic minimum size of zero. In the nav that is the file
+// list (`overflow-y: auto`); in the main column it is the diff itself
+// (`.diff-view`, `overflow: hidden`). Neither the section wrappers nor
+// `.top-sections` set an overflow, so their minimum is content-based and they
+// refuse to shrink -- which is why the file list and the diff absorbed the
+// entire squeeze no matter how tall the sections above them grew.
 //
-// Each section body caps itself with `max-height` (40vh in CSS) so a short
-// section wastes no space. This module turns that cap into a value the reader
-// sets by dragging the section's bottom boundary, and the file list becomes the
-// explicit elastic remainder. Because the cap is a `max-height`, shrinking a
-// section always tracks the cursor while growing one whose content is already
-// shorter than the cap changes nothing -- the trade for never letting an empty
-// section reserve space it cannot fill.
+// Each section body caps itself with `max-height` in CSS so a short section
+// wastes no space. This module turns that cap into a value the reader sets by
+// dragging the section's bottom boundary; the elastic pane at the foot of the
+// column takes back whatever a section gives up. Because the cap is a
+// `max-height`, shrinking a section always tracks the cursor while growing one
+// whose content is already shorter than the cap changes nothing -- the trade
+// for never letting an empty section reserve space it cannot fill.
 //
 // localStorage is the canonical persistence layer; this module mirrors it as a
 // reactive $state map at first read and on every write.
 
 const KEY_PREFIX = "pr-section-height:";
 
-// The sections that can be resized, in the order DiffSidebar stacks them. The
-// file list is deliberately absent: it owns whatever height is left over, so
-// the boundary above it is the last section's handle.
+// The bodies that can be resized, in the order their columns stack them. The
+// elastic pane of each column is deliberately absent -- the file list and the
+// diff own whatever height is left over, so the boundary above them is the
+// last section's handle.
+//
+// PatchsetPicker has no entry: it is a compact row with no scrollable body.
 export const SECTION_IDS = [
+  // review nav column
   "commits",
   "drafts",
   "review-comments",
   "threads",
   "questions",
+  // review-main column, above the diff
+  "cover",
+  "commit-message",
+  "commit-analysis",
+  "brief",
 ] as const;
 
 export type SectionId = (typeof SECTION_IDS)[number];
