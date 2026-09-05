@@ -98,6 +98,11 @@
     return false;
   }
 
+  // The anchor a shift-click would span from. Mirrors the condition in
+  // handleCommitClick: only a single selected commit can anchor a span -- from
+  // a range, a shift-click resets to a single commit instead of extending.
+  const spanAnchorSha = $derived(scope.kind === "commit" ? scope.sha : null);
+
   function handleCommitClick(sha: string, shiftKey: boolean): void {
     if (shiftKey && scope.kind === "commit") {
       diffStore.selectRange(scope.sha, sha);
@@ -170,6 +175,7 @@
             active={isActive(commit.sha)}
             reviewed={diffStore.isCommitReviewed(commit.sha)}
             onclick={handleCommitClick}
+            {spanAnchorSha}
           />
         {/each}
       {:else if commits}

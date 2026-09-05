@@ -10,9 +10,22 @@
     active: boolean;
     reviewed: boolean;
     onclick: (sha: string, shiftKey: boolean) => void;
+    // The commit a shift-click would span the diff from, or null when
+    // spanning is not on offer. Shift-click only spans while exactly one
+    // commit is selected (see CommitListSection.handleCommitClick), so the
+    // hint has to be conditional or it would be wrong more often than right.
+    spanAnchorSha?: string | null;
   }
 
-  const { commit, active, reviewed, onclick }: Props = $props();
+  const { commit, active, reviewed, onclick, spanAnchorSha = null }: Props = $props();
+
+  // Spanning from a commit to itself is a no-op, so that row gets no hint.
+  const canSpan = $derived(spanAnchorSha !== null && spanAnchorSha !== commit.sha);
+  const title = $derived(
+    canSpan
+      ? `${commit.message}\n\nShift-click to diff ${spanAnchorSha!.slice(0, 7)} through this commit`
+      : commit.message,
+  );
 
   function relativeDate(iso: string): string {
     const diff = Date.now() - parseAPITimestamp(iso).getTime();
@@ -37,7 +50,7 @@
   class:commit-item--active={active}
   data-commit-sha={commit.sha}
   onclick={handleClick}
-  title={commit.message}
+  title={title}
 >
   {#if reviewed}
     <span class="commit-item__reviewed" title="Reviewed">&check;</span>

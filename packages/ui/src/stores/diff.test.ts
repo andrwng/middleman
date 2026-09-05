@@ -109,3 +109,65 @@ describe("getCurrentCommitSha for a patchset-pair scope", () => {
     expect(store.getCurrentCommitSha()).toBe("sha-ps2");
   });
 });
+
+describe("getCurrentCommitSha for a spanned commit range", () => {
+  // loadCommits fetches over raw `fetch` rather than client.GET, so the
+  // commit list has to be seeded that way.
+  function installCommitsFetch(shas: string[]): void {
+    globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes("/commits")) {
+        return new Response(
+          JSON.stringify({
+            commits: shas.map((sha, i) => ({
+              sha,
+              message: `commit ${i}`,
+              body: "",
+              author_name: "alice",
+              authored_at: "2026-01-01T00:00:00Z",
+            })),
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return new Response(JSON.stringify({}), { status: 404 });
+    }) as unknown as typeof fetch;
+  }
+
+  // Commits arrive newest-first.
+  const NEWEST = "sha-c3";
+  const MIDDLE = "sha-c2";
+  const OLDEST = "sha-c1";
+
+  async function spannedStore(from: string, to: string) {
+    installCommitsFetch([NEWEST, MIDDLE, OLDEST]);
+    const store = createDiffStore({ client: stubClient() });
+    store.setActivePR("acme", "widget", 1);
+    await store.loadCommits();
+    store.selectRange(from, to);
+    return store;
+  }
+
+  it("spans the range regardless of which end was clicked first", async () => {
+    const forwards = await spannedStore(OLDEST, NEWEST);
+    expect(forwards.getScope()).toEqual({ kind: "range", fromSha: OLDEST, toSha: NEWEST });
+
+    const backwards = await spannedStore(NEWEST, OLDEST);
+    expect(backwards.getScope()).toEqual({ kind: "range", fromSha: OLDEST, toSha: NEWEST });
+  });
+
+  it("resolves to the newest commit in the span, which is what makes refs work", async () => {
+    // The reference finder greps the tree at this SHA and the diff's
+    // new-side line numbers are numbered against it, so for a span it has
+    // to be the newest selected commit -- the tree that contains all of
+    // the span's changes.
+    const store = await spannedStore(OLDEST, NEWEST);
+    expect(store.getCurrentCommitSha()).toBe(NEWEST);
+  });
+
+  it("ignores a span whose endpoints are not in the commit list", async () => {
+    const store = await spannedStore(OLDEST, "sha-not-here");
+    expect(store.getScope()).toEqual({ kind: "head" });
+  });
+});
