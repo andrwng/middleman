@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  DIFF_RESERVE_BELOW,
   SECTION_MIN_HEIGHT,
   SECTION_RESERVE_BELOW,
   clampSectionHeight,
@@ -39,6 +40,15 @@ describe("clampSectionHeight", () => {
   it("returns the floor for a non-finite desired height", () => {
     expect(clampSectionHeight(NaN, TALL)).toBe(SECTION_MIN_HEIGHT);
     expect(clampSectionHeight(Infinity, TALL)).toBe(TALL - SECTION_RESERVE_BELOW);
+  });
+
+  it("reserves more for the diff when the caller asks for it", () => {
+    // The top-block divider is sized against the diff, which needs more room
+    // than the 120px a section leaves its neighbours.
+    expect(clampSectionHeight(5000, TALL, DIFF_RESERVE_BELOW)).toBe(TALL - DIFF_RESERVE_BELOW);
+    expect(DIFF_RESERVE_BELOW).toBeGreaterThan(SECTION_RESERVE_BELOW);
+    // Omitting it keeps the section reserve, so existing callers are unchanged.
+    expect(clampSectionHeight(5000, TALL)).toBe(TALL - SECTION_RESERVE_BELOW);
   });
 
   it("returns the floor when the sidebar height is unmeasurable", () => {

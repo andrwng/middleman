@@ -43,6 +43,8 @@ export const SECTION_IDS = [
   "commit-message",
   "commit-analysis",
   "brief",
+  // the whole top block, sized against the diff below it
+  "top-sections",
 ] as const;
 
 export type SectionId = (typeof SECTION_IDS)[number];
@@ -56,11 +58,19 @@ export const SECTION_MIN_HEIGHT = 80;
 // so the reader cannot push the file list entirely off the bottom in one drag.
 export const SECTION_RESERVE_BELOW = 120;
 
-export function clampSectionHeight(desired: number, sidebarHeight: number): number {
-  // An unmeasurable sidebar collapses the ceiling onto the floor: better a
+// The top block is sized against the diff, and a 120px diff is not worth
+// having -- reserve enough that the diff stays readable at any block height.
+export const DIFF_RESERVE_BELOW = 220;
+
+export function clampSectionHeight(
+  desired: number,
+  columnHeight: number,
+  reserveBelow: number = SECTION_RESERVE_BELOW,
+): number {
+  // An unmeasurable column collapses the ceiling onto the floor: better a
   // short section than one sized against a garbage viewport.
-  const max = Number.isFinite(sidebarHeight)
-    ? Math.max(SECTION_MIN_HEIGHT, sidebarHeight - SECTION_RESERVE_BELOW)
+  const max = Number.isFinite(columnHeight)
+    ? Math.max(SECTION_MIN_HEIGHT, columnHeight - reserveBelow)
     : SECTION_MIN_HEIGHT;
   if (Number.isNaN(desired)) return SECTION_MIN_HEIGHT;
   return Math.max(SECTION_MIN_HEIGHT, Math.min(max, Math.round(desired)));

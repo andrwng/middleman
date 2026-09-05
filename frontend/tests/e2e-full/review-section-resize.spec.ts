@@ -1,11 +1,16 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { DiffResult, FilesResult } from "@middleman/ui/api/types";
 
-// The sections above the diff (cover, commit message, AI summary, brief) each
-// cap themselves, and the diff takes whatever is left -- it is the only child
-// of the review-main column flexbox will shrink. Dragging a section's boundary
-// hands the difference straight back to the diff, which is what these tests
-// measure.
+// Two levels of sizing above the diff. The top block as a whole is bounded and
+// scrollable, and one boundary trades its height against the diff. Inside it,
+// each section body (cover, commit message, AI summary, brief) has its own
+// boundary deciding how much of the block it takes.
+//
+// The bound is what makes any of it usable: unbounded, the block overflowed the
+// column, `.review-main`'s `overflow: hidden` clipped the excess with no
+// scrollbar, and the lower sections' boundaries went out of reach with it -- the
+// AI summary's handle sat 119px below the bottom of the column. The first test
+// here is that regression.
 
 const SHA = "abc1234def5678901234567890123456789012ab";
 
@@ -132,7 +137,11 @@ async function openCommitScope(page: Page, settled: string): Promise<void> {
 }
 
 async function dragBoundary(page: Page, section: string, dy: number): Promise<void> {
-  const box = await page.locator(`[data-section-resize="${section}"]`).boundingBox();
+  const handle = page.locator(`[data-section-resize="${section}"]`);
+  // The top block scrolls, so a boundary inside it may be out of view -- the
+  // reader scrolls to it before dragging, and so does this.
+  await handle.scrollIntoViewIfNeeded();
+  const box = await handle.boundingBox();
   expect(box).not.toBeNull();
   const x = box!.x + box!.width / 2;
   const y = box!.y + box!.height / 2;
@@ -148,47 +157,92 @@ async function heightOf(page: Page, selector: string): Promise<number> {
   return box!.height;
 }
 
+// Returns the handle's background after hovering it, to check the drag
+// affordance appears. This says nothing about reachability: hover auto-scrolls,
+// and an ancestor with `overflow: hidden` still scrolls programmatically, so
+// Playwright can reach a handle a reader cannot. See the first test.
+async function hoverBackground(page: Page, section: string): Promise<string> {
+  const handle = page.locator(`[data-section-resize="${section}"]`);
+  await handle.hover();
+  return await handle.evaluate((el) => getComputedStyle(el).backgroundColor);
+}
+
 test.describe("review section resize", () => {
-  test("the message and the AI summary each get their own boundary", async ({ page }) => {
+  test("the AI summary's boundary is reachable by scrolling, and lights up", async ({ page }) => {
     await mockApi(page, { body: MESSAGE_BODY, analysis: SUMMARY });
     await openCommitScope(page, ".commit-banner__analysis-body");
 
-    // Attached rather than visible: with both bodies at full height the column
-    // over-subscribes and the lower boundary is clipped out of view.
-    await expect(page.locator('[data-section-resize="commit-message"]')).toBeAttached();
-    await expect(page.locator('[data-section-resize="commit-analysis"]')).toBeAttached();
+    const handle = page.locator('[data-section-resize="commit-analysis"]');
+
+    // Scrolling the top block is the only move a reader has. Unbounded, the
+    // block was not a scroll container at all: the column's `overflow: hidden`
+    // clipped this handle 119px past its bottom edge, where nothing a reader
+    // does could bring it.
+    //
+    // Note hover() alone cannot express that. `overflow: hidden` still scrolls
+    // PROGRAMMATICALLY, so Playwright's auto-scroll reaches a handle no human
+    // can -- a hover assertion here passes with the bug in place. The reader's
+    // own scroll is the honest test.
+    await page.locator(".top-sections").evaluate((el) => {
+      el.scrollTop = el.scrollHeight;
+    });
+    await expect(handle).toBeInViewport();
+
+    // And once reached it shows the drag affordance: transparent until hover.
+    expect(await handle.evaluate((el) => getComputedStyle(el).backgroundColor))
+      .toBe("rgba(0, 0, 0, 0)");
+    expect(await hoverBackground(page, "commit-analysis")).not.toBe("rgba(0, 0, 0, 0)");
+    expect(await hoverBackground(page, "top-sections")).not.toBe("rgba(0, 0, 0, 0)");
   });
 
-  test("shrinking the AI summary hands the height to the diff", async ({ page }) => {
-    await mockApi(page, { analysis: SUMMARY });
+  test("the diff keeps a readable share however tall the sections are", async ({ page }) => {
+    await mockApi(page, { body: MESSAGE_BODY, analysis: SUMMARY });
     await openCommitScope(page, ".commit-banner__analysis-body");
 
-    const summaryBefore = await heightOf(page, ".commit-banner__analysis-body");
-    const diffBefore = await heightOf(page, ".diff-view");
-    // The summary must actually overflow its cap for this to mean anything.
-    expect(summaryBefore).toBeGreaterThan(200);
-
-    await dragBoundary(page, "commit-analysis", -150);
-
-    expect(await heightOf(page, ".commit-banner__analysis-body")).toBeCloseTo(summaryBefore - 150, 0);
-    expect(await heightOf(page, ".diff-view")).toBeCloseTo(diffBefore + 150, 0);
+    // The message and the summary together want 80vh. Before the block was
+    // bounded this left the diff at exactly zero pixels.
+    expect(await heightOf(page, ".diff-view")).toBeGreaterThan(200);
   });
 
-  test("shrinking the commit message hands the height to the diff", async ({ page }) => {
-    await mockApi(page, { body: MESSAGE_BODY });
-    await openCommitScope(page, ".commit-banner__body");
+  test("dragging the review-sections boundary trades height with the diff", async ({ page }) => {
+    await mockApi(page, { body: MESSAGE_BODY, analysis: SUMMARY });
+    await openCommitScope(page, ".commit-banner__analysis-body");
+
+    const topBefore = await heightOf(page, ".top-sections");
+    const diffBefore = await heightOf(page, ".diff-view");
+
+    await dragBoundary(page, "top-sections", -120);
+
+    expect(await heightOf(page, ".top-sections")).toBeCloseTo(topBefore - 120, 0);
+    expect(await heightOf(page, ".diff-view")).toBeCloseTo(diffBefore + 120, 0);
+  });
+
+  test("the review-sections boundary gives the height back on double-click", async ({ page }) => {
+    await mockApi(page, { body: MESSAGE_BODY, analysis: SUMMARY });
+    await openCommitScope(page, ".commit-banner__analysis-body");
+
+    const topBefore = await heightOf(page, ".top-sections");
+    await dragBoundary(page, "top-sections", -120);
+    expect(await heightOf(page, ".top-sections")).toBeLessThan(topBefore - 100);
+
+    await page.locator('[data-section-resize="top-sections"]').dblclick();
+
+    expect(await heightOf(page, ".top-sections")).toBeCloseTo(topBefore, 0);
+  });
+
+  test("a section boundary sizes its own body inside the block", async ({ page }) => {
+    await mockApi(page, { body: MESSAGE_BODY, analysis: SUMMARY });
+    await openCommitScope(page, ".commit-banner__analysis-body");
 
     const messageBefore = await heightOf(page, ".commit-banner__body");
-    const diffBefore = await heightOf(page, ".diff-view");
     expect(messageBefore).toBeGreaterThan(150);
 
     await dragBoundary(page, "commit-message", -100);
 
     expect(await heightOf(page, ".commit-banner__body")).toBeCloseTo(messageBefore - 100, 0);
-    expect(await heightOf(page, ".diff-view")).toBeCloseTo(diffBefore + 100, 0);
   });
 
-  test("the two boundaries size their bodies independently", async ({ page }) => {
+  test("the two section boundaries size their bodies independently", async ({ page }) => {
     await mockApi(page, { body: MESSAGE_BODY, analysis: SUMMARY });
     await openCommitScope(page, ".commit-banner__analysis-body");
 
@@ -197,30 +251,22 @@ test.describe("review section resize", () => {
 
     await dragBoundary(page, "commit-message", -100);
 
-    // Sizing the message leaves the summary's own cap untouched.
     expect(await heightOf(page, ".commit-banner__body")).toBeCloseTo(messageBefore - 100, 0);
     expect(await heightOf(page, ".commit-banner__analysis-body")).toBeCloseTo(summaryBefore, 0);
   });
 
-  test("recovers a diff the sections had squeezed to nothing", async ({ page }) => {
-    // An expanded message plus an AI summary claims 30vh + 50vh, which
-    // over-subscribes the column: the diff is not merely thin, it is zero, and
-    // `overflow: hidden` on the column clips the summary's boundary out of
-    // reach. The topmost boundary stays reachable, and shrinking it pulls the
-    // next one back into view -- that is the way out, in two drags.
-    await mockApi(page, { body: MESSAGE_BODY, analysis: SUMMARY });
-    await openCommitScope(page, ".commit-banner__analysis-body");
+  test("a short stack leaves its slack to the diff rather than reserving it", async ({ page }) => {
+    await mockApi(page, { body: "one short line" });
+    await openCommitScope(page, ".commit-banner__body");
 
-    expect(await heightOf(page, ".diff-view")).toBe(0);
-
-    await dragBoundary(page, "commit-message", -500); // clamps to the floor
-    await expect(page.locator('[data-section-resize="commit-analysis"]')).toBeVisible();
-
-    await dragBoundary(page, "commit-analysis", -500);
-    expect(await heightOf(page, ".diff-view")).toBeGreaterThan(100);
+    const top = await heightOf(page, ".top-sections");
+    const diff = await heightOf(page, ".diff-view");
+    // The bound is a max-height, so a small stack takes only what it needs.
+    expect(top).toBeLessThan(300);
+    expect(diff).toBeGreaterThan(top);
   });
 
-  test("double-clicking a boundary gives the height back to the section", async ({ page }) => {
+  test("double-clicking a section boundary gives the height back to the body", async ({ page }) => {
     await mockApi(page, { body: MESSAGE_BODY });
     await openCommitScope(page, ".commit-banner__body");
 

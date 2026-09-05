@@ -19,8 +19,11 @@
     // first render pass and populated well before a pointer can reach us.
     body: HTMLElement | null | undefined;
     label: string;
+    // Height a drag always leaves for whatever sits below. Defaults to the
+    // section reserve; the top-block divider asks for the larger diff reserve.
+    reserveBelow?: number;
   }
-  const { id, body, label }: Props = $props();
+  const { id, body, label, reserveBelow }: Props = $props();
 
   let dragging = false;
   let startY = 0;
@@ -47,7 +50,7 @@
   function onPointerMove(e: PointerEvent): void {
     if (!dragging) return;
     const desired = startHeight + (e.clientY - startY);
-    setSectionHeight(id, clampSectionHeight(desired, columnHeight));
+    setSectionHeight(id, clampSectionHeight(desired, columnHeight, reserveBelow));
   }
 
   function onPointerUp(e: PointerEvent): void {
@@ -77,6 +80,10 @@
 <style>
   .section-resize {
     height: 6px;
+    /* Several parents are flex columns, where the default shrink factor would
+       let a tight column squeeze the handle to nothing -- an invisible,
+       un-hoverable boundary. It never gives up its 6px. */
+    flex-shrink: 0;
     cursor: row-resize;
     background: transparent;
   }
