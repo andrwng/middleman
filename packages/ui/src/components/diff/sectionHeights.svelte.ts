@@ -10,27 +10,32 @@
 // (`.diff-view`, `overflow: hidden`). Neither the section wrappers nor
 // `.top-sections` set an overflow, so their minimum is content-based and they
 // refuse to shrink -- which is why the file list and the diff absorbed the
-// entire squeeze no matter how tall the sections above them grew.
+// entire squeeze no matter how tall the sections above them grew. In the main
+// column that was literal: an expanded commit message plus an AI summary left
+// the diff at zero height, and the column clipped the overflow with no
+// scrollbar. `.top-sections` is now bounded and scrollable, and the height it
+// is bounded to is one of the values here.
 //
-// Each section body caps itself with `max-height` in CSS so a short section
+// Each resizable body caps itself with `max-height` in CSS so a short one
 // wastes no space. This module turns that cap into a value the reader sets by
-// dragging the section's bottom boundary; the elastic pane at the foot of the
-// column takes back whatever a section gives up. Because the cap is a
-// `max-height`, shrinking a section always tracks the cursor while growing one
-// whose content is already shorter than the cap changes nothing -- the trade
-// for never letting an empty section reserve space it cannot fill.
+// dragging a boundary; the elastic pane below takes back whatever is given up.
+// Because the cap is a `max-height`, shrinking always tracks the cursor while
+// growing something whose content already fits changes nothing -- the trade for
+// never letting an empty section reserve space it cannot fill.
 //
 // localStorage is the canonical persistence layer; this module mirrors it as a
 // reactive $state map at first read and on every write.
 
 const KEY_PREFIX = "pr-section-height:";
 
-// The bodies that can be resized, in the order their columns stack them. The
-// elastic pane of each column is deliberately absent -- the file list and the
-// diff own whatever height is left over, so the boundary above them is the
-// last section's handle.
+// What can be resized. In the review nav each stacked section has its own
+// boundary and the file list takes the leftover height, so the boundary above
+// it is the last section's handle.
 //
-// PatchsetPicker has no entry: it is a compact row with no scrollable body.
+// The main column works the other way round: one boundary sizes the whole top
+// block against the diff. The sections inside it keep the fixed caps in their
+// own stylesheets -- per-section boundaries there only decided what showed
+// without scrolling, which scrolling already does.
 export const SECTION_IDS = [
   // review nav column
   "commits",
@@ -38,12 +43,7 @@ export const SECTION_IDS = [
   "review-comments",
   "threads",
   "questions",
-  // review-main column, above the diff
-  "cover",
-  "commit-message",
-  "commit-analysis",
-  "brief",
-  // the whole top block, sized against the diff below it
+  // review-main column: the whole top block, sized against the diff below it
   "top-sections",
 ] as const;
 

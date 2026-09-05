@@ -1,16 +1,6 @@
 <script lang="ts">
   import type { components } from "../../api/generated/schema.js";
   import { renderMarkdown } from "../../utils/markdown.js";
-  import SectionResizeHandle from "../diff/SectionResizeHandle.svelte";
-  import { getSectionHeight } from "../diff/sectionHeights.svelte.js";
-
-  let coverEl: HTMLDivElement | undefined = $state();
-  // Reader-chosen height for this body. null leaves the stylesheet's
-  // default cap in charge -- see sectionHeights.
-  const coverMax = $derived.by(() => {
-    const h = getSectionHeight("cover");
-    return h === null ? null : `${h}px`;
-  });
 
   // MergeRequest is the inner DB type exposed via PullDetail.merge_request
   // — fewer fields than the list-response wrapper, but has everything the
@@ -73,10 +63,9 @@
   </button>
   {#if !collapsed || forceExpanded}
     {#if pr.Body}
-      <div bind:this={coverEl} style:max-height={coverMax} class="review-cover__body markdown-body">
+      <div class="review-cover__body markdown-body">
         {@html renderMarkdown(pr.Body, { owner, name })}
       </div>
-      <SectionResizeHandle id="cover" body={coverEl} label="Resize the description" />
     {:else}
       <div class="review-cover__empty">No description</div>
     {/if}
