@@ -1,9 +1,14 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { DiffResult, FilesResult } from "@middleman/ui/api/types";
 
-// Selecting more than one commit already worked -- click one, shift-click
-// another, and the diff becomes the net change across that span. Nothing
-// advertised it, and nothing tested it. These do both.
+// Click a commit, shift-click another, and the diff becomes the net change
+// across that span. A shift-click always re-spans from the anchor -- the last
+// commit selected on its own -- so it grows the span, narrows it, or collapses
+// it, the way a shift-click behaves in any list.
+//
+// The span is diffed as ParentOf(from)..to, so both ends are included. The
+// pill says so now; it used to render "from..to", which means the opposite in
+// git's own syntax.
 
 const NEWEST = "aaa1111".repeat(5).slice(0, 40);
 const MIDDLE = "bbb2222".repeat(5).slice(0, 40);
@@ -113,15 +118,21 @@ test.describe("spanning a range of commits", () => {
       .toBe(`?from=${OLDEST}&to=${NEWEST}`);
   });
 
-  test("the span is reported as a range, and resettable", async ({ page }) => {
+  test("the span is labelled as the range it actually diffs", async ({ page }) => {
     await mockApi(page);
     await openReview(page);
 
     await rowFor(page, OLDEST).click();
     await rowFor(page, NEWEST).click({ modifiers: ["Shift"] });
 
-    await expect(page.locator(".scope-pill").first())
-      .toContainText(`${OLDEST.slice(0, 7)}..${NEWEST.slice(0, 7)}`);
+    const pill = page.locator(".scope-pill").first();
+    // `from^..to` is what the server is asked for. Plain `from..to` would
+    // claim the base commit is excluded, which is how this got reported.
+    await expect(pill).toContainText(`${OLDEST.slice(0, 7)}^..${NEWEST.slice(0, 7)}`);
+
+    const title = (await pill.getAttribute("title")) ?? "";
+    expect(title).toContain("3 commits");
+    expect(title).toContain("both included");
   });
 
   test("a row advertises spanning only once a commit is selected", async ({ page }) => {
@@ -146,7 +157,7 @@ test.describe("spanning a range of commits", () => {
     expect(await rowFor(page, NEWEST).getAttribute("title")).toContain("commit number 0");
   });
 
-  test("the hint goes away once a span is active, since shift-click no longer extends it", async ({ page }) => {
+  test("the hint survives an active span, still naming the anchor", async ({ page }) => {
     await mockApi(page);
     await openReview(page);
 
@@ -154,10 +165,52 @@ test.describe("spanning a range of commits", () => {
     await rowFor(page, NEWEST).click({ modifiers: ["Shift"] });
     await expect(page.locator(".commit-item--active")).toHaveCount(3);
 
-    // From a range, a shift-click resets to a single commit rather than
-    // growing the span, so no row claims otherwise.
-    for (const sha of SHAS) {
-      expect(await rowFor(page, sha).getAttribute("title")).not.toContain("Shift-click");
-    }
+    // A shift-click still re-spans from the same anchor, so the offer stands.
+    const hint = `Shift-click to diff ${OLDEST.slice(0, 7)} through this commit`;
+    expect(await rowFor(page, MIDDLE).getAttribute("title")).toContain(hint);
+    expect(await rowFor(page, NEWEST).getAttribute("title")).toContain(hint);
+    // Except on the anchor's own row, where a shift-click collapses instead.
+    expect(await rowFor(page, OLDEST).getAttribute("title")).not.toContain("Shift-click");
+  });
+
+  test("shift-click grows, narrows, then collapses the span from one anchor", async ({ page }) => {
+    const diffQueries = await mockApi(page);
+    await openReview(page);
+
+    await rowFor(page, OLDEST).click();
+    await expect(page.locator(".commit-item--active")).toHaveCount(1);
+
+    await rowFor(page, MIDDLE).click({ modifiers: ["Shift"] });
+    await expect(page.locator(".commit-item--active")).toHaveCount(2);
+
+    // Grows from the anchor, not from the span's near end.
+    await rowFor(page, NEWEST).click({ modifiers: ["Shift"] });
+    await expect(page.locator(".commit-item--active")).toHaveCount(3);
+    await expect.poll(() => diffQueries.at(-1)).toBe(`?from=${OLDEST}&to=${NEWEST}`);
+
+    // Narrows back toward it.
+    await rowFor(page, MIDDLE).click({ modifiers: ["Shift"] });
+    await expect(page.locator(".commit-item--active")).toHaveCount(2);
+    await expect.poll(() => diffQueries.at(-1)).toBe(`?from=${OLDEST}&to=${MIDDLE}`);
+
+    // And a shift-click on the anchor collapses to that commit alone.
+    await rowFor(page, OLDEST).click({ modifiers: ["Shift"] });
+    await expect(page.locator(".commit-item--active")).toHaveCount(1);
+    await expect.poll(() => diffQueries.at(-1)).toBe(`?commit=${OLDEST}`);
+  });
+
+  test("a plain click re-anchors the span", async ({ page }) => {
+    await mockApi(page);
+    await openReview(page);
+
+    await rowFor(page, OLDEST).click();
+    await rowFor(page, NEWEST).click({ modifiers: ["Shift"] });
+    await expect(page.locator(".commit-item--active")).toHaveCount(3);
+
+    // Plain-clicking the middle commit drops the span and anchors there.
+    await rowFor(page, MIDDLE).click();
+    await expect(page.locator(".commit-item--active")).toHaveCount(1);
+    const hint = `Shift-click to diff ${MIDDLE.slice(0, 7)} through this commit`;
+    expect(await rowFor(page, NEWEST).getAttribute("title")).toContain(hint);
   });
 });

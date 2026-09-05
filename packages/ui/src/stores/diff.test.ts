@@ -14,6 +14,44 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+// loadCommits fetches over raw `fetch` rather than client.GET, so the
+// commit list has to be seeded that way.
+function installCommitsFetch(shas: string[]): void {
+  globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
+    const url =
+      typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (url.includes("/commits")) {
+      return new Response(
+        JSON.stringify({
+          commits: shas.map((sha, i) => ({
+            sha,
+            message: `commit ${i}`,
+            body: "",
+            author_name: "alice",
+            authored_at: "2026-01-01T00:00:00Z",
+          })),
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    return new Response(JSON.stringify({}), { status: 404 });
+  }) as unknown as typeof fetch;
+}
+
+
+// The fixture commit list, newest-first as the API returns it.
+const NEWEST = "sha-c3";
+const MIDDLE = "sha-c2";
+const OLDEST = "sha-c1";
+
+async function storeWithCommits() {
+  installCommitsFetch([NEWEST, MIDDLE, OLDEST]);
+  const store = createDiffStore({ client: stubClient() });
+  store.setActivePR("acme", "widget", 1);
+  await store.loadCommits();
+  return store;
+}
+
 describe("clearDraftCommentsForPath", () => {
   it("clearDraftCommentsForPath removes only that path's drafts", () => {
     const store = createDiffStore({ client: stubClient() });
@@ -111,40 +149,8 @@ describe("getCurrentCommitSha for a patchset-pair scope", () => {
 });
 
 describe("getCurrentCommitSha for a spanned commit range", () => {
-  // loadCommits fetches over raw `fetch` rather than client.GET, so the
-  // commit list has to be seeded that way.
-  function installCommitsFetch(shas: string[]): void {
-    globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
-      const url =
-        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-      if (url.includes("/commits")) {
-        return new Response(
-          JSON.stringify({
-            commits: shas.map((sha, i) => ({
-              sha,
-              message: `commit ${i}`,
-              body: "",
-              author_name: "alice",
-              authored_at: "2026-01-01T00:00:00Z",
-            })),
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        );
-      }
-      return new Response(JSON.stringify({}), { status: 404 });
-    }) as unknown as typeof fetch;
-  }
-
-  // Commits arrive newest-first.
-  const NEWEST = "sha-c3";
-  const MIDDLE = "sha-c2";
-  const OLDEST = "sha-c1";
-
   async function spannedStore(from: string, to: string) {
-    installCommitsFetch([NEWEST, MIDDLE, OLDEST]);
-    const store = createDiffStore({ client: stubClient() });
-    store.setActivePR("acme", "widget", 1);
-    await store.loadCommits();
+    const store = await storeWithCommits();
     store.selectRange(from, to);
     return store;
   }
@@ -169,5 +175,88 @@ describe("getCurrentCommitSha for a spanned commit range", () => {
   it("ignores a span whose endpoints are not in the commit list", async () => {
     const store = await spannedStore(OLDEST, "sha-not-here");
     expect(store.getScope()).toEqual({ kind: "head" });
+  });
+});
+
+describe("extending a span with shift-click", () => {
+  it("offers no anchor until a commit is selected on its own", async () => {
+    const store = await storeWithCommits();
+    expect(store.getSpanAnchorSha()).toBeNull();
+  });
+
+  it("anchors on the commit selected on its own", async () => {
+    const store = await storeWithCommits();
+    await store.selectCommit(MIDDLE);
+    expect(store.getSpanAnchorSha()).toBe(MIDDLE);
+  });
+
+  it("grows the span outward from the anchor, keeping the anchor put", async () => {
+    const store = await storeWithCommits();
+    await store.selectCommit(OLDEST);
+
+    store.extendSpan(MIDDLE);
+    expect(store.getScope()).toEqual({ kind: "range", fromSha: OLDEST, toSha: MIDDLE });
+    expect(store.getSpanAnchorSha()).toBe(OLDEST);
+
+    // A second shift-click spans from the same anchor rather than from the
+    // span's near end.
+    store.extendSpan(NEWEST);
+    expect(store.getScope()).toEqual({ kind: "range", fromSha: OLDEST, toSha: NEWEST });
+    expect(store.getSpanAnchorSha()).toBe(OLDEST);
+  });
+
+  it("narrows the span back toward the anchor", async () => {
+    const store = await storeWithCommits();
+    await store.selectCommit(OLDEST);
+    store.extendSpan(NEWEST);
+
+    store.extendSpan(MIDDLE);
+    expect(store.getScope()).toEqual({ kind: "range", fromSha: OLDEST, toSha: MIDDLE });
+  });
+
+  it("spans in the other direction when the anchor is the newer commit", async () => {
+    const store = await storeWithCommits();
+    await store.selectCommit(NEWEST);
+
+    store.extendSpan(OLDEST);
+    // Normalized to (older, newer) whichever end anchored it.
+    expect(store.getScope()).toEqual({ kind: "range", fromSha: OLDEST, toSha: NEWEST });
+    expect(store.getSpanAnchorSha()).toBe(NEWEST);
+  });
+
+  it("collapses to a single commit when the anchor itself is shift-clicked", async () => {
+    const store = await storeWithCommits();
+    await store.selectCommit(OLDEST);
+    store.extendSpan(NEWEST);
+
+    store.extendSpan(OLDEST);
+    expect(store.getScope()).toEqual({ kind: "commit", sha: OLDEST });
+  });
+
+  it("starts a fresh single selection when nothing is anchored", async () => {
+    const store = await storeWithCommits();
+    store.extendSpan(MIDDLE);
+    expect(store.getScope()).toEqual({ kind: "commit", sha: MIDDLE });
+    expect(store.getSpanAnchorSha()).toBe(MIDDLE);
+  });
+
+  it("drops the anchor when the scope leaves commits and spans behind", async () => {
+    const store = await storeWithCommits();
+    await store.selectCommit(OLDEST);
+    store.extendSpan(NEWEST);
+    expect(store.getSpanAnchorSha()).toBe(OLDEST);
+
+    await store.resetToHead();
+    // The anchor is derived from the scope, so a reset invalidates it without
+    // resetToHead having to know the anchor exists.
+    expect(store.getSpanAnchorSha()).toBeNull();
+  });
+
+  it("drops the anchor for a span it is not an end of", async () => {
+    const store = await storeWithCommits();
+    await store.selectCommit(OLDEST);
+    // A span set directly, bypassing the anchor, must not inherit a stale one.
+    store.selectRange(MIDDLE, NEWEST);
+    expect(store.getSpanAnchorSha()).toBeNull();
   });
 });

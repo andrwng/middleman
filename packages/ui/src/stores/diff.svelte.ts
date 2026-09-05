@@ -268,6 +268,10 @@ export function createDiffStore(opts: DiffStoreOptions) {
   // overwrite state after the user has switched away.
   let notesGen = 0;
   let scope = $state<DiffScope>({ kind: "head" });
+  // The commit a shift-click spans from: the last one selected on its own.
+  // Kept beside the scope rather than inside it because a span normalizes to
+  // (older, newer) and so cannot say which end the reader started from.
+  let rangeAnchorSha = $state<string | null>(null);
 
   let currentOwner = $state("");
   let currentName = $state("");
@@ -1249,10 +1253,40 @@ export function createDiffStore(opts: DiffStoreOptions) {
 
   function selectCommit(sha: string): Promise<void> {
     scope = { kind: "commit", sha };
+    rangeAnchorSha = sha;
     if (currentOwner && currentName && currentNumber) {
       return loadDiff(currentOwner, currentName, currentNumber);
     }
     return Promise.resolve();
+  }
+
+  // The commit a shift-click would span from, or null when there is none.
+  // Derived from the scope rather than tracked through it: every other scope
+  // (head, patchsets, unreviewed) and every reset answers null on its own, so
+  // none of those code paths has to remember to clear the anchor.
+  function getSpanAnchorSha(): string | null {
+    if (scope.kind === "commit") return scope.sha;
+    if (scope.kind === "range") {
+      const anchor = rangeAnchorSha;
+      // Only trust the anchor while it is still an end of the live span.
+      if (anchor !== null && (anchor === scope.fromSha || anchor === scope.toSha)) {
+        return anchor;
+      }
+    }
+    return null;
+  }
+
+  // extendSpan re-spans from the anchor to `sha`, which grows the span when
+  // `sha` lies outside it and narrows it when inside -- the behaviour a
+  // shift-click has in any list. Landing on the anchor collapses to that
+  // single commit.
+  function extendSpan(sha: string): void {
+    const anchor = getSpanAnchorSha();
+    if (anchor === null || anchor === sha) {
+      void selectCommit(sha);
+      return;
+    }
+    selectRange(anchor, sha);
   }
 
   function selectRange(fromSha: string, toSha: string): void {
@@ -1469,6 +1503,8 @@ export function createDiffStore(opts: DiffStoreOptions) {
     getNotesError,
     selectCommit,
     selectRange,
+    extendSpan,
+    getSpanAnchorSha,
     selectPatchsets,
     getInterdiff,
     resetToHead,
