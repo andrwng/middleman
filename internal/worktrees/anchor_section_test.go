@@ -98,7 +98,7 @@ func TestFileSection(t *testing.T) {
 }
 
 // TestClassifyMapped exercises the current/moved/removed decision
-// ResolveAnchor makes once it already has a mapped line number and new
+// AnchorDiff.Resolve makes once it already has a mapped line number and new
 // path. Splitting it out as classifyMapped lets this run without shelling
 // out to git -- in particular the AnchorCurrent case here (a file's diff
 // section exists, but this specific line sits outside every hunk in it) is

@@ -126,20 +126,11 @@ func (d AnchorDiff) Resolve(path string, line int) ResolvedAnchor {
 	return classifyMapped(path, line, newPath, mapped, removed)
 }
 
-// ResolveAnchor maps `line` in `path`, as recorded at `srcRev`, forward to
-// `dstRev` -- FetchAnchorDiff plus one Resolve, for the single-anchor case
-// where there is nothing to share the diff with.
-func ResolveAnchor(
-	ctx context.Context, worktreePath, srcRev, dstRev, path string, line int,
-) ResolvedAnchor {
-	return FetchAnchorDiff(ctx, worktreePath, srcRev, dstRev).Resolve(path, line)
-}
-
 // classifyMapped turns an already-computed line-mapping outcome into a
-// ResolvedAnchor. It is split out of ResolveAnchor so this decision --
+// ResolvedAnchor. It is split out of AnchorDiff.Resolve so this decision --
 // "removed" when the line itself is gone, "current" when nothing about the
 // anchor actually changed, "moved" otherwise -- can be unit-tested without
-// shelling out to git; ResolveAnchor's other branches need a real diff to
+// shelling out to git; Resolve's other branches need a real diff to
 // reach, but this one only needs its inputs.
 func classifyMapped(origPath string, origLine int, newPath string, mapped int, removed bool) ResolvedAnchor {
 	if removed {

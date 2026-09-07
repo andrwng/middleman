@@ -53,7 +53,7 @@ func anchorRepo(t *testing.T) (dir string, c1, c2, c3, c4 string) {
 	return dir, c1, c2, c3, c4
 }
 
-func TestResolveAnchor(t *testing.T) {
+func TestAnchorDiffResolve(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available on PATH")
 	}
@@ -61,32 +61,45 @@ func TestResolveAnchor(t *testing.T) {
 	ctx := context.Background()
 	dir, c1, c2, c3, c4 := anchorRepo(t)
 
+	// One fetched diff answers any number of (path, line) questions, which
+	// is what lets a caller with many threads at one commit pay for a
+	// single git call.
+	resolve := func(src, dst, path string, line int) ResolvedAnchor {
+		return FetchAnchorDiff(ctx, dir, src, dst).Resolve(path, line)
+	}
+
 	// Unchanged between a revision and itself.
-	got := ResolveAnchor(ctx, dir, c1, c1, "a.txt", 5)
+	got := resolve(c1, c1, "a.txt", 5)
 	assert.Equal(AnchorCurrent, got.State)
 	assert.Equal(5, got.Line)
 	assert.Equal("a.txt", got.Path)
 
 	// Three lines inserted above: 5 -> 8.
-	got = ResolveAnchor(ctx, dir, c1, c2, "a.txt", 5)
+	got = resolve(c1, c2, "a.txt", 5)
 	assert.Equal(AnchorMoved, got.State)
 	assert.Equal(8, got.Line)
 
 	// The file was renamed; the anchor follows it.
-	got = ResolveAnchor(ctx, dir, c1, c3, "a.txt", 5)
+	got = resolve(c1, c3, "a.txt", 5)
 	assert.Equal(AnchorMoved, got.State)
 	assert.Equal("b.txt", got.Path)
 	assert.Equal(8, got.Line)
 
 	// TARGET itself is gone.
-	got = ResolveAnchor(ctx, dir, c1, c4, "a.txt", 5)
+	got = resolve(c1, c4, "a.txt", 5)
 	assert.Equal(AnchorRemoved, got.State)
 
 	// An unknown source revision cannot be mapped from.
-	got = ResolveAnchor(ctx, dir, "0000000000000000000000000000000000000000", c4, "a.txt", 5)
+	got = resolve("0000000000000000000000000000000000000000", c4, "a.txt", 5)
 	assert.Equal(AnchorUnmappable, got.State)
 
 	// The working tree is a valid destination.
-	got = ResolveAnchor(ctx, dir, c1, WorkingTreeSentinel, "a.txt", 5)
+	got = resolve(c1, WorkingTreeSentinel, "a.txt", 5)
 	assert.Equal(AnchorRemoved, got.State)
+
+	// Two anchors off ONE diff: the insertion shifts every line below it
+	// by the same three, and the fetched diff is reusable for both.
+	shared := FetchAnchorDiff(ctx, dir, c1, c2)
+	assert.Equal(8, shared.Resolve("a.txt", 5).Line)
+	assert.Equal(9, shared.Resolve("a.txt", 6).Line)
 }
