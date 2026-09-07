@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, fireEvent } from "@testing-library/svelte";
 
 const applyAll = vi.fn(async () => true);
@@ -25,6 +25,8 @@ vi.mock("../../context.js", () => ({
       getCurrentPR,
       isFileCollapsed,
       toggleFileCollapsed,
+      requestRevealLine: vi.fn(),
+      consumeRevealTarget: vi.fn(),
     },
   }),
 }));
@@ -49,6 +51,11 @@ afterEach(() => {
   commitsRef.value = [];
   scopeRef.value = { kind: "head" };
   clearSectionHeight("threads");
+});
+
+beforeEach(() => {
+  // jsdom: scrollIntoView is not implemented (see scrollToDiffLine.test.ts).
+  Element.prototype.scrollIntoView = vi.fn();
 });
 
 describe("ReviewThreadsSection", () => {
@@ -228,5 +235,79 @@ describe("ReviewThreadsSection — click-to-navigate", () => {
     const { container } = render(ReviewThreadsSection);
     const body = container.querySelector(".threads-section__body") as HTMLElement;
     expect(body.style.maxHeight).toBe("");
+  });
+});
+
+describe("ReviewThreadsSection reachability", () => {
+  it("expands the thread in place when the diff cannot host it", async () => {
+    // No .diff-file elements exist in this test DOM, so the jump cannot
+    // land -- exactly the case that used to do nothing at all.
+    threadsRef.value = [thread({ path: "gone.go", line: 65 })];
+    const { getByTitle, container } = render(ReviewThreadsSection);
+
+    expect(container.querySelector(".thread-item__fallback")).toBeNull();
+    await fireEvent.click(getByTitle("gone.go"));
+
+    const card = container.querySelector(".thread-item__fallback");
+    expect(card).not.toBeNull();
+    // The conversation itself, not a placeholder.
+    expect(card!.textContent).toContain("rename this please");
+  });
+
+  it("says why the thread could not be placed", async () => {
+    threadsRef.value = [thread({ path: "gone.go", line: 65 })];
+    const { getByTitle, container } = render(ReviewThreadsSection);
+    await fireEvent.click(getByTitle("gone.go"));
+    expect(container.querySelector(".thread-item__reason")!.textContent)
+      .toContain("unchanged here");
+  });
+
+  it("collapses the in-place card when the row is clicked again", async () => {
+    threadsRef.value = [thread({ path: "gone.go", line: 65 })];
+    const { getByTitle, container } = render(ReviewThreadsSection);
+    await fireEvent.click(getByTitle("gone.go"));
+    expect(container.querySelector(".thread-item__fallback")).not.toBeNull();
+    await fireEvent.click(getByTitle("gone.go"));
+    expect(container.querySelector(".thread-item__fallback")).toBeNull();
+  });
+
+  it("does not expand in place when the jump lands", async () => {
+    // A real anchor element in the DOM: the jump succeeds, so the reader
+    // is looking at the diff and the sidebar stays a list.
+    const file = document.createElement("div");
+    file.className = "diff-file";
+    file.dataset.filePath = "a.go";
+    const line = document.createElement("div");
+    line.className = "line-wrap";
+    line.dataset.anchorLine = "12";
+    line.dataset.anchorSide = "RIGHT";
+    file.appendChild(line);
+    document.body.appendChild(file);
+
+    threadsRef.value = [thread({ path: "a.go", line: 12, side: "RIGHT" })];
+    const { getByTitle, container } = render(ReviewThreadsSection);
+    await fireEvent.click(getByTitle("a.go"));
+    expect(container.querySelector(".thread-item__fallback")).toBeNull();
+
+    document.body.innerHTML = "";
+  });
+
+  it("keeps every thread openable, whatever state its anchor is in", async () => {
+    // The invariant, stated once: each row opens its conversation, either
+    // by placing it in the diff or by expanding in place.
+    threadsRef.value = [
+      thread({ id: 1, path: "gone.go", line: 65 }),
+      thread({ id: 2, path: "moved.go", line: 900 }),
+      thread({ id: 3, path: "rebased.go", line: 4, commit_sha: "dead" }),
+    ];
+    const { container, getByTitle } = render(ReviewThreadsSection);
+    for (const path of ["gone.go", "moved.go", "rebased.go"]) {
+      await fireEvent.click(getByTitle(path));
+      expect(
+        container.querySelector(".thread-item__fallback"),
+        `${path} must be readable`,
+      ).not.toBeNull();
+      await fireEvent.click(getByTitle(path)); // collapse before the next
+    }
   });
 });
