@@ -118,7 +118,13 @@
     // "on current" (blue) when they're really unknown.
     void diffStore.loadCommits();
     aiStore.start(owner, name, number);
-    void reviewThreadsStore.load(owner, name, number, diffStore.getCurrentCommitSha() || undefined);
+    // No revision here on purpose. getCurrentCommitSha() is "" at this
+    // point in every case: loadDiff above has just nulled `commits` for
+    // the new PR and loadCommits only assigns them after an awaited
+    // fetch, so a value sampled now is never the reader's revision. The
+    // $effect below owns resolution instead, and re-runs whenever that
+    // revision arrives or changes.
+    void reviewThreadsStore.load(owner, name, number);
     briefStore.start(owner, name, number);
 
     return () => {
@@ -342,6 +348,29 @@
       case "patchsets": return `patchsets:${s.fromNumber}..${s.toNumber}`;
     }
   }
+
+  // The revision review-thread anchors were last resolved against.
+  // A plain `let`, not `$state`: the effect below writes it, and a
+  // reactive write would re-trigger the effect that made it, which is a
+  // loop. Nothing renders from it, so it needs no reactivity.
+  let resolvedAt = "";
+  // Resolution has to follow the reader's scope, not be sampled once at
+  // mount. currentSha is "" until loadCommits' fetch lands (so the first
+  // useful run is that arrival), and changes again whenever the reader
+  // picks a commit, shift-clicks a span, selects Uncommitted changes, or
+  // resets to head -- each of which renumbers the diff and therefore
+  // invalidates every resolution on hand.
+  $effect(() => {
+    const sha = currentSha;
+    // resolveAt reads and writes the threads store's own state; untrack
+    // keeps this effect from subscribing to it, the same gotcha avoided
+    // in the scope watcher below.
+    untrack(() => {
+      if (sha === "" || sha === resolvedAt) return;
+      resolvedAt = sha;
+      void reviewThreadsStore.resolveAt(sha);
+    });
+  });
 
   // Stays undefined until the effect below has recorded a first key --
   // that first run is the initial mount observing whatever scope it
