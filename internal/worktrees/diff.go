@@ -42,25 +42,25 @@ func HasUncommittedChanges(ctx context.Context, worktreePath string) (bool, erro
 	return len(bytes.TrimSpace(out)) > 0, nil
 }
 
-// DiffSingleCommit returns the diff for a single commit (against
-// its first parent). Used when the user picks a specific commit
-// in the review pane's commits panel.
-func DiffSingleCommit(
-	ctx context.Context, worktreePath, sha string,
+// diffRevspec runs the raw+patch pair of git diffs the review pane needs and
+// merges them into structured files. The three callers below differ only in
+// the revspec they hand it -- they used to be three copies of this body, which
+// is how DiffRange came to leave out a commit the others included.
+func diffRevspec(
+	ctx context.Context, worktreePath, revspec string,
 ) ([]gitclone.DiffFile, error) {
 	rawOut, err := gitCmd(ctx, worktreePath,
-		"diff", "--raw", "-z", "-M", "-C", "--find-copies-harder",
-		sha+"^!", // ^! is shorthand for the commit's diff vs its parent
+		"diff", "--raw", "-z", "-M", "-C", "--find-copies-harder", revspec,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("git diff --raw %s: %w", sha, err)
+		return nil, fmt.Errorf("git diff --raw %s: %w", revspec, err)
 	}
 	files := gitclone.ParseRawZ(rawOut)
 	patchOut, err := gitCmd(ctx, worktreePath,
-		"diff", "-M", "-C", "--find-copies-harder", sha+"^!",
+		"diff", "-M", "-C", "--find-copies-harder", revspec,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("git diff %s: %w", sha, err)
+		return nil, fmt.Errorf("git diff %s: %w", revspec, err)
 	}
 	files = gitclone.ParsePatch(patchOut, files)
 	for i := range files {
@@ -71,32 +71,42 @@ func DiffSingleCommit(
 	return files, nil
 }
 
-// DiffRange returns the diff between two commits (from..to) in
-// the worktree. Used by the review pane's range-of-commits scope.
+// DiffSingleCommit returns the diff for a single commit (against
+// its first parent). Used when the user picks a specific commit
+// in the review pane's commits panel.
+func DiffSingleCommit(
+	ctx context.Context, worktreePath, sha string,
+) ([]gitclone.DiffFile, error) {
+	// ^! is shorthand for the commit's diff vs its parent.
+	return diffRevspec(ctx, worktreePath, sha+"^!")
+}
+
+// DiffCommitSpan returns the net change of every commit from `oldest` through
+// `newest`, both included. Used by the review pane's span-of-commits scope,
+// where the reader shift-clicked two commits and means "these and everything
+// between them".
+//
+// Inclusive of `oldest`, hence `^..` -- `oldest..newest` would be git's
+// two-endpoint form and would drop `oldest`'s own changes, which is what this
+// scope did until it was reported. Mirrors the PR-backed path, which resolves
+// ParentOf(from) for the same reason (see getDiff in internal/server).
+//
+// Every commit the panel can offer comes from `base..HEAD`, so `oldest` always
+// has a parent for `^` to resolve.
+func DiffCommitSpan(
+	ctx context.Context, worktreePath, oldest, newest string,
+) ([]gitclone.DiffFile, error) {
+	return diffRevspec(ctx, worktreePath, oldest+"^.."+newest)
+}
+
+// DiffRange returns the diff between two endpoints, EXCLUDING the changes
+// introduced by `from` itself. That is what DiffBaseToHEAD wants -- the merge
+// base's own commit belongs to the base branch, not to the branch under
+// review. For a reader-selected span of commits, use DiffCommitSpan.
 func DiffRange(
 	ctx context.Context, worktreePath, from, to string,
 ) ([]gitclone.DiffFile, error) {
-	rawOut, err := gitCmd(ctx, worktreePath,
-		"diff", "--raw", "-z", "-M", "-C", "--find-copies-harder",
-		from+".."+to,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("git diff --raw %s..%s: %w", from, to, err)
-	}
-	files := gitclone.ParseRawZ(rawOut)
-	patchOut, err := gitCmd(ctx, worktreePath,
-		"diff", "-M", "-C", "--find-copies-harder", from+".."+to,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("git diff %s..%s: %w", from, to, err)
-	}
-	files = gitclone.ParsePatch(patchOut, files)
-	for i := range files {
-		if files[i].Hunks == nil {
-			files[i].Hunks = []gitclone.Hunk{}
-		}
-	}
-	return files, nil
+	return diffRevspec(ctx, worktreePath, from+".."+to)
 }
 
 // DiffWorkingTreeVsHEAD returns the structured diff for the
