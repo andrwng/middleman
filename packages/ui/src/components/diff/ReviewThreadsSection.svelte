@@ -47,6 +47,16 @@
     }
     return `${sign}${t.line}`;
   }
+  // The row's cue for a thread whose recorded anchor no longer describes
+  // where it sits. Every non-"current" state gets one, not just "moved":
+  // a removed or unmappable thread is list-only, so the list is the ONLY
+  // place it can be noticed at all. Same vocabulary as the expanded
+  // card's reason line, so the two never disagree.
+  function driftLabel(state: string): string {
+    if (state === "removed") return "line removed";
+    if (state === "unmappable") return "position unknown";
+    return "moved";
+  }
   function isOrphan(t: ReviewThread): boolean {
     const commits = diff.getCommits();
     if (!commits || commits.length === 0) return false; // loading — don't flag
@@ -91,23 +101,48 @@
     return "line not in this diff";
   }
 
-  // Returns true when the thread was placed in the diff. "pending" counts
-  // as placed: a CollapsedRegion has been asked to reveal the line and
-  // carries its own file-header fallback from there.
+  // The store's copy of this thread, which can be newer than the object
+  // this row was rendered from: re-resolving replaces the whole list, so
+  // a captured row object still carries the resolution from the scope the
+  // reader just left.
+  function latest(t: ReviewThread): ReviewThread {
+    return reviewThreads.getThreads().find((x) => x.id === t.id) ?? t;
+  }
+
+  // Returns true only when the thread actually landed on its line.
+  // "pending" does NOT count: it means the line element was not found, a
+  // reveal was requested and the view moved to the file header meanwhile
+  // -- but CollapsedRegion renders only DiffLine components and never a
+  // ReviewThreadCard, so a thread anchored in an unexpanded gap or
+  // outside the diffed range would leave the reader on a file header with
+  // no conversation and no explanation. Treating it as unplaced routes it
+  // to the expand-in-place floor instead, which is the invariant.
   async function placeInDiff(t: ReviewThread): Promise<boolean> {
+    // A thread the server has resolved as removed or unmappable has no
+    // trustworthy position in the diff at all -- the recorded line now
+    // holds unrelated code. Don't jump anywhere; expand it in place with
+    // the reason, per the spec's list-only rule.
+    if (!reviewThreads.isPlaceable(t)) return false;
     // A mid-stack commit's diff only shows files that commit touched, so
     // HEAD is the scope most likely to contain the thread's file.
     const scope = diff.getScope();
     if (scope.kind !== "head") {
       await diff.resetToHead();
+      // The resolutions on hand describe the scope we just left, and the
+      // placement below reads them. DiffView's effect re-resolves for the
+      // new scope on its own, but not before this function needs the
+      // answer -- so ask for it here and wait.
+      await reviewThreads.resolveAt(diff.getCurrentCommitSha());
       await tick();
     }
-    const at = reviewThreads.placementFor(t);
+    const fresh = latest(t);
+    if (!reviewThreads.isPlaceable(fresh)) return false;
+    const at = reviewThreads.placementFor(fresh);
     const outcome = await scrollToDiffLine(
-      { path: at.path, line: at.line, side: t.side === "LEFT" ? "LEFT" : "RIGHT" },
+      { path: at.path, line: at.line, side: fresh.side === "LEFT" ? "LEFT" : "RIGHT" },
       jumpDeps(),
     );
-    return outcome !== "missing";
+    return outcome === "line";
   }
 
   async function onApplyAll(): Promise<void> {
@@ -125,7 +160,8 @@
     fallbackId = null;
     if (await placeInDiff(t)) return;
     // The floor: the conversation is readable here, whatever the diff says.
-    fallbackReason = placementReason(t);
+    // Report on the freshest copy -- placeInDiff may have re-resolved.
+    fallbackReason = placementReason(latest(t));
     fallbackId = t.id;
   }
   // Two-step delete so a stale/unreachable thread (whose anchor moved off
@@ -176,9 +212,9 @@
                 title={orphan ? "anchored to a commit no longer in this branch" : t.status}
               ></span>
               <span class="thread-item__anchor">{anchorLabel(t)}</span>
-              {#if t.resolved?.state === "moved"}
-                <span class="thread-item__moved" title="recorded at {anchorLabel(t)}">
-                  moved
+              {#if t.resolved && t.resolved.state !== "current"}
+                <span class="thread-item__drift" title="recorded at {anchorLabel(t)}">
+                  {driftLabel(t.resolved.state)}
                 </span>
               {/if}
               <span class="thread-item__path">{t.path}</span>
@@ -328,10 +364,11 @@
     border-radius: 999px;
     flex-shrink: 0;
   }
-  .thread-item__moved {
+  .thread-item__drift {
     font-size: 9px;
     color: var(--accent-amber);
     flex-shrink: 0;
+    white-space: nowrap;
   }
   .thread-item__path {
     font-family: var(--font-mono);
