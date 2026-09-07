@@ -239,6 +239,21 @@ func (s *Server) listReviewThreads(ctx context.Context, input *listReviewThreads
 	if !isLocalSource(input.Owner) {
 		return nil, huma.Error400BadRequest("review threads are local-worktree only")
 	}
+	// `at` reaches `git diff` as a positional revision argument
+	// (worktrees.FetchAnchorDiff), and git parses options anywhere on its
+	// command line -- including that slot. An `at` of
+	// "--output=/some/path" would be taken as a real option and truncate
+	// that file with diff text, over a plain GET that needs no CSRF token
+	// and no auth. Reject anything that is not a hex object id or the
+	// working-tree sentinel before any work happens; every character the
+	// pattern allows is a hex digit, so nothing it accepts can begin with
+	// the '-' an option requires. Reuses symbolRefsSHA rather than a
+	// second copy of the pattern (same defense as /blob and /symbol-refs).
+	if input.At != "" &&
+		input.At != worktrees.WorkingTreeSentinel &&
+		!symbolRefsSHA.MatchString(input.At) {
+		return nil, huma.Error400BadRequest("at must be a hex object id")
+	}
 	w, err := s.resolveLocalWorktree(ctx, input.Name, input.Number)
 	if err != nil {
 		return nil, huma.Error404NotFound("worktree not found")
@@ -261,31 +276,55 @@ func (s *Server) listReviewThreads(ctx context.Context, input *listReviewThreads
 
 // resolveThreadAnchors fills in each thread's Resolved block in place.
 //
-// A RIGHT-side line numbers the file at the anchor commit; a LEFT-side line
-// numbers its pre-image, hence the "^". Results are memoised per
-// (src, path, line) so N threads on one line cost one git call, and threads
-// sharing a file still pay only per distinct anchor.
+// A RIGHT-side line numbers the file at the anchor commit, so the mapping
+// runs from that commit forward to `at`. Diffs are memoised per source
+// revision (`at` is fixed for the whole request), because the diff text for
+// a (src, dst) pair says nothing about path or line -- so every thread
+// anchored at the same commit shares one git call rather than paying for
+// its own whole-tree diff.
+//
+// Three kinds of thread are deliberately left with Resolved nil, which the
+// UI reads as "no opinion" and places at the recorded anchor:
+//
+//   - Hidden threads. They render as a collapsed stub, never as a placed
+//     card, so resolving them would buy nothing and cost a git call.
+//
+//   - LEFT-side threads. Two separate reasons, either one sufficient. The
+//     source revision would have to be the OLD side of the reader's scope
+//     (base for the default base..working-tree scope, parent(from) for a
+//     commit span, HEAD itself for the working-tree scope) and the request
+//     does not carry it -- CommitSHA is always the scope's NEW-side sha, so
+//     neither it nor "CommitSHA^" is the right pre-image in general. And
+//     even given the right source, MapLine answers with a post-image line
+//     number, while a LEFT anchor is compared against old-side numbers in
+//     the rendered diff: different numbering spaces. LEFT anchors are only
+//     ever created on deleted lines, whose whole point is that they have no
+//     post-image, so forward-mapping them is not a meaningful question.
+//     Leaving them alone preserves today's correct placement.
+//
+//   - Threads whose stored commit_sha is not a hex object id. createReviewThreads
+//     keeps an unresolvable sha verbatim (an agent's typo reads as an
+//     orphaned thread rather than failing the whole create), so the column
+//     is not trustworthy input for argv -- see listReviewThreads' note on
+//     git's option parsing. A bogus sha legitimately reads as an orphan, so
+//     this skips that one thread and carries on with the rest rather than
+//     failing the request.
 func (s *Server) resolveThreadAnchors(
 	ctx context.Context, worktreePath, at string, threads []reviewThreadResponse,
 ) {
-	type key struct {
-		src  string
-		path string
-		line int
-	}
-	seen := map[key]worktrees.ResolvedAnchor{}
+	diffs := map[string]worktrees.AnchorDiff{}
 	for i := range threads {
 		t := &threads[i]
+		if t.Hidden || t.Side == "LEFT" || !symbolRefsSHA.MatchString(t.CommitSHA) {
+			continue
+		}
 		src := t.CommitSHA
-		if t.Side == "LEFT" {
-			src += "^"
-		}
-		k := key{src: src, path: t.Path, line: t.Line}
-		r, ok := seen[k]
+		d, ok := diffs[src]
 		if !ok {
-			r = worktrees.ResolveAnchor(ctx, worktreePath, src, at, t.Path, t.Line)
-			seen[k] = r
+			d = worktrees.FetchAnchorDiff(ctx, worktreePath, src, at)
+			diffs[src] = d
 		}
+		r := d.Resolve(t.Path, t.Line)
 		t.Resolved = &resolvedAnchorResponse{
 			State: string(r.State),
 			Path:  r.Path,
