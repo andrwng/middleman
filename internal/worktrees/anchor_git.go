@@ -84,11 +84,21 @@ func ResolveAnchor(
 	}
 
 	mapped, removed := MapLine(ParseHunks(section), line)
+	return classifyMapped(path, line, newPath, mapped, removed)
+}
+
+// classifyMapped turns an already-computed line-mapping outcome into a
+// ResolvedAnchor. It is split out of ResolveAnchor so this decision --
+// "removed" when the line itself is gone, "current" when nothing about the
+// anchor actually changed, "moved" otherwise -- can be unit-tested without
+// shelling out to git; ResolveAnchor's other branches need a real diff to
+// reach, but this one only needs its inputs.
+func classifyMapped(origPath string, origLine int, newPath string, mapped int, removed bool) ResolvedAnchor {
 	if removed {
 		return ResolvedAnchor{State: AnchorRemoved}
 	}
 	state := AnchorMoved
-	if mapped == line && newPath == path {
+	if mapped == origLine && newPath == origPath {
 		state = AnchorCurrent
 	}
 	return ResolvedAnchor{State: state, Path: newPath, Line: mapped}
@@ -107,7 +117,11 @@ func ResolveAnchor(
 // quote a path merely for containing a space, so "diff --git a/my file.go
 // b/my file.go" is a real, unquoted header that strings.Fields would
 // mis-parse. Prefix-matching the fixed "diff --git a/<path> b/" text has no
-// such problem.
+// such problem, and it also can't be fooled by a same-named prefix like
+// "api.go.bak": the literal " b/" immediately after path is part of the
+// match, so "diff --git a/api.go.bak b/api.go.bak" does not satisfy the
+// prefix built for "api.go" (the byte after "api.go" would have to be a
+// space, but it is ".").
 func fileSection(diffOut []byte, path string) (newPath string, section []byte, found bool) {
 	prefix := []byte("diff --git a/" + path + " b/")
 	nextHeader := []byte("diff --git ")
