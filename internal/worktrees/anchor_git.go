@@ -31,27 +31,57 @@ type ResolvedAnchor struct {
 	Line  int
 }
 
-// ResolveAnchor maps `line` in `path`, as recorded at `srcRev`, forward to
-// `dstRev`. dstRev may be "" or WorkingTreeSentinel, in which case the
-// comparison runs against the worktree's current uncommitted state instead
-// of a commit.
+// AnchorDiff is one `git diff srcRev dstRev` already run and held, ready
+// to resolve any number of anchors against.
 //
-// ResolveAnchor never returns an error: an unresolvable anchor is a state
-// the reader is shown, not a request failure, because a review thread must
-// stay reachable no matter what git reports about the revision.
-func ResolveAnchor(
-	ctx context.Context, worktreePath, srcRev, dstRev, path string, line int,
-) ResolvedAnchor {
+// It exists so a caller with many threads pays for one git call per
+// (srcRev, dstRev) pair rather than one per thread: the diff text for a
+// given pair says nothing about which path or line the caller is asking
+// about, so every thread anchored at the same commit shares it. The zero
+// value is not usable -- build one with FetchAnchorDiff.
+type AnchorDiff struct {
+	out []byte
+	// unreadable records that the git call itself failed, which every
+	// anchor resolved through this diff must report as AnchorUnmappable.
+	unreadable bool
+}
+
+// FetchAnchorDiff runs the single diff anchor resolution needs, from
+// `srcRev` to `dstRev`. dstRev may be "" or WorkingTreeSentinel, in which
+// case the comparison runs against the worktree's current uncommitted
+// state instead of a commit.
+//
+// Never returns an error: an unresolvable revision is a state the reader
+// is shown, not a request failure, because a review thread must stay
+// reachable no matter what git reports.
+//
+// Both revisions reach git as positional arguments. Callers must have
+// already established that they are hex object ids (or the working-tree
+// sentinel) -- see the --end-of-options note below for why that matters
+// even with the guard this function adds.
+func FetchAnchorDiff(ctx context.Context, worktreePath, srcRev, dstRev string) AnchorDiff {
 	// core.quotePath=false and the explicit --src-prefix/--dst-prefix stop
 	// a user's own git config (core.quotePath, diff.noprefix) from reshaping
 	// the "diff --git a/OLD b/NEW" header lines that fileSection below
 	// depends on for exact-prefix matching. Without them the header could
 	// read without any a/ b/ prefixes at all, or with an escaped path, and
 	// the scan would silently find nothing.
+	//
+	// --end-of-options is defense in depth for the revision slots. git
+	// parses options anywhere on its command line, including where a
+	// revision is expected, so a srcRev/dstRev of "--output=/path" would
+	// otherwise reach `git diff` as a real option and truncate that file
+	// with diff text. Callers validate both revisions (they are hex object
+	// ids or the working-tree sentinel), but this makes the argv itself
+	// incapable of carrying an option past this point -- the same hazard
+	// class that `git grep -O<cmd>` turned into an RCE here once before.
+	// Verified to leave both the two-revision and source-only diffs
+	// byte-identical.
 	args := []string{
 		"-c", "core.quotePath=false",
-		"diff", "-U0", "-M", "--find-renames",
+		"diff", "-U0", "-M",
 		"--src-prefix=a/", "--dst-prefix=b/",
+		"--end-of-options",
 		srcRev,
 	}
 	if dstRev != "" && dstRev != WorkingTreeSentinel {
@@ -69,10 +99,19 @@ func ResolveAnchor(
 	if err != nil {
 		// Most likely srcRev is unknown to this repository: rebased away
 		// and collected, or simply never existed.
+		return AnchorDiff{unreadable: true}
+	}
+	return AnchorDiff{out: out}
+}
+
+// Resolve maps `line` in `path`, as numbered on this diff's old side,
+// forward to its new side.
+func (d AnchorDiff) Resolve(path string, line int) ResolvedAnchor {
+	if d.unreadable {
 		return ResolvedAnchor{State: AnchorUnmappable}
 	}
 
-	newPath, section, found := fileSection(out, path)
+	newPath, section, found := fileSection(d.out, path)
 	if !found {
 		// The file did not change between srcRev and dstRev at all, so the
 		// anchor stands exactly where it was recorded. This also covers a
@@ -85,6 +124,15 @@ func ResolveAnchor(
 
 	mapped, removed := MapLine(ParseHunks(section), line)
 	return classifyMapped(path, line, newPath, mapped, removed)
+}
+
+// ResolveAnchor maps `line` in `path`, as recorded at `srcRev`, forward to
+// `dstRev` -- FetchAnchorDiff plus one Resolve, for the single-anchor case
+// where there is nothing to share the diff with.
+func ResolveAnchor(
+	ctx context.Context, worktreePath, srcRev, dstRev, path string, line int,
+) ResolvedAnchor {
+	return FetchAnchorDiff(ctx, worktreePath, srcRev, dstRev).Resolve(path, line)
 }
 
 // classifyMapped turns an already-computed line-mapping outcome into a
@@ -116,12 +164,25 @@ func classifyMapped(origPath string, origLine int, newPath string, mapped int, r
 // The match is an exact byte prefix, not a whitespace split: git does not
 // quote a path merely for containing a space, so "diff --git a/my file.go
 // b/my file.go" is a real, unquoted header that strings.Fields would
-// mis-parse. Prefix-matching the fixed "diff --git a/<path> b/" text has no
-// such problem, and it also can't be fooled by a same-named prefix like
+// mis-parse. Prefix-matching the fixed "diff --git a/<path> b/" text
+// narrows that, and it also can't be fooled by a same-named prefix like
 // "api.go.bak": the literal " b/" immediately after path is part of the
 // match, so "diff --git a/api.go.bak b/api.go.bak" does not satisfy the
 // prefix built for "api.go" (the byte after "api.go" would have to be a
 // space, but it is ".").
+//
+// Two residual cases remain, both benign:
+//   - core.quotePath=false suppresses quoting of non-ASCII bytes, but git
+//     still C-quotes a path containing a literal '"', '\' or a newline. The
+//     header for such a file reads "diff --git \"a/we\\\"ird.go\" ..." and
+//     the prefix built here will not match it, so the anchor falls through
+//     to AnchorCurrent -- the thread stays placed where it was recorded and
+//     stays reachable, which is the safe direction.
+//   - For path "foo" the prefix "diff --git a/foo b/" also matches a file
+//     literally named "foo b/bar.go" (its header reads
+//     "diff --git a/foo b/bar.go b/foo b/bar.go"). Such a name would have
+//     to exist alongside the real "foo" for this to matter, and the worst
+//     outcome is a line mapped through the wrong file's hunks.
 func fileSection(diffOut []byte, path string) (newPath string, section []byte, found bool) {
 	prefix := []byte("diff --git a/" + path + " b/")
 	nextHeader := []byte("diff --git ")
