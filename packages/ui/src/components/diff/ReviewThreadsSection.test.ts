@@ -288,12 +288,13 @@ describe("ReviewThreadsSection reachability", () => {
       .toContain("commit rebased away");
   });
 
-  it("says the line isn't in this diff when a rename outruns the rendered file", async () => {
+  it("says the resolved path is unchanged here, not the recorded one, when a rename outruns the rendered file", async () => {
     // The thread's resolved anchor moved to b.go, but this diff currently
     // renders only a.go (the thread's recorded path). placeInDiff looks
-    // for b.go and finds nothing; placementReason's own DOM check still
-    // asks about the recorded a.go and finds it, so the "file unchanged
-    // here" branch is skipped and this is the reason left standing.
+    // for b.go and finds nothing; placementReason must ask about that same
+    // resolved path (b.go), not the recorded a.go -- otherwise the reason
+    // it reports describes a file the thread no longer lives at, even
+    // though a.go itself is right there in the DOM.
     const file = document.createElement("div");
     file.className = "diff-file";
     file.dataset.filePath = "a.go";
@@ -307,7 +308,7 @@ describe("ReviewThreadsSection reachability", () => {
       const { getByTitle, container } = render(ReviewThreadsSection);
       await fireEvent.click(getByTitle("a.go"));
       expect(container.querySelector(".thread-item__reason")!.textContent)
-        .toContain("line not in this diff");
+        .toContain("file unchanged here");
     } finally {
       document.body.innerHTML = "";
     }

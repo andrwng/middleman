@@ -76,6 +76,41 @@ describe("reviewThreads store", () => {
     );
   });
 
+  it("a load with no revision does not erase a previously remembered one", async () => {
+    // The store is one shared instance across surfaces. DocReviewSurface
+    // calls load() with no 'at' at all -- it has no opinion about
+    // resolution -- and that call must not wipe out the revision the
+    // diff surface asked refresh() to keep re-resolving against.
+    const get = vi.fn(async () => ({ data: { threads: [thread()] }, error: undefined }));
+    const client = stubClient({ GET: get });
+    const store = createReviewThreadsStore({ client });
+    await store.load("local", "demo", 7, "deadbeef");
+    await store.load("local", "demo", 7); // e.g. a surface with no opinion on 'at'
+    await store.refresh();
+    expect(get).toHaveBeenLastCalledWith(
+      "/repos/{owner}/{name}/pulls/{number}/review-threads",
+      { params: { path: { owner: "local", name: "demo", number: 7 }, query: { at: "deadbeef" } } },
+    );
+  });
+
+  it("clear() resets the remembered revision so the next load starts clean", async () => {
+    // Without this reset, switching PRs/worktrees would carry a stale
+    // revision into the next one's refresh() calls -- clear() is the
+    // right place to drop it, since a plain load() (no 'at') deliberately
+    // does not (see the test above).
+    const get = vi.fn(async () => ({ data: { threads: [thread()] }, error: undefined }));
+    const client = stubClient({ GET: get });
+    const store = createReviewThreadsStore({ client });
+    await store.load("local", "demo", 7, "deadbeef");
+    store.clear();
+    await store.load("local", "demo", 7);
+    await store.refresh();
+    expect(get).toHaveBeenLastCalledWith(
+      "/repos/{owner}/{name}/pulls/{number}/review-threads",
+      { params: { path: { owner: "local", name: "demo", number: 7 }, query: {} } },
+    );
+  });
+
   it("does not call the API for non-local sources", async () => {
     const client = stubClient();
     const store = createReviewThreadsStore({ client });
@@ -335,6 +370,20 @@ describe("placement by resolved anchor", () => {
     ]);
     expect(store.getThreadsAtAnchor("b.go", 8, "RIGHT")).toHaveLength(1);
     expect(store.getThreadsAtAnchor("a.go", 8, "RIGHT")).toHaveLength(0);
+  });
+
+  it("also takes the resolved position when the anchor is confirmed current", async () => {
+    // A real "current" resolution always echoes the recorded anchor
+    // exactly -- the state literally means "still here". This test gives
+    // it a different line on purpose, so the assertion can tell "took the
+    // current branch" apart from "silently fell through to the
+    // no-resolution default", which would happen to agree by coincidence
+    // if resolved and recorded matched.
+    const store = await storeWith([
+      { ...base, resolved: { state: "current", path: "a.go", line: 9 } },
+    ]);
+    expect(store.getThreadsAtAnchor("a.go", 9, "RIGHT")).toHaveLength(1);
+    expect(store.getThreadsAtAnchor("a.go", 5, "RIGHT")).toHaveLength(0);
   });
 
   it("falls back to the recorded anchor when there is no resolution", async () => {

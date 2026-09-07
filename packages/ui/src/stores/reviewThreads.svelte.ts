@@ -99,7 +99,11 @@ export function createReviewThreadsStore(opts: ReviewThreadsStoreOptions) {
     owner = o;
     name = n;
     number = num;
-    lastAt = at;
+    // Only overwrite when this caller actually supplied a revision. A
+    // surface with no opinion about resolution (e.g. the doc-review view)
+    // must not wipe out the revision refresh() should keep re-resolving
+    // against for whoever else is watching the same shared store.
+    if (at !== undefined) lastAt = at;
     if (o !== "local") {
       threads = [];
       return;
@@ -368,6 +372,10 @@ export function createReviewThreadsStore(opts: ReviewThreadsStoreOptions) {
     threads = [];
     loading = false;
     error = null;
+    // A stale revision must not follow the reader into the next PR/worktree
+    // they open -- reset it here rather than leaving it for the next
+    // load() to overwrite, since a load with no 'at' (see above) won't.
+    lastAt = undefined;
   }
 
   return {

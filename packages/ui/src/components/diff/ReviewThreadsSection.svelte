@@ -79,8 +79,12 @@
     if (commits && commits.length > 0 && !commits.some((c) => c.sha === t.commit_sha)) {
       return "commit rebased away";
     }
+    // Ask about the position placement actually attempted, not the recorded
+    // one -- for a renamed thread those differ, and reporting on the old
+    // path describes the wrong file.
+    const at = reviewThreads.placementFor(t);
     const escaped =
-      typeof CSS !== "undefined" && CSS.escape ? CSS.escape(t.path) : t.path;
+      typeof CSS !== "undefined" && CSS.escape ? CSS.escape(at.path) : at.path;
     if (!document.querySelector(`.diff-file[data-file-path="${escaped}"]`)) {
       return "file unchanged here";
     }
