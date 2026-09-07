@@ -68,6 +68,16 @@ type listReviewThreadsOutput struct {
 	}
 }
 
+// applyAllReviewThreadsInput addresses the whole review rather than one
+// thread. It deliberately does NOT share listReviewThreadsInput: `at`
+// resolves anchors for reading and would publish a meaningless query
+// parameter on this endpoint.
+type applyAllReviewThreadsInput struct {
+	Owner  string `path:"owner"`
+	Name   string `path:"name"`
+	Number int    `path:"number"`
+}
+
 // reviewThreadDraft is one inline draft comment in a create request: an
 // anchor (path/side/line[/start_line]/commit) plus the reviewer's root
 // comment body. Named (not anonymous) so the generated client exposes a
@@ -792,7 +802,7 @@ func (s *Server) discussReviewThread(ctx context.Context, input *reviewThreadAct
 
 // applyAllReviewThreads kicks off a single apply turn covering every
 // eligible (visible, open|discussed) thread on the MR.
-func (s *Server) applyAllReviewThreads(ctx context.Context, input *listReviewThreadsInput) (*listReviewThreadsOutput, error) {
+func (s *Server) applyAllReviewThreads(ctx context.Context, input *applyAllReviewThreadsInput) (*listReviewThreadsOutput, error) {
 	if !isLocalSource(input.Owner) {
 		return nil, huma.Error400BadRequest("review threads are local-worktree only")
 	}

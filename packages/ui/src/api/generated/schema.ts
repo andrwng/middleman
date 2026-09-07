@@ -4732,10 +4732,7 @@ export interface operations {
     };
     "post-repos-by-owner-by-name-pulls-by-number-review-threads-apply-all": {
         parameters: {
-            query?: {
-                /** @description Revision to resolve each thread's anchor against (the new-side SHA of the reader's current diff scope, or WORKING-TREE). Omitted, no resolution is computed. */
-                at?: string;
-            };
+            query?: never;
             header?: never;
             path: {
                 owner: string;

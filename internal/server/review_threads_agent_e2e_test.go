@@ -216,7 +216,7 @@ func TestAPIReviewThreadsBusyConflict(t *testing.T) {
 	// The first discuss turn is running (blocking fake claude), so the
 	// second engage (apply-all) should join the queue and return 2xx.
 	applyAllResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsApplyAllWithResponse(
-		ctx, "local", "demo", num, nil,
+		ctx, "local", "demo", num,
 	)
 	require.NoError(err)
 	require.Equal(http.StatusOK, applyAllResp.StatusCode())

@@ -1447,12 +1447,6 @@ type GetReposByOwnerByNamePullsByNumberReviewThreadsParams struct {
 	At *string `form:"at,omitempty" json:"at,omitempty"`
 }
 
-// PostReposByOwnerByNamePullsByNumberReviewThreadsApplyAllParams defines parameters for PostReposByOwnerByNamePullsByNumberReviewThreadsApplyAll.
-type PostReposByOwnerByNamePullsByNumberReviewThreadsApplyAllParams struct {
-	// At Revision to resolve each thread's anchor against (the new-side SHA of the reader's current diff scope, or WORKING-TREE). Omitted, no resolution is computed.
-	At *string `form:"at,omitempty" json:"at,omitempty"`
-}
-
 // GetReposByOwnerByNamePullsByNumberSymbolRefsParams defines parameters for GetReposByOwnerByNamePullsByNumberSymbolRefs.
 type GetReposByOwnerByNamePullsByNumberSymbolRefsParams struct {
 	// Q Symbol to search for (fixed string, word-boundary)
@@ -1835,7 +1829,7 @@ type ClientInterface interface {
 	PostReposByOwnerByNamePullsByNumberReviewThreads(ctx context.Context, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberReviewThreadsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PostReposByOwnerByNamePullsByNumberReviewThreadsApplyAll request
-	PostReposByOwnerByNamePullsByNumberReviewThreadsApplyAll(ctx context.Context, owner string, name string, number int64, params *PostReposByOwnerByNamePullsByNumberReviewThreadsApplyAllParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+	PostReposByOwnerByNamePullsByNumberReviewThreadsApplyAll(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DeleteReposByOwnerByNamePullsByNumberReviewThreadsByThreadId request
 	DeleteReposByOwnerByNamePullsByNumberReviewThreadsByThreadId(ctx context.Context, owner string, name string, number int64, threadId int64, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2825,8 +2819,8 @@ func (c *Client) PostReposByOwnerByNamePullsByNumberReviewThreads(ctx context.Co
 	return c.Client.Do(req)
 }
 
-func (c *Client) PostReposByOwnerByNamePullsByNumberReviewThreadsApplyAll(ctx context.Context, owner string, name string, number int64, params *PostReposByOwnerByNamePullsByNumberReviewThreadsApplyAllParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostReposByOwnerByNamePullsByNumberReviewThreadsApplyAllRequest(c.Server, owner, name, number, params)
+func (c *Client) PostReposByOwnerByNamePullsByNumberReviewThreadsApplyAll(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostReposByOwnerByNamePullsByNumberReviewThreadsApplyAllRequest(c.Server, owner, name, number)
 	if err != nil {
 		return nil, err
 	}
@@ -6674,7 +6668,7 @@ func NewPostReposByOwnerByNamePullsByNumberReviewThreadsRequestWithBody(server s
 }
 
 // NewPostReposByOwnerByNamePullsByNumberReviewThreadsApplyAllRequest generates requests for PostReposByOwnerByNamePullsByNumberReviewThreadsApplyAll
-func NewPostReposByOwnerByNamePullsByNumberReviewThreadsApplyAllRequest(server string, owner string, name string, number int64, params *PostReposByOwnerByNamePullsByNumberReviewThreadsApplyAllParams) (*http.Request, error) {
+func NewPostReposByOwnerByNamePullsByNumberReviewThreadsApplyAllRequest(server string, owner string, name string, number int64) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -6711,28 +6705,6 @@ func NewPostReposByOwnerByNamePullsByNumberReviewThreadsApplyAllRequest(server s
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
-	}
-
-	if params != nil {
-		queryValues := queryURL.Query()
-
-		if params.At != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "at", *params.At, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		queryURL.RawQuery = queryValues.Encode()
 	}
 
 	req, err := http.NewRequest("POST", queryURL.String(), nil)
@@ -8730,7 +8702,7 @@ type ClientWithResponsesInterface interface {
 	PostReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(ctx context.Context, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberReviewThreadsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberReviewThreadsResponse, error)
 
 	// PostReposByOwnerByNamePullsByNumberReviewThreadsApplyAllWithResponse request
-	PostReposByOwnerByNamePullsByNumberReviewThreadsApplyAllWithResponse(ctx context.Context, owner string, name string, number int64, params *PostReposByOwnerByNamePullsByNumberReviewThreadsApplyAllParams, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberReviewThreadsApplyAllResponse, error)
+	PostReposByOwnerByNamePullsByNumberReviewThreadsApplyAllWithResponse(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberReviewThreadsApplyAllResponse, error)
 
 	// DeleteReposByOwnerByNamePullsByNumberReviewThreadsByThreadIdWithResponse request
 	DeleteReposByOwnerByNamePullsByNumberReviewThreadsByThreadIdWithResponse(ctx context.Context, owner string, name string, number int64, threadId int64, reqEditors ...RequestEditorFn) (*DeleteReposByOwnerByNamePullsByNumberReviewThreadsByThreadIdResponse, error)
@@ -11566,8 +11538,8 @@ func (c *ClientWithResponses) PostReposByOwnerByNamePullsByNumberReviewThreadsWi
 }
 
 // PostReposByOwnerByNamePullsByNumberReviewThreadsApplyAllWithResponse request returning *PostReposByOwnerByNamePullsByNumberReviewThreadsApplyAllResponse
-func (c *ClientWithResponses) PostReposByOwnerByNamePullsByNumberReviewThreadsApplyAllWithResponse(ctx context.Context, owner string, name string, number int64, params *PostReposByOwnerByNamePullsByNumberReviewThreadsApplyAllParams, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberReviewThreadsApplyAllResponse, error) {
-	rsp, err := c.PostReposByOwnerByNamePullsByNumberReviewThreadsApplyAll(ctx, owner, name, number, params, reqEditors...)
+func (c *ClientWithResponses) PostReposByOwnerByNamePullsByNumberReviewThreadsApplyAllWithResponse(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberReviewThreadsApplyAllResponse, error) {
+	rsp, err := c.PostReposByOwnerByNamePullsByNumberReviewThreadsApplyAll(ctx, owner, name, number, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
