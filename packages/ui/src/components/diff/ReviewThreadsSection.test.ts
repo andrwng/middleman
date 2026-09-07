@@ -13,9 +13,22 @@ const threadsRef: { value: unknown[] } = { value: [] };
 const commitsRef: { value: unknown } = { value: [] };
 const scopeRef: { value: unknown } = { value: { kind: "head" } };
 
+// Mirrors the real store's placementFor (reviewThreads.svelte.ts) so the
+// component's placeInDiff exercises the same resolved-vs-recorded choice
+// under test as it does live.
+function placementFor(
+  t: { path: string; line: number; resolved?: { state: string; path?: string; line?: number } },
+): { path: string; line: number } {
+  const r = t.resolved;
+  if (r && (r.state === "current" || r.state === "moved")) {
+    return { path: r.path ?? t.path, line: r.line ?? t.line };
+  }
+  return { path: t.path, line: t.line };
+}
+
 vi.mock("../../context.js", () => ({
   getStores: () => ({
-    reviewThreads: { getThreads: () => threadsRef.value, applyAll, deleteThread },
+    reviewThreads: { getThreads: () => threadsRef.value, applyAll, deleteThread, placementFor },
     worktreeSession: { hasRunningTurn: () => running },
     diff: {
       getCommits: () => commitsRef.value,
@@ -262,6 +275,44 @@ describe("ReviewThreadsSection reachability", () => {
       .toContain("unchanged here");
   });
 
+  it("says the commit was rebased away when the anchor's sha is gone", async () => {
+    const t = thread({ path: "rebased.go", line: 4, commit_sha: "dead" });
+    threadsRef.value = [t];
+    // Must be non-empty: an empty list reads as "still loading" and skips
+    // this check entirely, so a populated list missing the thread's sha
+    // is what actually reaches the "rebased away" branch.
+    commitsRef.value = [{ sha: "headsha", subject: "x", parents: [], author: "x", date: "" }];
+    const { getByTitle, container } = render(ReviewThreadsSection);
+    await fireEvent.click(getByTitle("rebased.go"));
+    expect(container.querySelector(".thread-item__reason")!.textContent)
+      .toContain("commit rebased away");
+  });
+
+  it("says the line isn't in this diff when a rename outruns the rendered file", async () => {
+    // The thread's resolved anchor moved to b.go, but this diff currently
+    // renders only a.go (the thread's recorded path). placeInDiff looks
+    // for b.go and finds nothing; placementReason's own DOM check still
+    // asks about the recorded a.go and finds it, so the "file unchanged
+    // here" branch is skipped and this is the reason left standing.
+    const file = document.createElement("div");
+    file.className = "diff-file";
+    file.dataset.filePath = "a.go";
+    document.body.appendChild(file);
+    try {
+      const t = thread({
+        path: "a.go", line: 5,
+        resolved: { state: "moved", path: "b.go", line: 8 },
+      });
+      threadsRef.value = [t];
+      const { getByTitle, container } = render(ReviewThreadsSection);
+      await fireEvent.click(getByTitle("a.go"));
+      expect(container.querySelector(".thread-item__reason")!.textContent)
+        .toContain("line not in this diff");
+    } finally {
+      document.body.innerHTML = "";
+    }
+  });
+
   it("collapses the in-place card when the row is clicked again", async () => {
     threadsRef.value = [thread({ path: "gone.go", line: 65 })];
     const { getByTitle, container } = render(ReviewThreadsSection);
@@ -284,12 +335,16 @@ describe("ReviewThreadsSection reachability", () => {
     file.appendChild(line);
     document.body.appendChild(file);
 
-    threadsRef.value = [thread({ path: "a.go", line: 12, side: "RIGHT" })];
-    const { getByTitle, container } = render(ReviewThreadsSection);
-    await fireEvent.click(getByTitle("a.go"));
-    expect(container.querySelector(".thread-item__fallback")).toBeNull();
-
-    document.body.innerHTML = "";
+    // try/finally: teardown must run even if an assertion below throws,
+    // or this fixture leaks into every later test in the file.
+    try {
+      threadsRef.value = [thread({ path: "a.go", line: 12, side: "RIGHT" })];
+      const { getByTitle, container } = render(ReviewThreadsSection);
+      await fireEvent.click(getByTitle("a.go"));
+      expect(container.querySelector(".thread-item__fallback")).toBeNull();
+    } finally {
+      document.body.innerHTML = "";
+    }
   });
 
   it("keeps every thread openable, whatever state its anchor is in", async () => {
@@ -309,5 +364,39 @@ describe("ReviewThreadsSection reachability", () => {
       ).not.toBeNull();
       await fireEvent.click(getByTitle(path)); // collapse before the next
     }
+  });
+});
+
+describe("ReviewThreadsSection — resolved placement labels", () => {
+  it("shows a moved marker on the row, titled with the recorded anchor", () => {
+    threadsRef.value = [
+      thread({
+        id: 1, path: "a.go", line: 5, side: "RIGHT",
+        resolved: { state: "moved", path: "a.go", line: 8 },
+      }),
+      thread({ id: 2, path: "b.go", line: 3 }), // no resolution -- no marker
+    ];
+    const { queryAllByText } = render(ReviewThreadsSection);
+    const markers = queryAllByText("moved");
+    expect(markers).toHaveLength(1);
+    expect(markers[0]!.title).toBe("recorded at +5");
+  });
+
+  it("labels a removed thread's expanded card 'line removed'", async () => {
+    const t = thread({ path: "a.go", line: 5, resolved: { state: "removed" } });
+    threadsRef.value = [t];
+    const { getByTitle, container } = render(ReviewThreadsSection);
+    await fireEvent.click(getByTitle("a.go"));
+    expect(container.querySelector(".thread-item__reason")!.textContent)
+      .toContain("line removed");
+  });
+
+  it("labels an unmappable thread's expanded card 'position unknown'", async () => {
+    const t = thread({ path: "a.go", line: 5, resolved: { state: "unmappable" } });
+    threadsRef.value = [t];
+    const { getByTitle, container } = render(ReviewThreadsSection);
+    await fireEvent.click(getByTitle("a.go"));
+    expect(container.querySelector(".thread-item__reason")!.textContent)
+      .toContain("position unknown");
   });
 });

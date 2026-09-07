@@ -118,7 +118,7 @@
     // "on current" (blue) when they're really unknown.
     void diffStore.loadCommits();
     aiStore.start(owner, name, number);
-    void reviewThreadsStore.load(owner, name, number);
+    void reviewThreadsStore.load(owner, name, number, diffStore.getCurrentCommitSha() || undefined);
     briefStore.start(owner, name, number);
 
     return () => {

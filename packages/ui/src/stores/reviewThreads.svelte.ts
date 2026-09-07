@@ -40,6 +40,12 @@ export function createReviewThreadsStore(opts: ReviewThreadsStoreOptions) {
   let threads = $state<ReviewThread[]>([]);
   let loading = $state(false);
   let error = $state<string | null>(null);
+  // The revision `load()` last resolved anchors against. `refresh()` has
+  // no caller-supplied `at` of its own -- it re-reads silently during a
+  // poll -- so it reuses this rather than falling back to no resolution,
+  // which would otherwise snap every moved card back to its recorded line
+  // mid-review.
+  let lastAt: string | undefined;
 
   function getThreads(): ReviewThread[] {
     return threads;
@@ -51,12 +57,27 @@ export function createReviewThreadsStore(opts: ReviewThreadsStoreOptions) {
     return error;
   }
 
+  // Where a thread should appear in the diff. A resolution, when the server
+  // supplied one, wins over the recorded anchor -- that is the whole point
+  // of it. "removed" and "unmappable" carry no position, so those threads
+  // stay at the anchor the reviewer recorded and are labelled in the list
+  // rather than dropped: never hide a thread.
+  function placementFor(t: ReviewThread): { path: string; line: number } {
+    const r = t.resolved;
+    if (r && (r.state === "current" || r.state === "moved")) {
+      return { path: r.path ?? t.path, line: r.line ?? t.line };
+    }
+    return { path: t.path, line: t.line };
+  }
+
   function getThreadsAtAnchor(
     path: string, line: number, side: "LEFT" | "RIGHT",
   ): ReviewThread[] {
-    return threads.filter(
-      (t) => t.path === path && t.line === line && t.side === side,
-    );
+    return threads.filter((t) => {
+      if (t.side !== side) return false;
+      const at = placementFor(t);
+      return at.path === path && at.line === line;
+    });
   }
 
   function detail(err: unknown, fallback: string): string {
@@ -74,10 +95,11 @@ export function createReviewThreadsStore(opts: ReviewThreadsStoreOptions) {
     }
   }
 
-  async function load(o: string, n: string, num: number): Promise<void> {
+  async function load(o: string, n: string, num: number, at?: string): Promise<void> {
     owner = o;
     name = n;
     number = num;
+    lastAt = at;
     if (o !== "local") {
       threads = [];
       return;
@@ -87,7 +109,7 @@ export function createReviewThreadsStore(opts: ReviewThreadsStoreOptions) {
     try {
       const { data, error: err } = await client.GET(
         "/repos/{owner}/{name}/pulls/{number}/review-threads",
-        { params: { path: { owner: o, name: n, number: num } } },
+        { params: { path: { owner: o, name: n, number: num }, query: at ? { at } : {} } },
       );
       if (err) throw new Error(detail(err, "failed to load review threads"));
       threads = data?.threads ?? [];
@@ -298,7 +320,7 @@ export function createReviewThreadsStore(opts: ReviewThreadsStoreOptions) {
     try {
       const { data, error: err } = await client.GET(
         "/repos/{owner}/{name}/pulls/{number}/review-threads",
-        { params: { path: { owner, name, number } } },
+        { params: { path: { owner, name, number }, query: lastAt ? { at: lastAt } : {} } },
       );
       if (err) return; // best-effort; keep current state on transient errors
       threads = data?.threads ?? threads;
@@ -349,7 +371,7 @@ export function createReviewThreadsStore(opts: ReviewThreadsStoreOptions) {
   }
 
   return {
-    getThreads, getThreadsAtAnchor, isLoading, getError,
+    getThreads, getThreadsAtAnchor, placementFor, isLoading, getError,
     load, createThreads, addComment, editComment, hide, unhide, resolve, unresolve,
     apply, discuss, applyAll, ask, deleteThread, refresh, clear,
   };

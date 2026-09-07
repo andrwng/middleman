@@ -71,6 +71,10 @@
   // Why a thread could not be placed, in the reader's terms. Stage 1 can
   // only distinguish what is visible without a line mapping.
   function placementReason(t: ReviewThread): string {
+    // The server knows more than the DOM does when it has resolved the
+    // anchor for us.
+    if (t.resolved?.state === "removed") return "line removed";
+    if (t.resolved?.state === "unmappable") return "position unknown";
     const commits = diff.getCommits();
     if (commits && commits.length > 0 && !commits.some((c) => c.sha === t.commit_sha)) {
       return "commit rebased away";
@@ -94,8 +98,9 @@
       await diff.resetToHead();
       await tick();
     }
+    const at = reviewThreads.placementFor(t);
     const outcome = await scrollToDiffLine(
-      { path: t.path, line: t.line, side: t.side === "LEFT" ? "LEFT" : "RIGHT" },
+      { path: at.path, line: at.line, side: t.side === "LEFT" ? "LEFT" : "RIGHT" },
       jumpDeps(),
     );
     return outcome !== "missing";
@@ -167,6 +172,11 @@
                 title={orphan ? "anchored to a commit no longer in this branch" : t.status}
               ></span>
               <span class="thread-item__anchor">{anchorLabel(t)}</span>
+              {#if t.resolved?.state === "moved"}
+                <span class="thread-item__moved" title="recorded at {anchorLabel(t)}">
+                  moved
+                </span>
+              {/if}
               <span class="thread-item__path">{t.path}</span>
               <span class="thread-item__count" title="comments">{(t.comments ?? []).length}c</span>
             </button>
@@ -312,6 +322,11 @@
     background: color-mix(in srgb, var(--accent-blue) 14%, transparent);
     padding: 1px 6px;
     border-radius: 999px;
+    flex-shrink: 0;
+  }
+  .thread-item__moved {
+    font-size: 9px;
+    color: var(--accent-amber);
     flex-shrink: 0;
   }
   .thread-item__path {

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createReviewThreadsStore } from "./reviewThreads.svelte.js";
 import type { MiddlemanClient } from "../types.js";
+import type { ReviewThread } from "./reviewThreads.svelte.js";
 
 function thread(over: Record<string, unknown> = {}) {
   return {
@@ -22,6 +23,18 @@ function stubClient(
   } as unknown as MiddlemanClient;
 }
 
+// Builds a store pre-loaded with exactly the given threads, for the
+// placement tests below where the anchor/resolution shape matters more
+// than the load/API plumbing already covered above.
+async function storeWith(threads: ReviewThread[]) {
+  const client = stubClient({
+    GET: vi.fn(async () => ({ data: { threads }, error: undefined })),
+  });
+  const store = createReviewThreadsStore({ client });
+  await store.load("local", "demo", 1);
+  return store;
+}
+
 describe("reviewThreads store", () => {
   it("loads threads for a local worktree and queries by anchor", async () => {
     const client = stubClient();
@@ -29,11 +42,38 @@ describe("reviewThreads store", () => {
     await store.load("local", "demo", 7);
     expect(client.GET).toHaveBeenCalledWith(
       "/repos/{owner}/{name}/pulls/{number}/review-threads",
-      { params: { path: { owner: "local", name: "demo", number: 7 } } },
+      { params: { path: { owner: "local", name: "demo", number: 7 }, query: {} } },
     );
     expect(store.getThreads()).toHaveLength(1);
     expect(store.getThreadsAtAnchor("a.go", 12, "RIGHT")).toHaveLength(1);
     expect(store.getThreadsAtAnchor("a.go", 99, "RIGHT")).toHaveLength(0);
+  });
+
+  it("passes the caller's revision as the 'at' query param", async () => {
+    const get = vi.fn(async () => ({ data: { threads: [thread()] }, error: undefined }));
+    const client = stubClient({ GET: get });
+    const store = createReviewThreadsStore({ client });
+    await store.load("local", "demo", 7, "deadbeef");
+    expect(get).toHaveBeenCalledWith(
+      "/repos/{owner}/{name}/pulls/{number}/review-threads",
+      { params: { path: { owner: "local", name: "demo", number: 7 }, query: { at: "deadbeef" } } },
+    );
+  });
+
+  it("refresh resolves against the same revision load() was given", async () => {
+    // Decision: refresh() has no 'at' of its own (it re-reads silently
+    // during a poll), so it must reuse the revision load() last resolved
+    // against -- otherwise every moved card would snap back to its
+    // recorded line mid-poll.
+    const get = vi.fn(async () => ({ data: { threads: [thread()] }, error: undefined }));
+    const client = stubClient({ GET: get });
+    const store = createReviewThreadsStore({ client });
+    await store.load("local", "demo", 7, "deadbeef");
+    await store.refresh();
+    expect(get).toHaveBeenLastCalledWith(
+      "/repos/{owner}/{name}/pulls/{number}/review-threads",
+      { params: { path: { owner: "local", name: "demo", number: 7 }, query: { at: "deadbeef" } } },
+    );
   });
 
   it("does not call the API for non-local sources", async () => {
@@ -271,5 +311,50 @@ describe("reviewThreads store", () => {
     const ok = await store.editComment(1, 1, "new");
     expect(ok).toBe(false);
     expect(store.getError()).toBe("cannot edit");
+  });
+});
+
+describe("placement by resolved anchor", () => {
+  const base = {
+    id: 1, path: "a.go", side: "RIGHT" as const, line: 5,
+    commit_sha: "abc", status: "open", writes_allowed: false, hidden: false,
+    created_at: "", updated_at: "", comments: [],
+  };
+
+  it("places a moved thread at its resolved line, not its recorded one", async () => {
+    const store = await storeWith([
+      { ...base, resolved: { state: "moved", path: "a.go", line: 8 } },
+    ]);
+    expect(store.getThreadsAtAnchor("a.go", 8, "RIGHT")).toHaveLength(1);
+    expect(store.getThreadsAtAnchor("a.go", 5, "RIGHT")).toHaveLength(0);
+  });
+
+  it("follows a resolved rename to the new path", async () => {
+    const store = await storeWith([
+      { ...base, resolved: { state: "moved", path: "b.go", line: 8 } },
+    ]);
+    expect(store.getThreadsAtAnchor("b.go", 8, "RIGHT")).toHaveLength(1);
+    expect(store.getThreadsAtAnchor("a.go", 8, "RIGHT")).toHaveLength(0);
+  });
+
+  it("falls back to the recorded anchor when there is no resolution", async () => {
+    const store = await storeWith([{ ...base }]);
+    expect(store.getThreadsAtAnchor("a.go", 5, "RIGHT")).toHaveLength(1);
+  });
+
+  it("keeps a removed thread at its recorded line rather than hiding it", async () => {
+    // Never hide, always label: the card stays put and the row says the
+    // line is gone.
+    const store = await storeWith([
+      { ...base, resolved: { state: "removed" } },
+    ]);
+    expect(store.getThreadsAtAnchor("a.go", 5, "RIGHT")).toHaveLength(1);
+  });
+
+  it("keeps an unmappable thread at its recorded line", async () => {
+    const store = await storeWith([
+      { ...base, resolved: { state: "unmappable" } },
+    ]);
+    expect(store.getThreadsAtAnchor("a.go", 5, "RIGHT")).toHaveLength(1);
   });
 });
