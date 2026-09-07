@@ -59,9 +59,9 @@ export function createReviewThreadsStore(opts: ReviewThreadsStoreOptions) {
 
   // Where a thread should appear in the diff. A resolution, when the server
   // supplied one, wins over the recorded anchor -- that is the whole point
-  // of it. "removed" and "unmappable" carry no position, so those threads
-  // stay at the anchor the reviewer recorded and are labelled in the list
-  // rather than dropped: never hide a thread.
+  // of it. "removed" and "unmappable" carry no position of their own, so
+  // this answers with the recorded anchor for them; whether they may be
+  // shown there at all is isPlaceable's question, not this one.
   function placementFor(t: ReviewThread): { path: string; line: number } {
     const r = t.resolved;
     if (r && (r.state === "current" || r.state === "moved")) {
@@ -70,11 +70,29 @@ export function createReviewThreadsStore(opts: ReviewThreadsStoreOptions) {
     return { path: t.path, line: t.line };
   }
 
+  // Whether this thread may be rendered as an inline card in the diff.
+  // Per the spec's resolution table, "removed" and "unmappable" are
+  // list-only: the server has positively established that the recorded
+  // line is gone, or that it cannot say where it went. Drawing a card at
+  // the recorded line anyway would sit the conversation on whatever
+  // unrelated code now occupies that number -- confidently and with no
+  // label -- which is exactly the misplacement this work exists to
+  // remove. Those threads stay in the threads list, badged with their
+  // state and openable in place, so nothing is hidden.
+  //
+  // No resolution at all ("at" not sent, or a thread the server declined
+  // to resolve) means no opinion, so the recorded anchor stands.
+  function isPlaceable(t: ReviewThread): boolean {
+    const state = t.resolved?.state;
+    return state === undefined || state === "current" || state === "moved";
+  }
+
   function getThreadsAtAnchor(
     path: string, line: number, side: "LEFT" | "RIGHT",
   ): ReviewThread[] {
     return threads.filter((t) => {
       if (t.side !== side) return false;
+      if (!isPlaceable(t)) return false;
       const at = placementFor(t);
       return at.path === path && at.line === line;
     });
@@ -102,8 +120,11 @@ export function createReviewThreadsStore(opts: ReviewThreadsStoreOptions) {
     // Only overwrite when this caller actually supplied a revision. A
     // surface with no opinion about resolution (e.g. the doc-review view)
     // must not wipe out the revision refresh() should keep re-resolving
-    // against for whoever else is watching the same shared store.
-    if (at !== undefined) lastAt = at;
+    // against for whoever else is watching the same shared store. The
+    // local check matters for the same reason: a non-local load has
+    // nothing to resolve and must not leave a revision behind that a
+    // later local refresh() would send.
+    if (o === "local" && at !== undefined) lastAt = at;
     if (o !== "local") {
       threads = [];
       return;
@@ -333,6 +354,25 @@ export function createReviewThreadsStore(opts: ReviewThreadsStoreOptions) {
     }
   }
 
+  // resolveAt re-reads the loaded review's threads resolved against a new
+  // target revision, and remembers it so later refreshes keep using it.
+  //
+  // Deliberately narrower than load(): the review itself has not changed,
+  // only the revision the reader is looking at, so this must not re-key
+  // the store or flip the loading flag -- a scope change would otherwise
+  // blank the threads list on every commit click. Reusing refresh() also
+  // inherits its best-effort error handling: a failed re-resolve leaves
+  // the current threads (and their current resolutions) in place rather
+  // than emptying the list.
+  //
+  // A caller with no revision to offer must not clear the one already in
+  // effect, so "" is a no-op rather than a reset.
+  async function resolveAt(at: string): Promise<void> {
+    if (owner !== "local" || number === 0 || at === "") return;
+    lastAt = at;
+    await refresh();
+  }
+
   async function hide(threadID: number): Promise<boolean> {
     error = null;
     try {
@@ -379,8 +419,8 @@ export function createReviewThreadsStore(opts: ReviewThreadsStoreOptions) {
   }
 
   return {
-    getThreads, getThreadsAtAnchor, placementFor, isLoading, getError,
-    load, createThreads, addComment, editComment, hide, unhide, resolve, unresolve,
+    getThreads, getThreadsAtAnchor, placementFor, isPlaceable, isLoading, getError,
+    load, resolveAt, createThreads, addComment, editComment, hide, unhide, resolve, unresolve,
     apply, discuss, applyAll, ask, deleteThread, refresh, clear,
   };
 }
