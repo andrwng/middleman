@@ -216,7 +216,7 @@ func TestAPIReviewThreadsBusyConflict(t *testing.T) {
 	// The first discuss turn is running (blocking fake claude), so the
 	// second engage (apply-all) should join the queue and return 2xx.
 	applyAllResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsApplyAllWithResponse(
-		ctx, "local", "demo", num,
+		ctx, "local", "demo", num, nil,
 	)
 	require.NoError(err)
 	require.Equal(http.StatusOK, applyAllResp.StatusCode())
@@ -294,7 +294,7 @@ func TestAPIReviewThreadAskWhileBusyQueuesTheTurn(t *testing.T) {
 	// The reviewer's message was persisted and marked sent_to_agent
 	// (a queued turn was kicked for it).
 	listResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(
-		ctx, "local", "demo", num,
+		ctx, "local", "demo", num, nil,
 	)
 	require.NoError(err)
 	require.Equal(http.StatusOK, listResp.StatusCode())
@@ -587,7 +587,7 @@ func TestPureCommentsAreFlushedOnNextDiscuss(t *testing.T) {
 
 	// All three comments (root + two follow-ups) are now sent_to_agent=true.
 	getResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(
-		ctx, "local", "demo", num,
+		ctx, "local", "demo", num, nil,
 	)
 	require.NoError(err)
 	require.Equal(http.StatusOK, getResp.StatusCode())

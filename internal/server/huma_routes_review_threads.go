@@ -42,12 +42,24 @@ type reviewThreadResponse struct {
 	CreatedAt     string                        `json:"created_at" doc:"UTC RFC3339 timestamp"`
 	UpdatedAt     string                        `json:"updated_at" doc:"UTC RFC3339 timestamp"`
 	Comments      []reviewThreadCommentResponse `json:"comments"`
+	Resolved      *resolvedAnchorResponse       `json:"resolved,omitempty" doc:"Where this thread's recorded anchor lands at the revision given by the 'at' query param. Absent when 'at' was not supplied."`
+}
+
+// resolvedAnchorResponse reports where a thread's recorded anchor ended up
+// at some later revision. Path and Line are meaningful for states "current"
+// and "moved"; for "removed" and "unmappable" the reader is shown the
+// recorded anchor instead and told the position could not be confirmed.
+type resolvedAnchorResponse struct {
+	State string `json:"state" doc:"current | moved | removed | unmappable"`
+	Path  string `json:"path,omitempty"`
+	Line  int    `json:"line,omitempty"`
 }
 
 type listReviewThreadsInput struct {
 	Owner  string `path:"owner"`
 	Name   string `path:"name"`
 	Number int    `path:"number"`
+	At     string `query:"at" doc:"Revision to resolve each thread's anchor against (the new-side SHA of the reader's current diff scope, or WORKING-TREE). Omitted, no resolution is computed."`
 }
 
 type listReviewThreadsOutput struct {
@@ -229,9 +241,47 @@ func (s *Server) listReviewThreads(ctx context.Context, input *listReviewThreads
 	if err != nil {
 		return nil, huma.Error500InternalServerError("list review threads: " + err.Error())
 	}
+	if input.At != "" {
+		s.resolveThreadAnchors(ctx, w.Path, input.At, threads)
+	}
 	out := &listReviewThreadsOutput{}
 	out.Body.Threads = threads
 	return out, nil
+}
+
+// resolveThreadAnchors fills in each thread's Resolved block in place.
+//
+// A RIGHT-side line numbers the file at the anchor commit; a LEFT-side line
+// numbers its pre-image, hence the "^". Results are memoised per
+// (src, path, line) so N threads on one line cost one git call, and threads
+// sharing a file still pay only per distinct anchor.
+func (s *Server) resolveThreadAnchors(
+	ctx context.Context, worktreePath, at string, threads []reviewThreadResponse,
+) {
+	type key struct {
+		src  string
+		path string
+		line int
+	}
+	seen := map[key]worktrees.ResolvedAnchor{}
+	for i := range threads {
+		t := &threads[i]
+		src := t.CommitSHA
+		if t.Side == "LEFT" {
+			src += "^"
+		}
+		k := key{src: src, path: t.Path, line: t.Line}
+		r, ok := seen[k]
+		if !ok {
+			r = worktrees.ResolveAnchor(ctx, worktreePath, src, at, t.Path, t.Line)
+			seen[k] = r
+		}
+		t.Resolved = &resolvedAnchorResponse{
+			State: string(r.State),
+			Path:  r.Path,
+			Line:  r.Line,
+		}
+	}
 }
 
 func (s *Server) createReviewThreads(ctx context.Context, input *createReviewThreadsInput) (*createReviewThreadsOutput, error) {
