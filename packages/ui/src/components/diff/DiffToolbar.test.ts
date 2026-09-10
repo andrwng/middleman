@@ -90,3 +90,32 @@ describe("DiffToolbar refs button", () => {
     expect(getByRole("button", { name: /refs/i }).getAttribute("title")).toMatch(/\bs\b/);
   });
 });
+
+describe("DiffToolbar browse button", () => {
+  it("calls onBrowseClick when the Browse button is clicked", async () => {
+    const onBrowseClick = vi.fn();
+    const { getByRole } = render(DiffToolbar, { props: { onBrowseClick } });
+
+    await fireEvent.click(getByRole("button", { name: /browse/i }));
+
+    expect(onBrowseClick).toHaveBeenCalled();
+  });
+
+  // The panel loads a tree and file at a specific commit, so it shares
+  // the Refs button's SHA gate: disabled rather than hidden, so the
+  // control does not appear and vanish as the scope changes.
+  it("is disabled with an explanatory title when there is no current SHA", () => {
+    shaState.sha = "";
+    const { getByRole } = render(DiffToolbar, { props: { onBrowseClick: vi.fn() } });
+
+    const btn = getByRole("button", { name: /browse/i }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+    expect(btn.getAttribute("title")).toMatch(/scope/i);
+  });
+
+  it("names the b shortcut in its title so the key is discoverable", () => {
+    const { getByRole } = render(DiffToolbar, { props: { onBrowseClick: vi.fn() } });
+
+    expect(getByRole("button", { name: /browse/i }).getAttribute("title")).toMatch(/\bb\b/);
+  });
+});

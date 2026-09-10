@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { tick } from "svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { STORES_KEY } from "../../context.js";
@@ -89,10 +89,43 @@ function fakeReviewThreadsStore() {
   return { load: vi.fn(async () => {}), clear: vi.fn() };
 }
 
+// CodeBrowserPanel (mounted for real when the 'b' hotkey opens it) reads
+// this store straight from context, not via a DiffView prop -- a trivial
+// fake with mocked open()/close()/navigateTo()/loadTree() keeps these
+// tests from making real network calls or loading Shiki, matching
+// CodeBrowserPanel.test.ts's own fake.
+function fakeCodeBrowserStore() {
+  return {
+    get isOpen() {
+      return true;
+    },
+    get path() {
+      return null;
+    },
+    get entriesByDir() {
+      return new Map();
+    },
+    get content() {
+      return null;
+    },
+    get status() {
+      return "ready" as const;
+    },
+    get error() {
+      return null;
+    },
+    open: vi.fn(async () => {}),
+    close: vi.fn(),
+    navigateTo: vi.fn(async () => {}),
+    loadTree: vi.fn(async () => {}),
+  };
+}
+
 function renderDiffView() {
   const client = symbolRefsClient();
   const diffStore = createDiffStore({ client });
   const symbolRefsStore = createSymbolRefsStore({ client });
+  const codeBrowserStore = fakeCodeBrowserStore();
   render(DiffView, {
     props: { owner: "acme", name: "widget", number: 7 },
     context: new Map<symbol, unknown>([
@@ -102,10 +135,11 @@ function renderDiffView() {
         brief: fakeLifecycleStore(),
         reviewThreads: fakeReviewThreadsStore(),
         symbolRefs: symbolRefsStore,
+        codeBrowser: codeBrowserStore,
       }],
     ]),
   });
-  return { diffStore, symbolRefsStore };
+  return { diffStore, symbolRefsStore, codeBrowserStore };
 }
 
 beforeEach(() => {
@@ -256,5 +290,63 @@ describe("DiffView: the s hotkey", () => {
     await fireEvent.keyDown(window, { key: "s" });
 
     expect(symbolRefsStore.getStatus()).toBe("idle");
+  });
+});
+
+// `b` is the keyboard twin of the toolbar's Browse button, gated on a
+// resolvable SHA for the same reason `s` is: the panel loads a tree and
+// file content at a specific commit, and there is none to browse
+// otherwise.
+describe("DiffView: the b hotkey", () => {
+  it("opens the code browser panel on 'b' when a SHA is resolved", async () => {
+    installCommitsFetch(() => "sha-head-1");
+    const { diffStore, codeBrowserStore } = renderDiffView();
+    await waitFor(() => {
+      expect(diffStore.getCurrentCommitSha()).toBe("sha-head-1");
+    });
+
+    await fireEvent.keyDown(window, { key: "b" });
+
+    expect(screen.getByText("Browse files")).toBeTruthy();
+    expect(codeBrowserStore.open).toHaveBeenCalledWith("acme", "widget", 7, "sha-head-1", "");
+  });
+
+  it("does not open the code browser panel on 'b' when no SHA is resolved", async () => {
+    renderDiffView();
+    await tick();
+
+    await fireEvent.keyDown(window, { key: "b" });
+
+    expect(screen.queryByText("Browse files")).toBeNull();
+  });
+
+  // The panel is keyed by sha={currentSha}, so stepping commits
+  // ([`/`]) re-renders the mounted CodeBrowserPanel with a new sha
+  // prop rather than unmounting it. This pins that CodeBrowserPanel's
+  // own effect actually re-runs browser.open() with the new SHA --
+  // Svelte's $props() destructuring is reactive, but that reactivity
+  // is exactly the thing Task 7's effect could have broken without
+  // reading `sha` directly in its body.
+  it("keeps the panel open and re-seeds the browser at the new SHA when the commit steps while the panel is open", async () => {
+    installCommitsFetch(() => "sha-head-1");
+    const { diffStore, codeBrowserStore } = renderDiffView();
+    await waitFor(() => {
+      expect(diffStore.getCurrentCommitSha()).toBe("sha-head-1");
+    });
+
+    await fireEvent.keyDown(window, { key: "b" });
+    expect(screen.getByText("Browse files")).toBeTruthy();
+    expect(codeBrowserStore.open).toHaveBeenCalledWith("acme", "widget", 7, "sha-head-1", "");
+
+    // selectCommit is the same mechanism the `[`/`]` handlers
+    // (stepPrev/stepNext) drive: it changes diffStore's scope, which
+    // moves currentSha/getCurrentCommitSha() to the newly-selected
+    // commit without unmounting DiffView or its open CodeBrowserPanel.
+    diffStore.selectCommit("sha-a");
+    await tick();
+
+    expect(diffStore.getCurrentCommitSha()).toBe("sha-a");
+    expect(screen.getByText("Browse files")).toBeTruthy();
+    expect(codeBrowserStore.open).toHaveBeenCalledWith("acme", "widget", 7, "sha-a", "");
   });
 });

@@ -4,9 +4,10 @@
   interface Props {
     onReviewClick?: () => void;
     onRefsClick?: () => void;
+    onBrowseClick?: () => void;
   }
 
-  const { onReviewClick, onRefsClick }: Props = $props();
+  const { onReviewClick, onRefsClick, onBrowseClick }: Props = $props();
 
   const { diff, detail: detailStore, reviewThreads } = getStores();
   const tabOptions = [1, 2, 4, 8] as const;
@@ -134,6 +135,24 @@
         <path d="M7.6 7.6L11 11" stroke-linecap="round" />
       </svg>
       Refs
+    </button>
+    <button
+      type="button"
+      class="refresh-btn"
+      onclick={onBrowseClick}
+      disabled={!canSearchSymbols}
+      title={canSearchSymbols
+        ? "Browse files at this commit (b)"
+        : "This diff scope has no resolvable commit to browse"}
+    >
+      <svg
+        width="12" height="12" viewBox="0 0 12 12" fill="none"
+        stroke="currentColor" stroke-width="1.5"
+      >
+        <path d="M2 2.5h8v7H2z" stroke-linejoin="round" />
+        <path d="M2 4.5h8" />
+      </svg>
+      Browse
     </button>
     {#if diff.getRefreshError()}
       <span class="refresh-error" title={diff.getRefreshError()}>

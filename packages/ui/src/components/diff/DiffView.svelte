@@ -15,6 +15,7 @@
   import DiffFileComponent from "./DiffFile.svelte";
   import ReviewPanel from "./ReviewPanel.svelte";
   import SymbolRefsGutter from "./SymbolRefsGutter.svelte";
+  import CodeBrowserPanel from "./CodeBrowserPanel.svelte";
 
   interface Props {
     owner: string;
@@ -28,6 +29,7 @@
   let diffAreaRow: HTMLDivElement | undefined = $state();
   let scrollRaf = 0;
   let reviewPanelOpen = $state(false);
+  let codeBrowserOpen = $state(false);
 
   // Symbol references gutter width — horizontally resizable, persisted
   // across reloads. The drag handle lives here (not in the gutter
@@ -214,6 +216,15 @@
       e.preventDefault();
       symbolRefsStore.openBlank();
     }
+
+    // Opens the code browser panel, seeded from the active file. Gated
+    // on a resolvable SHA for the same reason `s` is: the panel loads
+    // the tree and file content at a specific commit, and there is no
+    // commit to browse when the scope has none.
+    if (e.key === "b" && currentSha !== "") {
+      e.preventDefault();
+      codeBrowserOpen = true;
+    }
   }
 
   $effect(() => {
@@ -340,6 +351,7 @@
         <DiffToolbar
           onReviewClick={() => { reviewPanelOpen = true; }}
           onRefsClick={() => symbolRefsStore.openBlank()}
+          onBrowseClick={() => { if (currentSha !== "") codeBrowserOpen = true; }}
         />
         <div class="diff-area-row" bind:this={diffAreaRow}>
           <div
@@ -380,6 +392,17 @@
 
 {#if reviewPanelOpen}
   <ReviewPanel {owner} {name} {number} onclose={() => { reviewPanelOpen = false; }} />
+{/if}
+
+{#if codeBrowserOpen}
+  <CodeBrowserPanel
+    {owner}
+    {name}
+    {number}
+    sha={currentSha}
+    initialPath={diffStore.getActiveFile() ?? ""}
+    onclose={() => { codeBrowserOpen = false; }}
+  />
 {/if}
 
 <style>
