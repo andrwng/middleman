@@ -390,6 +390,33 @@ describe("CodeBrowserPanel", () => {
     expect(await screen.findByPlaceholderText("Go to file…")).toBeTruthy();
   });
 
+  // Regression: opening the panel doesn't focus anything inside it (no
+  // input auto-focuses), so a listener scoped to the panel's own root
+  // element only fires once focus/the event target already happens to be
+  // somewhere inside that subtree. Firing on document.body -- where
+  // focus actually sits after opening the panel via the `b` hotkey or the
+  // toolbar button, with nothing inside the panel ever clicked -- is what
+  // exposed this; the listener must be window-scoped to see it.
+  it("opens the palette on '/' even when nothing inside the panel has focus", async () => {
+    const codeBrowser = fakeCodeBrowserStore();
+    codeBrowser.listAllFiles.mockResolvedValue(["README.md"]);
+    render(CodeBrowserPanel, {
+      props: {
+        owner: "acme",
+        name: "widget",
+        number: 1,
+        sha: "deadbeef",
+        initialPath: "src/a.txt",
+        onclose: vi.fn(),
+      },
+      context: new Map<symbol, unknown>([[STORES_KEY, { codeBrowser }]]),
+    });
+
+    await fireEvent.keyDown(document.body, { key: "/" });
+
+    expect(await screen.findByPlaceholderText("Go to file…")).toBeTruthy();
+  });
+
   it("filters the Go to file palette by fuzzy query", async () => {
     const codeBrowser = fakeCodeBrowserStore();
     codeBrowser.listAllFiles.mockResolvedValue(["README.md", "internal/handler.go"]);

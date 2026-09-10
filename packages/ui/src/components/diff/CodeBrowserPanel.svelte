@@ -215,12 +215,16 @@
     }
   }
 
-  // Scoped to this component's own root, not window -- the panel is a
-  // sibling column of the diff, not a modal, so this must not compete
-  // with DiffView's own window-level j/k/[/]/m/s/b handling. `t` mirrors
+  // Bound to window (like DiffView's own j/k/[/]/m/s/b handling), not
+  // just this component's root element: an onkeydown attribute only
+  // fires when focus is already somewhere inside this subtree, and
+  // opening the panel doesn't focus anything inside it, so a plain
+  // element-scoped listener silently never saw the keypress. `t` mirrors
   // GitHub's own repo file-finder shortcut; `/` is the more common
-  // "search/find" convention and was requested alongside it.
-  function onPanelKeydown(e: KeyboardEvent): void {
+  // "search/find" convention and was requested alongside it. DiffView's
+  // own shortcuts don't use either key, so there's no conflict despite
+  // both listening on window.
+  function onWindowKeydown(e: KeyboardEvent): void {
     if (paletteOpen) return;
     const tag = (e.target as HTMLElement).tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
@@ -230,10 +234,14 @@
       openPalette();
     }
   }
+
+  $effect(() => {
+    window.addEventListener("keydown", onWindowKeydown);
+    return () => window.removeEventListener("keydown", onWindowKeydown);
+  });
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="code-browser-panel" onkeydown={onPanelKeydown}>
+<div class="code-browser-panel">
   <div class="code-browser-header">
     <span class="code-browser-title">{browser.path ?? "Browse files"}</span>
     <div class="code-browser-header-actions">
