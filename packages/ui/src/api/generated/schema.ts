@@ -463,6 +463,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/repos/{owner}/{name}/pulls/{number}/code-browser-state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get repos by owner by name pulls by number code browser state */
+        get: operations["get-repos-by-owner-by-name-pulls-by-number-code-browser-state"];
+        /** Put repos by owner by name pulls by number code browser state */
+        put: operations["put-repos-by-owner-by-name-pulls-by-number-code-browser-state"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/repos/{owner}/{name}/pulls/{number}/comments": {
         parameters: {
             query?: never;
@@ -1575,6 +1593,17 @@ export interface components {
             /** @description added | modified | deleted | renamed | copied */
             status: string;
         };
+        CodeBrowserStateResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/CodeBrowserStateResponse.json
+             */
+            readonly $schema?: string;
+            path: string;
+            /** @description UTC RFC3339 timestamp of last save (empty when never saved) */
+            updated_at?: string;
+        };
         CommentAutocompleteReference: {
             kind: string;
             /** Format: int64 */
@@ -2256,6 +2285,15 @@ export interface components {
             content: string;
             /** @description UTC RFC3339 timestamp of last save (empty when never saved) */
             updated_at?: string;
+        };
+        PutCodeBrowserStateInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/PutCodeBrowserStateInputBody.json
+             */
+            readonly $schema?: string;
+            path: string;
         };
         PutPRNotesInputBody: {
             /**
@@ -3932,6 +3970,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BlobRangeResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-repos-by-owner-by-name-pulls-by-number-code-browser-state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CodeBrowserStateResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "put-repos-by-owner-by-name-pulls-by-number-code-browser-state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutCodeBrowserStateInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CodeBrowserStateResponse"];
                 };
             };
             /** @description Error */

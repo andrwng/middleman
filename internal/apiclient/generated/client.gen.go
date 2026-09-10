@@ -258,6 +258,16 @@ type ChangedFileResponse struct {
 	Status string `json:"status"`
 }
 
+// CodeBrowserStateResponse defines model for CodeBrowserStateResponse.
+type CodeBrowserStateResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+	Path   string  `json:"path"`
+
+	// UpdatedAt UTC RFC3339 timestamp of last save (empty when never saved)
+	UpdatedAt *string `json:"updated_at,omitempty"`
+}
+
 // CommentAutocompleteReference defines model for CommentAutocompleteReference.
 type CommentAutocompleteReference struct {
 	Kind   string `json:"kind"`
@@ -831,6 +841,13 @@ type PrNotesResponse struct {
 
 	// UpdatedAt UTC RFC3339 timestamp of last save (empty when never saved)
 	UpdatedAt *string `json:"updated_at,omitempty"`
+}
+
+// PutCodeBrowserStateInputBody defines model for PutCodeBrowserStateInputBody.
+type PutCodeBrowserStateInputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+	Path   string  `json:"path"`
 }
 
 // PutPRNotesInputBody defines model for PutPRNotesInputBody.
@@ -1469,6 +1486,9 @@ type PostReposByOwnerByNamePullsByNumberAiThreadsByThreadIdQuestionsJSONRequestB
 // PostReposByOwnerByNamePullsByNumberApproveJSONRequestBody defines body for PostReposByOwnerByNamePullsByNumberApprove for application/json ContentType.
 type PostReposByOwnerByNamePullsByNumberApproveJSONRequestBody = ApprovePRInputBody
 
+// PutReposByOwnerByNamePullsByNumberCodeBrowserStateJSONRequestBody defines body for PutReposByOwnerByNamePullsByNumberCodeBrowserState for application/json ContentType.
+type PutReposByOwnerByNamePullsByNumberCodeBrowserStateJSONRequestBody = PutCodeBrowserStateInputBody
+
 // PostPrCommentJSONRequestBody defines body for PostPrComment for application/json ContentType.
 type PostPrCommentJSONRequestBody = PostCommentInputBody
 
@@ -1709,6 +1729,14 @@ type ClientInterface interface {
 
 	// GetReposByOwnerByNamePullsByNumberBlobRange request
 	GetReposByOwnerByNamePullsByNumberBlobRange(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberBlobRangeParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetReposByOwnerByNamePullsByNumberCodeBrowserState request
+	GetReposByOwnerByNamePullsByNumberCodeBrowserState(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PutReposByOwnerByNamePullsByNumberCodeBrowserStateWithBody request with any body
+	PutReposByOwnerByNamePullsByNumberCodeBrowserStateWithBody(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	PutReposByOwnerByNamePullsByNumberCodeBrowserState(ctx context.Context, owner string, name string, number int64, body PutReposByOwnerByNamePullsByNumberCodeBrowserStateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PostPrCommentWithBody request with any body
 	PostPrCommentWithBody(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2414,6 +2442,42 @@ func (c *Client) GetReposByOwnerByNamePullsByNumberBlob(ctx context.Context, own
 
 func (c *Client) GetReposByOwnerByNamePullsByNumberBlobRange(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberBlobRangeParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetReposByOwnerByNamePullsByNumberBlobRangeRequest(c.Server, owner, name, number, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetReposByOwnerByNamePullsByNumberCodeBrowserState(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetReposByOwnerByNamePullsByNumberCodeBrowserStateRequest(c.Server, owner, name, number)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PutReposByOwnerByNamePullsByNumberCodeBrowserStateWithBody(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutReposByOwnerByNamePullsByNumberCodeBrowserStateRequestWithBody(c.Server, owner, name, number, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PutReposByOwnerByNamePullsByNumberCodeBrowserState(ctx context.Context, owner string, name string, number int64, body PutReposByOwnerByNamePullsByNumberCodeBrowserStateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutReposByOwnerByNamePullsByNumberCodeBrowserStateRequest(c.Server, owner, name, number, body)
 	if err != nil {
 		return nil, err
 	}
@@ -5316,6 +5380,115 @@ func NewGetReposByOwnerByNamePullsByNumberBlobRangeRequest(server string, owner 
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewGetReposByOwnerByNamePullsByNumberCodeBrowserStateRequest generates requests for GetReposByOwnerByNamePullsByNumberCodeBrowserState
+func NewGetReposByOwnerByNamePullsByNumberCodeBrowserStateRequest(server string, owner string, name string, number int64) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s/code-browser-state", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPutReposByOwnerByNamePullsByNumberCodeBrowserStateRequest calls the generic PutReposByOwnerByNamePullsByNumberCodeBrowserState builder with application/json body
+func NewPutReposByOwnerByNamePullsByNumberCodeBrowserStateRequest(server string, owner string, name string, number int64, body PutReposByOwnerByNamePullsByNumberCodeBrowserStateJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPutReposByOwnerByNamePullsByNumberCodeBrowserStateRequestWithBody(server, owner, name, number, "application/json", bodyReader)
+}
+
+// NewPutReposByOwnerByNamePullsByNumberCodeBrowserStateRequestWithBody generates requests for PutReposByOwnerByNamePullsByNumberCodeBrowserState with any type of body
+func NewPutReposByOwnerByNamePullsByNumberCodeBrowserStateRequestWithBody(server string, owner string, name string, number int64, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s/code-browser-state", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -8392,6 +8565,14 @@ type ClientWithResponsesInterface interface {
 	// GetReposByOwnerByNamePullsByNumberBlobRangeWithResponse request
 	GetReposByOwnerByNamePullsByNumberBlobRangeWithResponse(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberBlobRangeParams, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberBlobRangeResponse, error)
 
+	// GetReposByOwnerByNamePullsByNumberCodeBrowserStateWithResponse request
+	GetReposByOwnerByNamePullsByNumberCodeBrowserStateWithResponse(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberCodeBrowserStateResponse, error)
+
+	// PutReposByOwnerByNamePullsByNumberCodeBrowserStateWithBodyWithResponse request with any body
+	PutReposByOwnerByNamePullsByNumberCodeBrowserStateWithBodyWithResponse(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutReposByOwnerByNamePullsByNumberCodeBrowserStateResponse, error)
+
+	PutReposByOwnerByNamePullsByNumberCodeBrowserStateWithResponse(ctx context.Context, owner string, name string, number int64, body PutReposByOwnerByNamePullsByNumberCodeBrowserStateJSONRequestBody, reqEditors ...RequestEditorFn) (*PutReposByOwnerByNamePullsByNumberCodeBrowserStateResponse, error)
+
 	// PostPrCommentWithBodyWithResponse request with any body
 	PostPrCommentWithBodyWithResponse(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostPrCommentResponse, error)
 
@@ -9362,6 +9543,52 @@ func (r GetReposByOwnerByNamePullsByNumberBlobRangeResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r GetReposByOwnerByNamePullsByNumberBlobRangeResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetReposByOwnerByNamePullsByNumberCodeBrowserStateResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *CodeBrowserStateResponse
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r GetReposByOwnerByNamePullsByNumberCodeBrowserStateResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetReposByOwnerByNamePullsByNumberCodeBrowserStateResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type PutReposByOwnerByNamePullsByNumberCodeBrowserStateResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *CodeBrowserStateResponse
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r PutReposByOwnerByNamePullsByNumberCodeBrowserStateResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PutReposByOwnerByNamePullsByNumberCodeBrowserStateResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -10998,6 +11225,32 @@ func (c *ClientWithResponses) GetReposByOwnerByNamePullsByNumberBlobRangeWithRes
 		return nil, err
 	}
 	return ParseGetReposByOwnerByNamePullsByNumberBlobRangeResponse(rsp)
+}
+
+// GetReposByOwnerByNamePullsByNumberCodeBrowserStateWithResponse request returning *GetReposByOwnerByNamePullsByNumberCodeBrowserStateResponse
+func (c *ClientWithResponses) GetReposByOwnerByNamePullsByNumberCodeBrowserStateWithResponse(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberCodeBrowserStateResponse, error) {
+	rsp, err := c.GetReposByOwnerByNamePullsByNumberCodeBrowserState(ctx, owner, name, number, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetReposByOwnerByNamePullsByNumberCodeBrowserStateResponse(rsp)
+}
+
+// PutReposByOwnerByNamePullsByNumberCodeBrowserStateWithBodyWithResponse request with arbitrary body returning *PutReposByOwnerByNamePullsByNumberCodeBrowserStateResponse
+func (c *ClientWithResponses) PutReposByOwnerByNamePullsByNumberCodeBrowserStateWithBodyWithResponse(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutReposByOwnerByNamePullsByNumberCodeBrowserStateResponse, error) {
+	rsp, err := c.PutReposByOwnerByNamePullsByNumberCodeBrowserStateWithBody(ctx, owner, name, number, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutReposByOwnerByNamePullsByNumberCodeBrowserStateResponse(rsp)
+}
+
+func (c *ClientWithResponses) PutReposByOwnerByNamePullsByNumberCodeBrowserStateWithResponse(ctx context.Context, owner string, name string, number int64, body PutReposByOwnerByNamePullsByNumberCodeBrowserStateJSONRequestBody, reqEditors ...RequestEditorFn) (*PutReposByOwnerByNamePullsByNumberCodeBrowserStateResponse, error) {
+	rsp, err := c.PutReposByOwnerByNamePullsByNumberCodeBrowserState(ctx, owner, name, number, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutReposByOwnerByNamePullsByNumberCodeBrowserStateResponse(rsp)
 }
 
 // PostPrCommentWithBodyWithResponse request with arbitrary body returning *PostPrCommentResponse
@@ -12700,6 +12953,72 @@ func ParseGetReposByOwnerByNamePullsByNumberBlobRangeResponse(rsp *http.Response
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest BlobRangeResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetReposByOwnerByNamePullsByNumberCodeBrowserStateResponse parses an HTTP response from a GetReposByOwnerByNamePullsByNumberCodeBrowserStateWithResponse call
+func ParseGetReposByOwnerByNamePullsByNumberCodeBrowserStateResponse(rsp *http.Response) (*GetReposByOwnerByNamePullsByNumberCodeBrowserStateResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetReposByOwnerByNamePullsByNumberCodeBrowserStateResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CodeBrowserStateResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePutReposByOwnerByNamePullsByNumberCodeBrowserStateResponse parses an HTTP response from a PutReposByOwnerByNamePullsByNumberCodeBrowserStateWithResponse call
+func ParsePutReposByOwnerByNamePullsByNumberCodeBrowserStateResponse(rsp *http.Response) (*PutReposByOwnerByNamePullsByNumberCodeBrowserStateResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PutReposByOwnerByNamePullsByNumberCodeBrowserStateResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CodeBrowserStateResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

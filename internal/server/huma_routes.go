@@ -441,6 +441,8 @@ func (s *Server) registerAPI(api huma.API) {
 	huma.Post(api, "/repos/{owner}/{name}/resolve-files", s.resolveFiles)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/notes", s.getPRNotes)
 	huma.Put(api, "/repos/{owner}/{name}/pulls/{number}/notes", s.putPRNotes)
+	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/code-browser-state", s.getCodeBrowserState)
+	huma.Put(api, "/repos/{owner}/{name}/pulls/{number}/code-browser-state", s.putCodeBrowserState)
 	huma.Register(api, huma.Operation{
 		OperationID:   "hide-review-thread",
 		Method:        http.MethodPost,
@@ -2915,6 +2917,53 @@ func (s *Server) putPRNotes(ctx context.Context, input *putPRNotesInput) (*getPR
 		return nil, huma.Error500InternalServerError("save notes: " + err.Error())
 	}
 	return &getPRNotesOutput{Body: toPRNotesResponse(notes)}, nil
+}
+
+// --- Code browser panel state ---
+
+type getCodeBrowserStateOutput struct {
+	Body codeBrowserStateResponse
+}
+
+type putCodeBrowserStateInput struct {
+	Owner  string `path:"owner"`
+	Name   string `path:"name"`
+	Number int    `path:"number"`
+	Body   struct {
+		Path string `json:"path"`
+	}
+}
+
+func (s *Server) getCodeBrowserState(ctx context.Context, input *repoNumberInput) (*getCodeBrowserStateOutput, error) {
+	mrID, err := s.resolveOrEnsureMRID(ctx, input.Owner, input.Name, input.Number)
+	if err != nil {
+		return nil, huma.Error404NotFound("pull request not found")
+	}
+	state, err := s.db.GetCodeBrowserState(ctx, mrID)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("load code browser state: " + err.Error())
+	}
+	return &getCodeBrowserStateOutput{Body: toCodeBrowserStateResponse(state)}, nil
+}
+
+func (s *Server) putCodeBrowserState(ctx context.Context, input *putCodeBrowserStateInput) (*getCodeBrowserStateOutput, error) {
+	mrID, err := s.resolveOrEnsureMRID(ctx, input.Owner, input.Name, input.Number)
+	if err != nil {
+		return nil, huma.Error404NotFound("pull request not found")
+	}
+	state, err := s.db.SetCodeBrowserState(ctx, mrID, input.Body.Path)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("save code browser state: " + err.Error())
+	}
+	return &getCodeBrowserStateOutput{Body: toCodeBrowserStateResponse(state)}, nil
+}
+
+func toCodeBrowserStateResponse(s db.CodeBrowserState) codeBrowserStateResponse {
+	r := codeBrowserStateResponse{Path: s.Path}
+	if !s.UpdatedAt.IsZero() {
+		r.UpdatedAt = s.UpdatedAt.UTC().Format(time.RFC3339)
+	}
+	return r
 }
 
 func toPRNotesResponse(n db.PRNotes) prNotesResponse {

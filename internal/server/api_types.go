@@ -215,6 +215,14 @@ type prNotesResponse struct {
 	UpdatedAt string `json:"updated_at,omitempty" doc:"UTC RFC3339 timestamp of last save (empty when never saved)"`
 }
 
+// codeBrowserStateResponse is the last file path browsed in the code
+// browser panel for a PR. UpdatedAt is empty when no path has been
+// recorded yet.
+type codeBrowserStateResponse struct {
+	Path      string `json:"path"`
+	UpdatedAt string `json:"updated_at,omitempty" doc:"UTC RFC3339 timestamp of last save (empty when never saved)"`
+}
+
 type workspaceResponse struct {
 	ID               string  `json:"id"`
 	PlatformHost     string  `json:"platform_host"`
