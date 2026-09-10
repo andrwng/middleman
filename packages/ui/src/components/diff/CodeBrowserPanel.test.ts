@@ -69,6 +69,7 @@ function fakeCodeBrowserStore(overrides: FakeStoreOverrides = {}) {
     navigateTo: vi.fn(async () => {}),
     loadTree: vi.fn(async () => {}),
     toggleDir: vi.fn(),
+    listAllFiles: vi.fn(async () => []),
   };
 }
 
@@ -93,6 +94,7 @@ function renderPanel(
       number: 1,
       sha: "deadbeef",
       initialPath: "src/a.txt",
+      width: 480,
       ...(forcePath !== undefined && { forcePath }),
       onclose,
     },
@@ -234,6 +236,7 @@ describe("CodeBrowserPanel", () => {
       number: 1,
       sha: "deadbeef",
       initialPath: "src/other.txt",
+      width: 480,
       onclose: vi.fn(),
     });
     expect(codeBrowser.open).toHaveBeenCalledTimes(1);
@@ -244,6 +247,7 @@ describe("CodeBrowserPanel", () => {
       number: 1,
       sha: "cafef00d",
       initialPath: "src/other.txt",
+      width: 480,
       onclose: vi.fn(),
     });
     expect(codeBrowser.open).toHaveBeenCalledTimes(2);
@@ -271,5 +275,119 @@ describe("CodeBrowserPanel", () => {
     // custom properties DiffLine.svelte's CSS switches on.
     expect((token as HTMLElement).style.getPropertyValue("--dc")).toBe("#ff7b72");
     expect((token as HTMLElement).style.getPropertyValue("--lc")).toBe("#cf222e");
+  });
+
+  it("scrolls to and flashes the requested line once its path matches the open file, then reports it handled", async () => {
+    const scrollIntoView = vi.fn();
+    HTMLElement.prototype.scrollIntoView = scrollIntoView;
+    const onRevealed = vi.fn();
+    const codeBrowser = fakeCodeBrowserStore({
+      path: "src/a.txt",
+      status: "ready",
+      content: "one\ntwo\nthree",
+    });
+    render(CodeBrowserPanel, {
+      props: {
+        owner: "acme",
+        name: "widget",
+        number: 1,
+        sha: "deadbeef",
+        initialPath: "src/a.txt",
+        width: 480,
+        reveal: { path: "src/a.txt", line: 2, nonce: 1 },
+        onRevealed,
+        onclose: vi.fn(),
+      },
+      context: new Map<symbol, unknown>([[STORES_KEY, { codeBrowser }]]),
+    });
+
+    await screen.findByText("two");
+    await new Promise((r) => setTimeout(r, 0)); // let the reveal effect's tick() resolve
+
+    expect(scrollIntoView).toHaveBeenCalled();
+    expect(onRevealed).toHaveBeenCalled();
+    const line2 = document.querySelector('[data-line="2"]');
+    expect(line2?.className).toContain("code-browser-line--flash");
+  });
+
+  it("does not re-handle a reveal whose target path doesn't match the currently open file", async () => {
+    const scrollIntoView = vi.fn();
+    HTMLElement.prototype.scrollIntoView = scrollIntoView;
+    const codeBrowser = fakeCodeBrowserStore({
+      path: "src/other.txt",
+      status: "ready",
+      content: "one\ntwo",
+    });
+    render(CodeBrowserPanel, {
+      props: {
+        owner: "acme",
+        name: "widget",
+        number: 1,
+        sha: "deadbeef",
+        initialPath: "src/a.txt",
+        width: 480,
+        reveal: { path: "src/a.txt", line: 2, nonce: 1 },
+        onclose: vi.fn(),
+      },
+      context: new Map<symbol, unknown>([[STORES_KEY, { codeBrowser }]]),
+    });
+
+    await screen.findByText("two");
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it("opens the Go to file palette on 't' and navigates to the selected file", async () => {
+    const codeBrowser = fakeCodeBrowserStore();
+    codeBrowser.listAllFiles.mockResolvedValue(["README.md", "internal/handler.go"]);
+    render(CodeBrowserPanel, {
+      props: {
+        owner: "acme",
+        name: "widget",
+        number: 1,
+        sha: "deadbeef",
+        initialPath: "src/a.txt",
+        width: 480,
+        onclose: vi.fn(),
+      },
+      context: new Map<symbol, unknown>([[STORES_KEY, { codeBrowser }]]),
+    });
+
+    // The keydown listener is scoped to the panel root, not the window --
+    // it must not compete with DiffView's global j/k/[/]/m/s/b handling.
+    const panel = screen.getByText("Browse files").closest(".code-browser-panel")!;
+    await fireEvent.keyDown(panel, { key: "t" });
+
+    const option = await screen.findByText("internal/handler.go");
+    await fireEvent.click(option);
+
+    expect(codeBrowser.navigateTo).toHaveBeenCalledWith("internal/handler.go");
+  });
+
+  it("filters the Go to file palette by fuzzy query", async () => {
+    const codeBrowser = fakeCodeBrowserStore();
+    codeBrowser.listAllFiles.mockResolvedValue(["README.md", "internal/handler.go"]);
+    render(CodeBrowserPanel, {
+      props: {
+        owner: "acme",
+        name: "widget",
+        number: 1,
+        sha: "deadbeef",
+        initialPath: "src/a.txt",
+        width: 480,
+        onclose: vi.fn(),
+      },
+      context: new Map<symbol, unknown>([[STORES_KEY, { codeBrowser }]]),
+    });
+    const panel = screen.getByText("Browse files").closest(".code-browser-panel")!;
+    await fireEvent.keyDown(panel, { key: "t" });
+    await screen.findByText("internal/handler.go");
+
+    const input = screen.getByPlaceholderText("Go to file…");
+    await fireEvent.input(input, { target: { value: "hdlr" } });
+
+    expect(screen.queryByText("README.md")).toBeNull();
+    expect(screen.getByText("internal/handler.go")).toBeTruthy();
   });
 });

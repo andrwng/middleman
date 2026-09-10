@@ -72,6 +72,12 @@ export function createCodeBrowserStore(opts: CodeBrowserStoreOptions) {
   let number = 0;
   let sha = "";
 
+  // Cache for listAllFiles() -- keyed by sha so a commit step (which
+  // changes sha) naturally invalidates it, but reopening the panel at the
+  // same sha (e.g. close/reopen, or navigating within the same commit)
+  // reuses the fetch rather than re-walking the whole tree.
+  let allFilesCache: { sha: string; files: string[] } | null = null;
+
   // Bumped at the start of every open(); read (never incremented) by
   // loadTree/loadFile to detect that a newer open() has superseded them.
   let openSeq = 0;
@@ -192,6 +198,21 @@ export function createCodeBrowserStore(opts: CodeBrowserStoreOptions) {
     expandedDirs = next;
   }
 
+  // listAllFiles powers the fuzzy file finder, which needs every file in
+  // the repo (not one lazily-loaded directory at a time). Uses the /tree
+  // endpoint's recursive flag rather than a second endpoint.
+  async function listAllFiles(): Promise<string[]> {
+    if (allFilesCache && allFilesCache.sha === sha) return allFilesCache.files;
+    const { data, error: err } = await client.GET(
+      "/repos/{owner}/{name}/pulls/{number}/tree",
+      { params: { path: { owner, name, number }, query: { sha, recursive: true } } },
+    );
+    if (err || !data) return [];
+    const files = (data.entries ?? []).map((e) => e.path);
+    allFilesCache = { sha, files };
+    return files;
+  }
+
   async function navigateTo(newPath: string): Promise<void> {
     path = newPath;
     await client.PUT(
@@ -228,6 +249,7 @@ export function createCodeBrowserStore(opts: CodeBrowserStoreOptions) {
     navigateTo,
     loadTree,
     toggleDir,
+    listAllFiles,
   };
 }
 

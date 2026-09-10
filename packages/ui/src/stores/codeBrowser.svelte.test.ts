@@ -348,6 +348,72 @@ describe("codeBrowser store", () => {
     expect(treeCalls).toBe(callsAfterOpen + 1);
   });
 
+  it("listAllFiles requests a recursive tree listing and returns flat file paths", async () => {
+    const client = stubClient();
+    let recursiveQuery: unknown;
+    (client.GET as ReturnType<typeof vi.fn>).mockImplementation(
+      async (path: string, opts: { params: { query: Record<string, unknown> } }) => {
+        if (path.includes("code-browser-state")) return { data: { path: "" } };
+        if (path.includes("/tree")) {
+          if (opts.params.query.recursive) {
+            recursiveQuery = opts.params.query;
+            return {
+              data: {
+                path: "",
+                entries: [
+                  { name: "handler.go", path: "internal/handler.go", type: "file" },
+                  { name: "README.md", path: "README.md", type: "file" },
+                ],
+              },
+            };
+          }
+          return { data: { path: "", entries: [] } };
+        }
+        if (path.includes("/blob")) return { data: { content: "hi", truncated: false } };
+        throw new Error(`unexpected GET ${path}`);
+      },
+    );
+
+    const store = createCodeBrowserStore({ client });
+    await store.open("acme", "widget", 1, "deadbeef", "README.md");
+
+    const files = await store.listAllFiles();
+
+    expect(files).toEqual(["internal/handler.go", "README.md"]);
+    expect(recursiveQuery).toMatchObject({ sha: "deadbeef", recursive: true });
+  });
+
+  it("listAllFiles caches its result per sha, refetching only when sha changes", async () => {
+    const client = stubClient();
+    let recursiveCalls = 0;
+    (client.GET as ReturnType<typeof vi.fn>).mockImplementation(
+      async (path: string, opts: { params: { query: Record<string, unknown> } }) => {
+        if (path.includes("code-browser-state")) return { data: { path: "" } };
+        if (path.includes("/tree")) {
+          if (opts.params.query.recursive) {
+            recursiveCalls++;
+            return { data: { path: "", entries: [{ name: "a.go", path: "a.go", type: "file" }] } };
+          }
+          return { data: { path: "", entries: [] } };
+        }
+        if (path.includes("/blob")) return { data: { content: "hi", truncated: false } };
+        throw new Error(`unexpected GET ${path}`);
+      },
+    );
+
+    const store = createCodeBrowserStore({ client });
+    await store.open("acme", "widget", 1, "sha1", "a.go");
+
+    await store.listAllFiles();
+    await store.listAllFiles();
+    expect(recursiveCalls).toBe(1);
+
+    // A commit step changes sha -- the cache must not serve a stale list.
+    await store.open("acme", "widget", 1, "sha2", "a.go");
+    await store.listAllFiles();
+    expect(recursiveCalls).toBe(2);
+  });
+
   it("close resets isOpen, path, and content", async () => {
     const client = stubClient();
     (client.GET as ReturnType<typeof vi.fn>).mockImplementation(async (path: string) => {

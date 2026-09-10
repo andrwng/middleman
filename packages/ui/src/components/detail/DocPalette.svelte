@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import { getNavigate, getStores } from "../../context.js";
+  import { fuzzyFilter } from "../../utils/fuzzy.js";
 
   interface Props {
     owner: string;
@@ -21,32 +22,7 @@
   let highlightIndex = $state(0);
   let inputEl = $state<HTMLInputElement>();
 
-  // Lower score = better; null = no match. Empty query matches everything.
-  function fuzzyScore(text: string, q: string): number | null {
-    if (q === "") return 0;
-    const t = text.toLowerCase();
-    const query = q.toLowerCase();
-    let from = 0, score = 0, last = -1;
-    for (const ch of query) {
-      const idx = t.indexOf(ch, from);
-      if (idx === -1) return null;
-      if (last >= 0) score += idx - last; // reward compact matches
-      last = idx;
-      from = idx + 1;
-    }
-    return score;
-  }
-
-  const filtered = $derived.by(() => {
-    if (!query) {
-      return [...files].sort((a, b) => a.localeCompare(b));
-    }
-    return files
-      .map((f) => ({ f, s: fuzzyScore(f, query) }))
-      .filter((x) => x.s !== null)
-      .sort((a, b) => a.s! - b.s! || a.f.localeCompare(b.f))
-      .map((x) => x.f);
-  });
+  const filtered = $derived.by(() => fuzzyFilter(files, query));
 
   function docRouteFor(f: string): string {
     return (

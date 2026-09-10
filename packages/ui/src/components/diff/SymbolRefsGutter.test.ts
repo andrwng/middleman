@@ -134,7 +134,10 @@ function fakeDiffStore(files: string[], sha = "abc123") {
   };
 }
 
-function renderGutter(overrides: FakeStoreOverrides = {}, onBrowse: (path: string) => void = vi.fn()) {
+function renderGutter(
+  overrides: FakeStoreOverrides = {},
+  onBrowse: (path: string, line: number) => void = vi.fn(),
+) {
   const symbolRefsStore = fakeSymbolRefsStore(overrides);
   const diffFiles = overrides.diffFiles ?? (overrides.hits ?? []).map((h) => h.path);
   const diffStore = fakeDiffStore(diffFiles, overrides.sha);
@@ -347,7 +350,7 @@ describe("SymbolRefsGutter", () => {
     await fireEvent.click(screen.getByRole("button", { name: /browse/i, hidden: true }));
 
     expect(onBrowse).toHaveBeenCalledTimes(1);
-    expect(onBrowse).toHaveBeenCalledWith("pkg/foo.go");
+    expect(onBrowse).toHaveBeenCalledWith("pkg/foo.go", 42);
     // Additive, not a replacement: the row's own reveal-and-jump click
     // handler must not also fire from the browse action.
     expect(scrollToDiffLineMock).not.toHaveBeenCalled();

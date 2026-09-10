@@ -28,7 +28,7 @@
     // from here would either require mounting a second panel or racing
     // that instance's own open() call -- routing through DiffView keeps
     // there being exactly one.
-    onBrowse: (path: string) => void;
+    onBrowse: (path: string, line: number) => void;
   }
 
   const { owner, name, number, width, onBrowse }: Props = $props();
@@ -408,11 +408,11 @@
 
   // browseHit is additive: it opens the hit's file in the code browser
   // panel alongside (not instead of) the row's own click, which still
-  // reveals-and-jumps in the diff. Line/kind aren't passed through --
-  // the code browser shows a file, not a specific line -- so only the
-  // path matters here.
+  // reveals-and-jumps in the diff. The line is passed through too, so the
+  // panel can scroll to and flash the exact hit rather than only opening
+  // the file.
   function browseHit(hit: SymbolHit): void {
-    onBrowse(hit.path);
+    onBrowse(hit.path, hit.line);
   }
 </script>
 

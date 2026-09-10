@@ -1,7 +1,19 @@
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { tick, untrack } from "svelte";
   import { getStores } from "../../context.js";
   import { tokenizeLineDual, langFromPath, type DualToken } from "../../utils/highlight.js";
+  import { fuzzyFilter } from "../../utils/fuzzy.js";
+
+  // A request to scroll to and flash a specific line once `path` matches
+  // the panel's currently-open file. `nonce` lets DiffView issue a second
+  // request for the same path/line (e.g. clicking the same symbol-refs hit
+  // twice) and still have it re-trigger, since {path, line} alone wouldn't
+  // change.
+  export interface RevealRequest {
+    path: string;
+    line: number;
+    nonce: number;
+  }
 
   interface Props {
     owner: string;
@@ -16,15 +28,14 @@
     // default. Left false for the ordinary toolbar/`b`-hotkey open,
     // where resuming at the bookmark is the whole point.
     forcePath?: boolean;
-    // Viewport rect (from DiffView's measurement of .diff-main) the
-    // overlay should exactly cover. position:fixed rather than
-    // position:absolute against a newly-positioned ancestor -- see
-    // DiffView's codeBrowserHostRect comment for why: giving any ancestor
-    // of .diff-area a non-static position breaks DiffFile's floating
-    // selection-toolbar, which computes its own position in document
-    // coordinates. Null falls back to covering the whole viewport (e.g.
-    // in unit tests, which don't measure real layout).
-    hostRect?: { top: number; left: number; width: number; height: number } | null;
+    // Width of the panel as a flex column beside the diff (and, when
+    // active, the symbol-refs gutter) -- controlled by DiffView the same
+    // way it controls the symbol-refs gutter's width, with its own
+    // resize handle and persisted value living there.
+    width: number;
+    // See RevealRequest. Consulted once per nonce via onRevealed below.
+    reveal?: RevealRequest | undefined;
+    onRevealed?: () => void;
     onclose: () => void;
   }
 
@@ -35,7 +46,9 @@
     sha,
     initialPath,
     forcePath = false,
-    hostRect = null,
+    width,
+    reveal,
+    onRevealed,
     onclose,
   }: Props = $props();
 
@@ -131,89 +144,220 @@
   function toggleDir(path: string) {
     browser.toggleDir(path);
   }
+
+  // --- Jump-to-line reveal (symbol-refs "browse this hit") ---
+
+  let flashedLine = $state<number | null>(null);
+  let contentEl = $state<HTMLDivElement | undefined>();
+  let lastHandledRevealNonce = -1;
+  let flashTimeout: ReturnType<typeof setTimeout> | undefined;
+
+  // Waits for `reveal`'s target path to actually be the open file (it may
+  // be issued before navigateTo's fetch resolves) and for that file's
+  // lines to be in the DOM, then scrolls to and flashes the line. Doesn't
+  // wait for tokenizing -- the row exists in the DOM as soon as `lines` is
+  // populated, well before tokens finish.
+  $effect(() => {
+    if (!reveal || reveal.nonce === lastHandledRevealNonce) return;
+    if (reveal.path !== browser.path || lines.length === 0) return;
+    lastHandledRevealNonce = reveal.nonce;
+    const line = reveal.line;
+    flashedLine = line;
+    void tick().then(() => {
+      const el = contentEl?.querySelector(`[data-line="${line}"]`);
+      el?.scrollIntoView?.({ block: "center" });
+    });
+    clearTimeout(flashTimeout);
+    flashTimeout = setTimeout(() => {
+      flashedLine = null;
+    }, 1500);
+    onRevealed?.();
+  });
+
+  // --- Fuzzy file finder ("Go to file") ---
+
+  let paletteOpen = $state(false);
+  let paletteQuery = $state("");
+  let paletteHighlight = $state(0);
+  let paletteFiles = $state<string[]>([]);
+  let paletteInputEl = $state<HTMLInputElement>();
+
+  const paletteFiltered = $derived.by(() => fuzzyFilter(paletteFiles, paletteQuery));
+
+  function openPalette(): void {
+    paletteOpen = true;
+    paletteQuery = "";
+    paletteHighlight = 0;
+    void browser.listAllFiles().then((files) => {
+      paletteFiles = files;
+    });
+    void tick().then(() => paletteInputEl?.focus());
+  }
+
+  function closePalette(): void {
+    paletteOpen = false;
+  }
+
+  function goToFile(path: string): void {
+    void browser.navigateTo(path);
+    closePalette();
+  }
+
+  function onPaletteKeydown(e: KeyboardEvent): void {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (paletteFiltered.length === 0) return;
+      paletteHighlight = Math.min(paletteHighlight + 1, paletteFiltered.length - 1);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (paletteFiltered.length === 0) return;
+      paletteHighlight = Math.max(paletteHighlight - 1, 0);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const f = paletteFiltered[paletteHighlight];
+      if (f) goToFile(f);
+    } else if (e.key === "Escape") {
+      closePalette();
+    }
+  }
+
+  // Scoped to this component's own root, not window -- the panel is a
+  // sibling column of the diff, not a modal, so this must not compete
+  // with DiffView's own window-level j/k/[/]/m/s/b handling. `t` mirrors
+  // GitHub's own repo file-finder shortcut.
+  function onPanelKeydown(e: KeyboardEvent): void {
+    if (paletteOpen) return;
+    const tag = (e.target as HTMLElement).tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === "t") {
+      e.preventDefault();
+      openPalette();
+    }
+  }
 </script>
 
-{#snippet tree(dirPath: string, depth: number)}
-  {#each browser.entriesByDir.get(dirPath) ?? [] as entry (entry.path)}
-    <div class="code-browser-row" style="padding-left: {depth * 14}px">
-      {#if entry.type === "dir"}
-        <button
-          type="button"
-          class="code-browser-entry code-browser-entry--dir"
-          onclick={() => toggleDir(entry.path)}
-        >
-          <span class="code-browser-caret">{browser.expandedDirs.has(entry.path) ? "▾" : "▸"}</span>
-          {entry.name}
-        </button>
-        {#if browser.expandedDirs.has(entry.path)}
-          {@render tree(entry.path, depth + 1)}
-        {/if}
-      {:else}
-        <button
-          type="button"
-          class="code-browser-entry code-browser-entry--file"
-          class:code-browser-entry--active={browser.path === entry.path}
-          onclick={() => browser.navigateTo(entry.path)}
-        >
-          {entry.name}
-        </button>
-      {/if}
-    </div>
-  {/each}
-{/snippet}
-
-<div
-  class="code-browser-overlay"
-  style={hostRect
-    ? `top:${hostRect.top}px; left:${hostRect.left}px; width:${hostRect.width}px; height:${hostRect.height}px;`
-    : "top:0; left:0; right:0; bottom:0;"}
->
-  <div class="code-browser-panel">
-    <div class="code-browser-header">
-      <span class="code-browser-title">{browser.path ?? "Browse files"}</span>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="code-browser-panel" style:width="{width}px" onkeydown={onPanelKeydown}>
+  <div class="code-browser-header">
+    <span class="code-browser-title">{browser.path ?? "Browse files"}</span>
+    <div class="code-browser-header-actions">
+      <button type="button" class="code-browser-goto-btn" onclick={openPalette} title="Go to file (t)">
+        Go to file
+      </button>
       <button type="button" onclick={() => { browser.close(); onclose(); }}>Close</button>
     </div>
-    <div class="code-browser-body">
-      <nav class="code-browser-tree">
-        {@render tree("", 0)}
-      </nav>
-      <div class="code-browser-content">
-        {#if browser.status === "missing"}
-          <p class="code-browser-empty">This file doesn't exist at this commit.</p>
-        {:else if browser.status === "loading"}
-          <p class="code-browser-empty">Loading…</p>
-        {:else if browser.status === "truncated"}
-          <p class="code-browser-empty">This file is too large to display.</p>
-        {:else if browser.status === "error"}
-          <p class="code-browser-empty">{browser.error ?? "Failed to load file"}</p>
-        {:else}
-          <div class="code-browser-file">
-            {#each lines as line, i (i)}
-              <pre class="code-browser-line">{#each tokens.get(i) ?? [{ content: line }] as span}<span style:--dc={span.darkColor} style:--lc={span.lightColor}>{span.content}</span>{/each}</pre>
-            {/each}
+  </div>
+  <div class="code-browser-body">
+    <nav class="code-browser-tree">
+      {#snippet tree(dirPath: string, depth: number)}
+        {#each browser.entriesByDir.get(dirPath) ?? [] as entry (entry.path)}
+          <div class="code-browser-row" style="padding-left: {12 + depth * 12}px">
+            {#if entry.type === "dir"}
+              <button
+                type="button"
+                class="code-browser-entry code-browser-entry--dir"
+                onclick={() => toggleDir(entry.path)}
+              >
+                <span class="code-browser-caret">{browser.expandedDirs.has(entry.path) ? "▾" : "▸"}</span>
+                {entry.name}
+              </button>
+              {#if browser.expandedDirs.has(entry.path)}
+                {@render tree(entry.path, depth + 1)}
+              {/if}
+            {:else}
+              <button
+                type="button"
+                class="code-browser-entry code-browser-entry--file"
+                class:code-browser-entry--active={browser.path === entry.path}
+                onclick={() => browser.navigateTo(entry.path)}
+              >
+                {entry.name}
+              </button>
+            {/if}
           </div>
-        {/if}
-      </div>
+        {/each}
+      {/snippet}
+      {@render tree("", 0)}
+    </nav>
+    <div class="code-browser-content" bind:this={contentEl}>
+      {#if browser.status === "missing"}
+        <p class="code-browser-empty">This file doesn't exist at this commit.</p>
+      {:else if browser.status === "loading"}
+        <p class="code-browser-empty">Loading…</p>
+      {:else if browser.status === "truncated"}
+        <p class="code-browser-empty">This file is too large to display.</p>
+      {:else if browser.status === "error"}
+        <p class="code-browser-empty">{browser.error ?? "Failed to load file"}</p>
+      {:else}
+        <div class="code-browser-file">
+          {#each lines as line, i (i)}
+            <pre
+              class="code-browser-line"
+              class:code-browser-line--flash={i + 1 === flashedLine}
+              data-line={i + 1}
+            >{#each tokens.get(i) ?? [{ content: line }] as span}<span style:--dc={span.darkColor} style:--lc={span.lightColor}>{span.content}</span>{/each}</pre>
+          {/each}
+        </div>
+      {/if}
     </div>
   </div>
 </div>
 
+{#if paletteOpen}
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+  <div
+    class="code-browser-palette-backdrop"
+    role="dialog"
+    tabindex="-1"
+    aria-modal="true"
+    aria-label="Go to file"
+    onmousedown={(e) => {
+      if (e.target === e.currentTarget) closePalette();
+    }}
+  >
+    <div class="code-browser-palette-panel">
+      <input
+        bind:this={paletteInputEl}
+        class="code-browser-palette-input"
+        type="text"
+        bind:value={paletteQuery}
+        oninput={() => (paletteHighlight = 0)}
+        onkeydown={onPaletteKeydown}
+        placeholder="Go to file…"
+        aria-label="Go to file"
+        autocomplete="off"
+      />
+      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+      <ul class="code-browser-palette-list" role="listbox">
+        {#each paletteFiltered as f, i (f)}
+          <li
+            class="code-browser-palette-option"
+            class:highlighted={i === paletteHighlight}
+            role="option"
+            aria-selected={i === paletteHighlight}
+            onmouseenter={() => (paletteHighlight = i)}
+          >
+            <button type="button" class="code-browser-palette-row" onclick={() => goToFile(f)}>
+              {f}
+            </button>
+          </li>
+        {:else}
+          <li class="code-browser-palette-empty">No matching files</li>
+        {/each}
+      </ul>
+    </div>
+  </div>
+{/if}
+
 <style>
-  .code-browser-overlay {
-    position: fixed;
-    z-index: 60;
-    display: flex;
-    justify-content: flex-end;
-    background: rgba(0, 0, 0, 0.35);
-  }
   .code-browser-panel {
-    width: 100%;
-    max-width: 100%;
+    flex-shrink: 0;
     height: 100%;
     background: var(--diff-bg);
     display: flex;
     flex-direction: column;
-    box-shadow: -2px 0 12px rgba(0, 0, 0, 0.2);
+    border-left: 1px solid var(--diff-border);
   }
   .code-browser-header {
     display: flex;
@@ -224,6 +368,18 @@
   }
   .code-browser-title {
     font-family: var(--font-mono);
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .code-browser-header-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .code-browser-goto-btn {
+    font-size: 11px;
   }
   .code-browser-body {
     flex: 1;
@@ -231,12 +387,13 @@
     overflow: hidden;
   }
   .code-browser-tree {
-    width: 260px;
+    width: 220px;
     flex-shrink: 0;
     overflow-y: auto;
     border-right: 1px solid var(--diff-border);
     display: flex;
     flex-direction: column;
+    padding: 4px 0;
   }
   .code-browser-row {
     display: flex;
@@ -244,17 +401,22 @@
   }
   .code-browser-entry {
     text-align: left;
-    padding: 4px 12px;
+    padding: 2px 8px;
     background: none;
     border: none;
     cursor: pointer;
     font-family: var(--font-mono);
-    color: inherit;
+    font-size: 11px;
+    color: var(--text-secondary);
+    transition: background 0.15s ease;
   }
   .code-browser-entry:hover {
-    background: var(--diff-stale-bg);
+    background: var(--bg-surface-hover);
+    color: var(--text-primary);
   }
   .code-browser-entry--active {
+    background: color-mix(in srgb, var(--accent-blue) 10%, transparent);
+    color: var(--text-primary);
     font-weight: 600;
   }
   .code-browser-caret {
@@ -282,6 +444,10 @@
     color: var(--diff-text);
     background: transparent;
     border: none;
+    transition: background 0.2s ease;
+  }
+  .code-browser-line--flash {
+    background: color-mix(in srgb, var(--accent-amber) 25%, transparent);
   }
   /* Token colors via CSS custom properties — theme switch is pure CSS,
      no JS re-renders needed. Each span carries --dc (dark) and --lc (light). */
@@ -290,5 +456,74 @@
   }
   :global(html.dark) .code-browser-line span {
     color: var(--dc, inherit);
+  }
+
+  .code-browser-palette-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 200;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 80px;
+  }
+  .code-browser-palette-panel {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md, 6px);
+    box-shadow: var(--shadow-lg);
+    width: min(560px, 90vw);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .code-browser-palette-input {
+    padding: 10px 14px;
+    font-size: 13px;
+    color: var(--text-primary);
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--border-default);
+    outline: none;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .code-browser-palette-list {
+    list-style: none;
+    padding: 4px;
+    margin: 0;
+    max-height: 320px;
+    overflow-y: auto;
+  }
+  .code-browser-palette-option {
+    border-radius: 4px;
+  }
+  .code-browser-palette-option.highlighted {
+    background: var(--bg-surface-hover);
+  }
+  .code-browser-palette-row {
+    width: 100%;
+    text-align: left;
+    padding: 6px 8px;
+    font-size: 12px;
+    font-family: var(--font-mono);
+    color: var(--text-secondary);
+    background: none;
+    border: none;
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    display: block;
+  }
+  .code-browser-palette-option.highlighted .code-browser-palette-row {
+    color: var(--text-primary);
+  }
+  .code-browser-palette-empty {
+    padding: 8px 10px;
+    font-size: 12px;
+    color: var(--text-muted);
+    font-style: italic;
   }
 </style>
