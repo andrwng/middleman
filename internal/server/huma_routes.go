@@ -436,6 +436,7 @@ func (s *Server) registerAPI(api huma.API) {
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/files", s.getFiles)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/blob-range", s.getBlobRange)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/blob", s.getBlob)
+	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/tree", s.getTree)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/symbol-refs", s.getSymbolRefs)
 	huma.Post(api, "/repos/{owner}/{name}/resolve-files", s.resolveFiles)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/notes", s.getPRNotes)
@@ -2499,6 +2500,64 @@ func (s *Server) getBlob(ctx context.Context, input *getBlobInput) (*getBlobOutp
 		return &getBlobOutput{Body: blobResponse{Truncated: true}}, nil
 	}
 	return &getBlobOutput{Body: blobResponse{Content: string(raw)}}, nil
+}
+
+// --- Tree (directory listing for the code browser panel) ---
+
+type getTreeInput struct {
+	Owner  string `path:"owner"`
+	Name   string `path:"name"`
+	Number int    `path:"number"`
+	Path   string `query:"path" doc:"Directory path within the repo, empty for root"`
+	SHA    string `query:"sha"  doc:"Commit/tree SHA to list"`
+}
+
+type getTreeOutput struct{ Body treeResponse }
+
+type treeResponse struct {
+	Path    string          `json:"path"`
+	Entries []treeEntryJSON `json:"entries"`
+}
+
+type treeEntryJSON struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+	Type string `json:"type" doc:"'dir' or 'file'"`
+}
+
+// getTree lists the immediate entries of a directory at a given
+// sha. PR-scoped for auth coherence with /blob, /files, etc.
+func (s *Server) getTree(ctx context.Context, input *getTreeInput) (*getTreeOutput, error) {
+	if isLocalSource(input.Owner) {
+		return s.getTreeLocal(ctx, input)
+	}
+	if s.clones == nil {
+		return nil, huma.Error503ServiceUnavailable("tree not available: clone manager not configured")
+	}
+	if input.SHA == "" {
+		return nil, huma.Error400BadRequest("sha is required")
+	}
+	if _, err := s.db.GetMRIDByRepoAndNumber(ctx, input.Owner, input.Name, input.Number); err != nil {
+		return nil, huma.Error404NotFound("pull request not found")
+	}
+
+	host := s.syncer.HostForRepo(input.Owner, input.Name)
+	entries, err := s.clones.Tree(ctx, host, input.Owner, input.Name, input.SHA, input.Path)
+	if err != nil {
+		if errors.Is(err, gitclone.ErrNotFound) {
+			return nil, huma.Error404NotFound("path not found: " + err.Error())
+		}
+		return nil, huma.Error502BadGateway("read tree: " + err.Error())
+	}
+	return &getTreeOutput{Body: treeResponse{Path: input.Path, Entries: toTreeEntryJSON(entries)}}, nil
+}
+
+func toTreeEntryJSON(entries []gitclone.TreeEntry) []treeEntryJSON {
+	out := make([]treeEntryJSON, len(entries))
+	for i, e := range entries {
+		out[i] = treeEntryJSON{Name: e.Name, Path: e.Path, Type: e.Type}
+	}
+	return out
 }
 
 // --- Symbol references (other occurrences of a selected symbol) ---

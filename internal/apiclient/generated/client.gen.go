@@ -1189,6 +1189,23 @@ type SyncStatus struct {
 	Running     bool       `json:"running"`
 }
 
+// TreeEntryJSON defines model for TreeEntryJSON.
+type TreeEntryJSON struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+
+	// Type 'dir' or 'file'
+	Type string `json:"type"`
+}
+
+// TreeResponse defines model for TreeResponse.
+type TreeResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema  *string          `json:"$schema,omitempty"`
+	Entries *[]TreeEntryJSON `json:"entries"`
+	Path    string           `json:"path"`
+}
+
 // UpdateAuthorGroupInputBody defines model for UpdateAuthorGroupInputBody.
 type UpdateAuthorGroupInputBody struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -1403,6 +1420,15 @@ type GetReposByOwnerByNamePullsByNumberSymbolRefsParams struct {
 	Q *string `form:"q,omitempty" json:"q,omitempty"`
 
 	// Sha New-side commit SHA the hit line numbers refer to
+	Sha *string `form:"sha,omitempty" json:"sha,omitempty"`
+}
+
+// GetReposByOwnerByNamePullsByNumberTreeParams defines parameters for GetReposByOwnerByNamePullsByNumberTree.
+type GetReposByOwnerByNamePullsByNumberTreeParams struct {
+	// Path Directory path within the repo, empty for root
+	Path *string `form:"path,omitempty" json:"path,omitempty"`
+
+	// Sha Commit/tree SHA to list
 	Sha *string `form:"sha,omitempty" json:"sha,omitempty"`
 }
 
@@ -1821,6 +1847,9 @@ type ClientInterface interface {
 
 	// PostReposByOwnerByNamePullsByNumberSync request
 	PostReposByOwnerByNamePullsByNumberSync(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetReposByOwnerByNamePullsByNumberTree request
+	GetReposByOwnerByNamePullsByNumberTree(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberTreeParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PostReposByOwnerByNameResolveFilesWithBody request with any body
 	PostReposByOwnerByNameResolveFilesWithBody(ctx context.Context, owner string, name string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2985,6 +3014,18 @@ func (c *Client) GetReposByOwnerByNamePullsByNumberSymbolRefs(ctx context.Contex
 
 func (c *Client) PostReposByOwnerByNamePullsByNumberSync(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPostReposByOwnerByNamePullsByNumberSyncRequest(c.Server, owner, name, number)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetReposByOwnerByNamePullsByNumberTree(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberTreeParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetReposByOwnerByNamePullsByNumberTreeRequest(c.Server, owner, name, number, params)
 	if err != nil {
 		return nil, err
 	}
@@ -7511,6 +7552,92 @@ func NewPostReposByOwnerByNamePullsByNumberSyncRequest(server string, owner stri
 	return req, nil
 }
 
+// NewGetReposByOwnerByNamePullsByNumberTreeRequest generates requests for GetReposByOwnerByNamePullsByNumberTree
+func NewGetReposByOwnerByNamePullsByNumberTreeRequest(server string, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberTreeParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s/tree", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Path != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "path", *params.Path, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Sha != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "sha", *params.Sha, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewPostReposByOwnerByNameResolveFilesRequest calls the generic PostReposByOwnerByNameResolveFiles builder with application/json body
 func NewPostReposByOwnerByNameResolveFilesRequest(server string, owner string, name string, body PostReposByOwnerByNameResolveFilesJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -8402,6 +8529,9 @@ type ClientWithResponsesInterface interface {
 
 	// PostReposByOwnerByNamePullsByNumberSyncWithResponse request
 	PostReposByOwnerByNamePullsByNumberSyncWithResponse(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberSyncResponse, error)
+
+	// GetReposByOwnerByNamePullsByNumberTreeWithResponse request
+	GetReposByOwnerByNamePullsByNumberTreeWithResponse(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberTreeParams, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberTreeResponse, error)
 
 	// PostReposByOwnerByNameResolveFilesWithBodyWithResponse request with any body
 	PostReposByOwnerByNameResolveFilesWithBodyWithResponse(ctx context.Context, owner string, name string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNameResolveFilesResponse, error)
@@ -10106,6 +10236,29 @@ func (r PostReposByOwnerByNamePullsByNumberSyncResponse) StatusCode() int {
 	return 0
 }
 
+type GetReposByOwnerByNamePullsByNumberTreeResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *TreeResponse
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r GetReposByOwnerByNamePullsByNumberTreeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetReposByOwnerByNamePullsByNumberTreeResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type PostReposByOwnerByNameResolveFilesResponse struct {
 	Body                          []byte
 	HTTPResponse                  *http.Response
@@ -11283,6 +11436,15 @@ func (c *ClientWithResponses) PostReposByOwnerByNamePullsByNumberSyncWithRespons
 		return nil, err
 	}
 	return ParsePostReposByOwnerByNamePullsByNumberSyncResponse(rsp)
+}
+
+// GetReposByOwnerByNamePullsByNumberTreeWithResponse request returning *GetReposByOwnerByNamePullsByNumberTreeResponse
+func (c *ClientWithResponses) GetReposByOwnerByNamePullsByNumberTreeWithResponse(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberTreeParams, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberTreeResponse, error) {
+	rsp, err := c.GetReposByOwnerByNamePullsByNumberTree(ctx, owner, name, number, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetReposByOwnerByNamePullsByNumberTreeResponse(rsp)
 }
 
 // PostReposByOwnerByNameResolveFilesWithBodyWithResponse request with arbitrary body returning *PostReposByOwnerByNameResolveFilesResponse
@@ -13750,6 +13912,39 @@ func ParsePostReposByOwnerByNamePullsByNumberSyncResponse(rsp *http.Response) (*
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest MergeRequestDetailResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetReposByOwnerByNamePullsByNumberTreeResponse parses an HTTP response from a GetReposByOwnerByNamePullsByNumberTreeWithResponse call
+func ParseGetReposByOwnerByNamePullsByNumberTreeResponse(rsp *http.Response) (*GetReposByOwnerByNamePullsByNumberTreeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetReposByOwnerByNamePullsByNumberTreeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TreeResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

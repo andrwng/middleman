@@ -1039,6 +1039,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/repos/{owner}/{name}/pulls/{number}/tree": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get repos by owner by name pulls by number tree */
+        get: operations["get-repos-by-owner-by-name-pulls-by-number-tree"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/repos/{owner}/{name}/resolve-files": {
         parameters: {
             query?: never;
@@ -2631,6 +2648,22 @@ export interface components {
             last_run_at?: string;
             progress?: string;
             running: boolean;
+        };
+        TreeEntryJSON: {
+            name: string;
+            path: string;
+            /** @description 'dir' or 'file' */
+            type: string;
+        };
+        TreeResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/TreeResponse.json
+             */
+            readonly $schema?: string;
+            entries: components["schemas"]["TreeEntryJSON"][] | null;
+            path: string;
         };
         UpdateAuthorGroupInputBody: {
             /**
@@ -5222,6 +5255,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MergeRequestDetailResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-repos-by-owner-by-name-pulls-by-number-tree": {
+        parameters: {
+            query?: {
+                /** @description Directory path within the repo, empty for root */
+                path?: string;
+                /** @description Commit/tree SHA to list */
+                sha?: string;
+            };
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TreeResponse"];
                 };
             };
             /** @description Error */

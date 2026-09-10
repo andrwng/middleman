@@ -400,6 +400,40 @@ func (s *Server) getBlobLocal(
 	return &getBlobOutput{Body: blobResponse{Content: string(raw)}}, nil
 }
 
+// getTreeLocal serves the PR-shaped /tree endpoint for a local
+// worktree. Reads either a committed directory listing (via git
+// ls-tree in the worktree's .git dir) or the working-tree state (via
+// WorkingTreeSentinel -> direct filesystem read). The bare-clone
+// manager is bypassed entirely because local entries have no clone
+// partition.
+func (s *Server) getTreeLocal(
+	ctx context.Context, input *getTreeInput,
+) (*getTreeOutput, error) {
+	if input.SHA == "" {
+		return nil, huma.Error400BadRequest("sha is required")
+	}
+	// Same defense as getBlobLocal: sha reaches `git ls-tree` as a
+	// positional revision argument (worktrees.Tree), so reject anything
+	// that isn't a hex object id or the working-tree sentinel before it
+	// gets there. Reuses symbolRefsSHA rather than a second copy of the
+	// pattern.
+	if input.SHA != worktrees.WorkingTreeSentinel && !symbolRefsSHA.MatchString(input.SHA) {
+		return nil, huma.Error400BadRequest("sha must be a hex object id")
+	}
+	w, err := s.resolveLocalWorktree(ctx, input.Name, input.Number)
+	if err != nil {
+		return nil, huma.Error404NotFound("worktree not found")
+	}
+	entries, err := worktrees.Tree(ctx, w.Path, input.SHA, input.Path)
+	if err != nil {
+		if errors.Is(err, worktrees.ErrNotFound) {
+			return nil, huma.Error404NotFound("path not found: " + err.Error())
+		}
+		return nil, huma.Error502BadGateway("read tree: " + err.Error())
+	}
+	return &getTreeOutput{Body: treeResponse{Path: input.Path, Entries: toTreeEntryJSON(entries)}}, nil
+}
+
 // getFilesLocal returns the lightweight file list for a worktree's
 // default scope — base vs working tree (the same full-draft view
 // getDiffLocal serves when no scope params are passed). Hunks are
