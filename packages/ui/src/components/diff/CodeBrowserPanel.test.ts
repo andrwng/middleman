@@ -143,23 +143,50 @@ describe("CodeBrowserPanel", () => {
     );
   });
 
-  it("renders a directory already marked expanded (via the store's expandedDirs)", async () => {
+  // The tree is a GitHub-style breadcrumb drill-down, not a nested
+  // indented tree: only the currently-open file's containing directory
+  // is shown, derived from browser.path (which open()'s ancestor-loading
+  // already populated entriesByDir for).
+  it("shows the open file's containing directory, derived from browser.path", async () => {
     const entriesByDir = new Map<string, TreeEntry[]>([
       ["", [dirEntry()]],
       ["src", [fileEntry()]],
     ]);
-    renderPanel({ entriesByDir, expandedDirs: new Set(["src"]) });
+    renderPanel({ path: "src/a.txt", entriesByDir });
 
     expect(await screen.findByText("a.txt")).toBeTruthy();
   });
 
-  it("clicking a directory delegates expand/collapse to the store's toggleDir", async () => {
-    const entriesByDir = new Map<string, TreeEntry[]>([["", [dirEntry()]]]);
+  it("clicking a directory drills into it, updating the breadcrumb and listed entries", async () => {
+    const entriesByDir = new Map<string, TreeEntry[]>([
+      ["", [dirEntry()]],
+      ["src", [fileEntry()]],
+    ]);
     const { codeBrowser } = renderPanel({ entriesByDir });
 
     await fireEvent.click(screen.getByText("src"));
 
-    expect(codeBrowser.toggleDir).toHaveBeenCalledWith("src");
+    expect(await screen.findByText("a.txt")).toBeTruthy();
+    // "src" now appears as the current (disabled) breadcrumb segment,
+    // not just a directory entry -- and browsing never calls toggleDir,
+    // which the old nested-tree design used.
+    expect((screen.getByRole("button", { name: "src" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(codeBrowser.toggleDir).not.toHaveBeenCalled();
+  });
+
+  it("clicking a breadcrumb segment navigates back up without touching browser.path", async () => {
+    const entriesByDir = new Map<string, TreeEntry[]>([
+      ["", [dirEntry()]],
+      ["src", [fileEntry()]],
+    ]);
+    const { codeBrowser } = renderPanel({ path: "src/a.txt", entriesByDir });
+    await screen.findByText("a.txt");
+
+    const repoRoot = screen.getByRole("button", { name: "widget" });
+    await fireEvent.click(repoRoot);
+
+    expect(await screen.findByText("src")).toBeTruthy();
+    expect(codeBrowser.navigateTo).not.toHaveBeenCalled();
   });
 
   it("navigates to a file when a file entry is clicked", async () => {
@@ -169,6 +196,11 @@ describe("CodeBrowserPanel", () => {
     await fireEvent.click(screen.getByText("a.txt"));
 
     expect(codeBrowser.navigateTo).toHaveBeenCalledWith("a.txt");
+  });
+
+  it("shows a loading message for a directory whose entries haven't arrived yet", () => {
+    renderPanel({ path: "src/a.txt", entriesByDir: new Map() });
+    expect(screen.getByText(/loading/i)).toBeTruthy();
   });
 
   it("renders the file content as plain text", async () => {
@@ -187,7 +219,10 @@ describe("CodeBrowserPanel", () => {
   });
 
   it("shows a loading state while a file is loading", () => {
-    renderPanel({ status: "loading" });
+    // Root entriesByDir provided so the tree pane's own "Loading…" (shown
+    // while a directory's entries haven't arrived) doesn't also render
+    // and collide with the content pane's file-loading message.
+    renderPanel({ status: "loading", entriesByDir: new Map([["", []]]) });
     expect(screen.getByText(/loading/i)).toBeTruthy();
   });
 

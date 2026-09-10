@@ -129,15 +129,53 @@
     }
   }
 
-  // Directories the reader has expanded live in the store, not here --
-  // open() seeds them with every ancestor of the opened path so the tree
-  // renders already expanded down to that file (auto-reveal), and the
-  // store's toggleDir lazily loads a directory's children the first time
-  // it is expanded (re-expanding one whose children are already cached
-  // must not refetch them).
-  function toggleDir(path: string) {
-    browser.toggleDir(path);
+  // --- Directory browsing (GitHub-style breadcrumb drill-down) ---
+  //
+  // One directory's entries are shown at a time, with a clickable
+  // breadcrumb path above -- matching GitHub's own repo browser, and
+  // replacing an earlier fully-nested, indented tree that read as
+  // visually noisy at any real depth.
+  //
+  // currentDir tracks the directory currently listed; it is local state,
+  // not stored on the browser store, since drilling into a folder isn't
+  // "opening a file" and has no bookmark/reveal semantics of its own.
+  // Whenever the OPEN FILE changes (browser.path), currentDir follows it
+  // to that file's containing directory -- open()'s ancestor-loading loop
+  // already populated entriesByDir for every ancestor of the opened path,
+  // so this never needs its own fetch on that path. Pure folder browsing
+  // (clicking a directory entry or a breadcrumb segment) only changes
+  // currentDir locally and never touches browser.path.
+  let currentDir = $state("");
+
+  $effect(() => {
+    const p = browser.path;
+    if (p == null) return;
+    const idx = p.lastIndexOf("/");
+    const dir = idx === -1 ? "" : p.slice(0, idx);
+    if (dir === currentDir) return;
+    currentDir = dir;
+    if (!browser.entriesByDir.has(dir)) void browser.loadTree(dir);
+  });
+
+  function openDir(path: string): void {
+    currentDir = path;
+    if (!browser.entriesByDir.has(path)) void browser.loadTree(path);
   }
+
+  // Breadcrumb segments from the repo root (labeled with the repo name,
+  // matching GitHub's own breadcrumb) down to currentDir.
+  const breadcrumb = $derived.by(() => {
+    const segs: { label: string; path: string }[] = [{ label: name, path: "" }];
+    if (currentDir === "") return segs;
+    let acc = "";
+    for (const part of currentDir.split("/")) {
+      acc = acc ? `${acc}/${part}` : part;
+      segs.push({ label: part, path: acc });
+    }
+    return segs;
+  });
+
+  const currentEntries = $derived(browser.entriesByDir.get(currentDir));
 
   // --- Jump-to-line reveal (symbol-refs "browse this hit") ---
 
@@ -253,35 +291,47 @@
   </div>
   <div class="code-browser-body">
     <nav class="code-browser-tree">
-      {#snippet tree(dirPath: string, depth: number)}
-        {#each browser.entriesByDir.get(dirPath) ?? [] as entry (entry.path)}
-          <div class="code-browser-row" style="padding-left: {8 + depth * 10}px">
-            {#if entry.type === "dir"}
-              <button
-                type="button"
-                class="code-browser-entry code-browser-entry--dir"
-                onclick={() => toggleDir(entry.path)}
-              >
-                <span class="code-browser-caret">{browser.expandedDirs.has(entry.path) ? "▾" : "▸"}</span>
-                {entry.name}
-              </button>
-              {#if browser.expandedDirs.has(entry.path)}
-                {@render tree(entry.path, depth + 1)}
-              {/if}
-            {:else}
-              <button
-                type="button"
-                class="code-browser-entry code-browser-entry--file"
-                class:code-browser-entry--active={browser.path === entry.path}
-                onclick={() => browser.navigateTo(entry.path)}
-              >
-                {entry.name}
-              </button>
-            {/if}
-          </div>
+      <div class="code-browser-breadcrumb">
+        {#each breadcrumb as seg, i (seg.path)}
+          {#if i > 0}<span class="code-browser-breadcrumb-sep">/</span>{/if}
+          <button
+            type="button"
+            class="code-browser-breadcrumb-seg"
+            disabled={seg.path === currentDir}
+            onclick={() => openDir(seg.path)}
+          >
+            {seg.label}
+          </button>
         {/each}
-      {/snippet}
-      {@render tree("", 0)}
+      </div>
+      {#if currentEntries === undefined}
+        <p class="code-browser-tree-empty">Loading…</p>
+      {:else}
+        {#each currentEntries as entry (entry.path)}
+          {#if entry.type === "dir"}
+            <button
+              type="button"
+              class="code-browser-entry code-browser-entry--dir"
+              onclick={() => openDir(entry.path)}
+            >
+              <span class="code-browser-entry-icon">📁</span>
+              <span class="code-browser-entry-name">{entry.name}</span>
+            </button>
+          {:else}
+            <button
+              type="button"
+              class="code-browser-entry code-browser-entry--file"
+              class:code-browser-entry--active={browser.path === entry.path}
+              onclick={() => browser.navigateTo(entry.path)}
+            >
+              <span class="code-browser-entry-icon">📄</span>
+              <span class="code-browser-entry-name">{entry.name}</span>
+            </button>
+          {/if}
+        {:else}
+          <p class="code-browser-tree-empty">Empty directory.</p>
+        {/each}
+      {/if}
     </nav>
     <div class="code-browser-content" bind:this={contentEl}>
       {#if browser.status === "missing"}
@@ -404,13 +454,53 @@
     flex-direction: column;
     padding: 4px 0;
   }
-  .code-browser-row {
+  .code-browser-breadcrumb {
     display: flex;
-    flex-direction: column;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2px;
+    padding: 4px 8px 8px;
+    margin-bottom: 4px;
+    border-bottom: 1px solid var(--diff-border);
+    font-family: var(--font-mono);
+    font-size: 11px;
+  }
+  .code-browser-breadcrumb-sep {
+    color: var(--text-muted);
+  }
+  .code-browser-breadcrumb-seg {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 1px 3px;
+    border-radius: 3px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+  .code-browser-breadcrumb-seg:hover:not(:disabled) {
+    background: var(--bg-surface-hover);
+    color: var(--text-primary);
+  }
+  .code-browser-breadcrumb-seg:disabled {
+    color: var(--text-primary);
+    font-weight: 600;
+    cursor: default;
+  }
+  .code-browser-tree-empty {
+    padding: 4px 8px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-muted);
+    font-style: italic;
   }
   .code-browser-entry {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
     text-align: left;
-    padding: 2px 8px;
+    padding: 3px 8px;
     background: none;
     border: none;
     cursor: pointer;
@@ -428,9 +518,10 @@
     color: var(--text-primary);
     font-weight: 600;
   }
-  .code-browser-caret {
-    display: inline-block;
-    width: 1em;
+  .code-browser-entry-icon {
+    flex-shrink: 0;
+    font-size: 12px;
+    line-height: 1;
   }
   .code-browser-content {
     flex: 1;
