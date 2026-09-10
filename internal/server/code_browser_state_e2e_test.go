@@ -49,3 +49,21 @@ func TestAPICodeBrowserState_CRUD(t *testing.T) {
 	require.NotNil(t, gotAgain.JSON200)
 	as.Equal("src/kafka/other.cc", gotAgain.JSON200.Path)
 }
+
+func TestAPICodeBrowserState_NotFound(t *testing.T) {
+	client, _, _, _, _ := setupTestServerWithClones(t)
+	ctx := context.Background()
+
+	getResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberCodeBrowserStateWithResponse(
+		ctx, "acme", "widget", 999,
+	)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusNotFound, getResp.StatusCode())
+
+	putResp, err := client.HTTP.PutReposByOwnerByNamePullsByNumberCodeBrowserStateWithResponse(
+		ctx, "acme", "widget", 999,
+		generated.PutReposByOwnerByNamePullsByNumberCodeBrowserStateJSONRequestBody{Path: "src/kafka/server.cc"},
+	)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusNotFound, putResp.StatusCode())
+}
