@@ -77,6 +77,7 @@ function fileEntry(over: Partial<TreeEntry> = {}): TreeEntry {
 function renderPanel(
   overrides: FakeStoreOverrides = {},
   onclose: () => void = vi.fn(),
+  forcePath?: boolean,
 ) {
   const codeBrowser = fakeCodeBrowserStore(overrides);
   const rendered = render(CodeBrowserPanel, {
@@ -86,6 +87,7 @@ function renderPanel(
       number: 1,
       sha: "deadbeef",
       initialPath: "src/a.txt",
+      ...(forcePath !== undefined && { forcePath }),
       onclose,
     },
     context: new Map<symbol, unknown>([[STORES_KEY, { codeBrowser }]]),
@@ -119,6 +121,18 @@ describe("CodeBrowserPanel", () => {
       1,
       "deadbeef",
       "src/a.txt",
+    );
+  });
+
+  it("passes forcePath through to open() when set, to bypass a stale bookmark", () => {
+    const { codeBrowser } = renderPanel({}, vi.fn(), true);
+    expect(codeBrowser.open).toHaveBeenCalledWith(
+      "acme",
+      "widget",
+      1,
+      "deadbeef",
+      "src/a.txt",
+      { forcePath: true },
     );
   });
 

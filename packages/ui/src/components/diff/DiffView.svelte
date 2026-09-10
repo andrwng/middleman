@@ -424,6 +424,7 @@
     {number}
     sha={currentSha}
     initialPath={browsePath ?? diffStore.getActiveFile() ?? ""}
+    forcePath={browsePath !== undefined}
     onclose={() => { codeBrowserOpen = false; browsePath = undefined; }}
   />
 {/if}

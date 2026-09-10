@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { STORES_KEY } from "../../context.js";
 import { createDiffStore } from "../../stores/diff.svelte.js";
 import { createSymbolRefsStore } from "../../stores/symbolRefs.svelte.js";
+import { createCodeBrowserStore } from "../../stores/codeBrowser.svelte.js";
 import type { SymbolHit } from "../../stores/symbolRefs.svelte.js";
 import type { DiffFile as DiffFileType } from "../../api/types.js";
 import type { MiddlemanClient } from "../../types.js";
@@ -448,9 +449,12 @@ describe("DiffView: symbol-refs browse action opens the same code browser panel"
     );
 
     // Exactly one panel mounts, seeded with the hit's own path -- not the
-    // (empty) active-file default the `b` hotkey uses.
+    // (empty) active-file default the `b` hotkey uses -- and forced, so a
+    // stale bookmark from earlier browsing can't silently override it.
     expect(screen.getAllByText("Browse files")).toHaveLength(1);
-    expect(codeBrowserStore.open).toHaveBeenCalledWith("acme", "widget", 7, "sha-head-1", "a.go");
+    expect(codeBrowserStore.open).toHaveBeenCalledWith(
+      "acme", "widget", 7, "sha-head-1", "a.go", { forcePath: true },
+    );
 
     // The symbol-refs gutter itself is untouched -- the row's own
     // reveal-and-jump click behaviour is additive, not replaced.
@@ -485,6 +489,74 @@ describe("DiffView: symbol-refs browse action opens the same code browser panel"
     // Still exactly one panel -- the browse action re-seeded the SAME
     // instance rather than mounting a second one alongside it.
     expect(screen.getAllByText("Browse files")).toHaveLength(1);
-    expect(codeBrowserStore.open).toHaveBeenCalledWith("acme", "widget", 7, "sha-head-1", "a.go");
+    expect(codeBrowserStore.open).toHaveBeenCalledWith(
+      "acme", "widget", 7, "sha-head-1", "a.go", { forcePath: true },
+    );
+  });
+});
+
+// Regression coverage for the bug found in the plan's final e2e task: once
+// any bookmark already exists for this PR (from ordinary browsing), a later
+// "browse this hit" click was silently overridden back to the stale
+// bookmarked file instead of opening the hit's file. Exercised against the
+// REAL codeBrowser store (not the fake used by the tests above) so the
+// bookmark-priority logic itself is on the hook, not just what args
+// DiffView happens to pass to a mock.
+describe("DiffView: symbol-refs browse bypasses a stale bookmark", () => {
+  function bookmarkedCodeBrowserClient(bookmarkedPath: string): MiddlemanClient {
+    return {
+      GET: vi.fn(async (path: string) => {
+        if (path.includes("code-browser-state")) return { data: { path: bookmarkedPath } };
+        if (path.includes("/tree")) return { data: { path: "", entries: [] } };
+        if (path.includes("/blob")) return { data: { content: "", truncated: false } };
+        throw new Error(`unexpected GET ${path}`);
+      }),
+      PUT: vi.fn(async () => ({ data: { path: bookmarkedPath } })),
+      POST: vi.fn(async () => ({ data: undefined, error: undefined })),
+      DELETE: vi.fn(async () => ({ data: undefined, error: undefined })),
+    } as unknown as MiddlemanClient;
+  }
+
+  it("opens the hit's file, not the stale bookmark, when browsing a symbol-refs hit", async () => {
+    installCommitsAndDiffFetch(() => "sha-head-1", [makeDiffFile()]);
+    const client = symbolRefsClient();
+    const diffStore = createDiffStore({ client });
+    const symbolRefsStore = createSymbolRefsStore({ client });
+    // A different file ("b.go") is already bookmarked for this PR, from
+    // earlier ordinary browsing.
+    const codeBrowserStore = createCodeBrowserStore({
+      client: bookmarkedCodeBrowserClient("b.go"),
+    });
+    render(DiffView, {
+      props: { owner: "acme", name: "widget", number: 7 },
+      context: new Map<symbol, unknown>([
+        [STORES_KEY, {
+          diff: diffStore,
+          ai: fakeLifecycleStore(),
+          brief: fakeLifecycleStore(),
+          reviewThreads: fakeReviewThreadsStore(),
+          symbolRefs: symbolRefsStore,
+          codeBrowser: codeBrowserStore,
+          detail: fakeDetailStore(),
+        }],
+      ]),
+    });
+    await waitFor(() => {
+      expect(diffStore.getCurrentCommitSha()).toBe("sha-head-1");
+      expect(diffStore.getDiff()).not.toBeNull();
+    });
+
+    await symbolRefsStore.search("acme", "widget", 7, "sha-head-1", "Foo");
+    await tick();
+
+    await fireEvent.click(
+      screen.getByRole("button", { name: /browse a\.go in the code browser/i, hidden: true }),
+    );
+    await waitFor(() => {
+      expect(codeBrowserStore.path).toBe("a.go");
+    });
+
+    // Never resolves to the stale bookmark.
+    expect(codeBrowserStore.path).not.toBe("b.go");
   });
 });

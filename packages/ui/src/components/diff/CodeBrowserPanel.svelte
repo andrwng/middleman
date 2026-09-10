@@ -8,15 +8,26 @@
     number: number;
     sha: string;
     initialPath: string;
+    // Bypasses any saved bookmark so the panel opens at initialPath
+    // regardless -- set by DiffView when opening via the symbol-refs
+    // gutter's "browse this hit" action, where initialPath is a
+    // specific, deliberately-chosen file rather than a mere fallback
+    // default. Left false for the ordinary toolbar/`b`-hotkey open,
+    // where resuming at the bookmark is the whole point.
+    forcePath?: boolean;
     onclose: () => void;
   }
 
-  const { owner, name, number, sha, initialPath, onclose }: Props = $props();
+  const { owner, name, number, sha, initialPath, forcePath = false, onclose }: Props = $props();
 
   const { codeBrowser: browser } = getStores();
 
   $effect(() => {
-    browser.open(owner, name, number, sha, initialPath);
+    if (forcePath) {
+      browser.open(owner, name, number, sha, initialPath, { forcePath: true });
+    } else {
+      browser.open(owner, name, number, sha, initialPath);
+    }
   });
 
   // Dual-theme token cache, keyed by line index. Mirrors DiffFile.svelte's

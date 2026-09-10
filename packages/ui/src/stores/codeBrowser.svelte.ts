@@ -9,6 +9,17 @@ export interface CodeBrowserStoreOptions {
   client: MiddlemanClient;
 }
 
+export interface OpenCodeBrowserOptions {
+  // Bypasses the saved bookmark, forcing open() to seed at
+  // activeFilePath regardless of what (if anything) is already
+  // bookmarked for this PR. Set by callers that pass a specific,
+  // deliberately-chosen path -- e.g. "browse this hit" from the
+  // symbol-refs gutter -- as opposed to callers that pass a mere
+  // fallback default (e.g. the diff's active file), for whom resuming
+  // at the bookmark is the whole point.
+  forcePath?: boolean;
+}
+
 function detail(err: unknown, fallback: string): string {
   return (err as { detail?: string } | undefined)?.detail ?? fallback;
 }
@@ -69,6 +80,7 @@ export function createCodeBrowserStore(opts: CodeBrowserStoreOptions) {
     num: number,
     s: string,
     activeFilePath: string,
+    opts?: OpenCodeBrowserOptions,
   ): Promise<void> {
     owner = o;
     name = n;
@@ -82,7 +94,7 @@ export function createCodeBrowserStore(opts: CodeBrowserStoreOptions) {
       { params: { path: { owner, name, number } } },
     );
     const bookmarked = data?.path;
-    path = bookmarked && bookmarked !== "" ? bookmarked : activeFilePath;
+    path = !opts?.forcePath && bookmarked && bookmarked !== "" ? bookmarked : activeFilePath;
 
     await loadTree("");
     if (path) await loadFile(path);

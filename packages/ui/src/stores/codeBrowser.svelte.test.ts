@@ -60,6 +60,26 @@ describe("codeBrowser store", () => {
     expect(store.path).toBe("src/bookmarked.txt");
   });
 
+  // The bug this pins: a caller that passes a specific, deliberately-chosen
+  // path (e.g. "browse this hit" from the symbol-refs gutter) must not have
+  // it silently overridden by a stale bookmark left over from ordinary
+  // browsing of the same PR.
+  it("forcePath bypasses an existing bookmark, seeding at activeFilePath instead", async () => {
+    const client = stubClient();
+    (client.GET as ReturnType<typeof vi.fn>).mockImplementation(async (path: string) => {
+      if (path.includes("code-browser-state")) return { data: { path: "src/bookmarked.txt" } };
+      if (path.includes("/tree")) return { data: { path: "", entries: [] } };
+      if (path.includes("/blob")) return { data: { content: "hit content", truncated: false } };
+      throw new Error(`unexpected GET ${path}`);
+    });
+
+    const store = createCodeBrowserStore({ client });
+    await store.open("acme", "widget", 1, "deadbeef", "src/hit.txt", { forcePath: true });
+
+    expect(store.path).toBe("src/hit.txt");
+    expect(store.content).toBe("hit content");
+  });
+
   it("loads the root directory listing into entriesByDir on open", async () => {
     const entries = [{ name: "src", path: "src", type: "dir" }];
     const client = stubClient();
