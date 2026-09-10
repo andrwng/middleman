@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -37,6 +38,34 @@ func TestTree_NonexistentSHA(t *testing.T) {
 	_, err := mgr.Tree(context.Background(), host, owner, name, "0000000000000000000000000000000000000000", "")
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrNotFound))
+}
+
+func TestTree_Subdirectory(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	mgr, host, owner, name, sha := setupDiffRepoForTree(t)
+
+	// List entries in the "internal" subdirectory
+	entries, err := mgr.Tree(context.Background(), host, owner, name, sha, "internal")
+	require.NoError(err)
+	require.NotEmpty(entries)
+
+	// Find the handler.go entry
+	var found bool
+	for _, e := range entries {
+		assert.NotEmpty(e.Name)
+		assert.Contains([]string{"dir", "file"}, e.Type)
+		assert.True(strings.HasPrefix(e.Path, "internal/"), "path should be prefixed with directory name")
+
+		if e.Name == "handler.go" {
+			found = true
+			assert.Equal("handler.go", e.Name)
+			assert.Equal("internal/handler.go", e.Path)
+			assert.Equal("file", e.Type)
+		}
+	}
+	assert.True(found, "should find handler.go in internal directory")
 }
 
 func setupDiffRepoForTree(t *testing.T) (*Manager, string, string, string, string) {

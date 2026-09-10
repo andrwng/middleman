@@ -21,7 +21,7 @@ func (m *Manager) Tree(ctx context.Context, host, owner, name, sha, path string)
 
 	out, err := m.git(ctx, host, dir, "ls-tree", rev)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("ls-tree %s:%s: %w", sha, path, err)
 	}
 
 	var entries []TreeEntry
