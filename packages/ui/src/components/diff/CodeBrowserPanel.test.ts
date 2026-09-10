@@ -148,4 +148,9 @@ describe("CodeBrowserPanel", () => {
     renderPanel({ status: "missing" });
     expect(screen.getByText(/doesn't exist/i)).toBeTruthy();
   });
+
+  it("renders highlighted tokens instead of raw <pre> text for a known language", async () => {
+    renderPanel({ path: "src/a.ts", status: "ready", content: "const x = 1;" });
+    expect(await screen.findByText("const")).toBeTruthy();
+  });
 });

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { getStores } from "../../context.js";
+  import { tokenizeLineDual, langFromPath, type DualToken } from "../../utils/highlight.js";
 
   interface Props {
     owner: string;
@@ -17,6 +18,64 @@
   $effect(() => {
     browser.open(owner, name, number, sha, initialPath);
   });
+
+  // Dual-theme token cache, keyed by line index. Mirrors DiffFile.svelte's
+  // approach: each span carries both colors as CSS custom properties, so
+  // theme switch is pure CSS (zero DOM updates, zero re-renders).
+  // Tokenization happens once per line using Shiki's native dual-theme API.
+  let lines = $state<string[]>([]);
+  let tokens = $state<Map<number, DualToken[]>>(new Map());
+  let tokenVersion = 0;
+
+  // Tokenize in small batches to avoid blocking the main thread. Matches
+  // DiffFile.svelte's BATCH_SIZE.
+  const BATCH_SIZE = 50;
+
+  // Re-tokenize whenever the browser's file content or path changes.
+  $effect(() => {
+    const version = ++tokenVersion;
+    const content = browser.content;
+    if (content == null) {
+      lines = [];
+      tokens = new Map();
+      return;
+    }
+    const currentLines = content.split("\n");
+    lines = currentLines;
+    const lang = langFromPath(browser.path ?? "");
+    tokens = new Map();
+    void tokenizeAllLines(currentLines, lang, version);
+  });
+
+  async function tokenizeAllLines(
+    currentLines: string[],
+    lang: string | undefined,
+    version: number,
+  ): Promise<void> {
+    const next = new Map<number, DualToken[]>();
+    for (let i = 0; i < currentLines.length; i += BATCH_SIZE) {
+      // Bail out if a newer tokenization run has started (e.g. the reader
+      // navigated to a different file mid-tokenize).
+      if (version !== tokenVersion) return;
+      const batch = currentLines.slice(i, i + BATCH_SIZE);
+      const results = await Promise.all(
+        batch.map(async (line, bi) => ({
+          idx: i + bi,
+          spans: await tokenizeLineDual(line, lang),
+        })),
+      );
+      if (version !== tokenVersion) return;
+      for (const r of results) {
+        next.set(r.idx, r.spans);
+      }
+      // Update reactively after each batch so lines get highlighted progressively.
+      tokens = new Map(next);
+      // Yield to the browser between batches.
+      if (i + BATCH_SIZE < currentLines.length) {
+        await new Promise((r) => requestAnimationFrame(r));
+      }
+    }
+  }
 
   // Directories the reader has expanded. The store lazily loads a
   // directory's children the first time it is expanded (loadTree keys
@@ -85,7 +144,11 @@
         {:else if browser.status === "error"}
           <p class="code-browser-empty">{browser.error ?? "Failed to load file"}</p>
         {:else}
-          <pre class="code-browser-file">{browser.content ?? ""}</pre>
+          <div class="code-browser-file">
+            {#each lines as line, i (i)}
+              <pre class="code-browser-line">{#each tokens.get(i) ?? [{ content: line }] as span}<span style:--dc={span.darkColor} style:--lc={span.lightColor}>{span.content}</span>{/each}</pre>
+            {/each}
+          </div>
         {/if}
       </div>
     </div>
@@ -166,7 +229,24 @@
   }
   .code-browser-file {
     font-family: var(--font-mono);
-    white-space: pre;
+  }
+  .code-browser-line {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
     margin: 0;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 20px;
+    color: var(--diff-text);
+    background: transparent;
+    border: none;
+  }
+  /* Token colors via CSS custom properties — theme switch is pure CSS,
+     no JS re-renders needed. Each span carries --dc (dark) and --lc (light). */
+  .code-browser-line span {
+    color: var(--lc, inherit);
+  }
+  :global(html.dark) .code-browser-line span {
+    color: var(--dc, inherit);
   }
 </style>
