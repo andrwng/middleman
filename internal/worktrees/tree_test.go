@@ -60,7 +60,6 @@ func TestTree_Subdirectory(t *testing.T) {
 
 	dir := t.TempDir()
 	setupRepoWithRemote(t, dir, "main")
-	headSHA := gitHeadT(t, dir)
 
 	// Create a subdirectory structure
 	subdir := filepath.Join(dir, "subdir")
@@ -69,7 +68,7 @@ func TestTree_Subdirectory(t *testing.T) {
 	require.NoError(os.WriteFile(filepath.Join(subdir, "file2.txt"), []byte("content2\n"), 0o644))
 	runGitT(t, dir, "add", "subdir/")
 	runGitT(t, dir, "commit", "-m", "add subdir")
-	headSHA = gitHeadT(t, dir)
+	headSHA := gitHeadT(t, dir)
 
 	// Test with WorkingTreeSentinel
 	entries, err := Tree(ctx, dir, WorkingTreeSentinel, "subdir")
@@ -107,6 +106,27 @@ func TestTree_NonexistentPath(t *testing.T) {
 	// Test with a real SHA
 	headSHA := gitHeadT(t, dir)
 	_, err = Tree(ctx, dir, headSHA, "does/not/exist")
+	require.Error(err)
+	require.True(errors.Is(err, ErrNotFound))
+}
+
+func TestTree_PathTraversalRejected(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on PATH")
+	}
+	require := require.New(t)
+	ctx := context.Background()
+
+	dir := t.TempDir()
+	setupRepoWithRemote(t, dir, "main")
+
+	// Create a secret file outside the worktree
+	root := filepath.Dir(dir)
+	secretFile := filepath.Join(root, "secret.txt")
+	require.NoError(os.WriteFile(secretFile, []byte("secret-content\n"), 0o644))
+
+	// Path traversal with ".." should be rejected with ErrNotFound
+	_, err := Tree(ctx, dir, WorkingTreeSentinel, "../secret.txt")
 	require.Error(err)
 	require.True(errors.Is(err, ErrNotFound))
 }

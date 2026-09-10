@@ -24,7 +24,14 @@ func (m *Manager) Tree(ctx context.Context, host, owner, name, sha, path string)
 		return nil, fmt.Errorf("ls-tree %s:%s: %w", sha, path, err)
 	}
 
-	var entries []TreeEntry
+	return ParseLsTree(out, path)
+}
+
+// ParseLsTree parses `git ls-tree` output into TreeEntry elements.
+// The path parameter adjusts entry Path fields to include the prefix directory.
+// Format: <mode> SP <type> SP <sha>\t<name>
+func ParseLsTree(out []byte, path string) ([]TreeEntry, error) {
+	entries := make([]TreeEntry, 0) // non-nil empty slice
 	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
 		if line == "" {
 			continue

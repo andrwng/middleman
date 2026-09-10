@@ -2,7 +2,6 @@ package worktrees
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -67,7 +66,7 @@ func treeFromRev(ctx context.Context, worktreePath, sha, path string) ([]gitclon
 		}
 		return nil, err
 	}
-	return parseLsTree(out, path)
+	return gitclone.ParseLsTree(out, path)
 }
 
 // isRevNotFoundError detects git rev/path not-found errors by string-matching
@@ -80,34 +79,3 @@ func isRevNotFoundError(err error) bool {
 		strings.Contains(msg, "Not a valid object name")
 }
 
-// parseLsTree parses `git ls-tree` output, returning TreeEntry elements
-// with Path fields adjusted to include the prefix directory when path != "".
-// Format: <mode> SP <type> SP <sha>\t<name>
-func parseLsTree(out []byte, path string) ([]gitclone.TreeEntry, error) {
-	var entries []gitclone.TreeEntry
-	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
-		if line == "" {
-			continue
-		}
-		// <mode> SP <type> SP <sha>\t<name>
-		tabIdx := strings.IndexByte(line, '\t')
-		if tabIdx < 0 {
-			return nil, fmt.Errorf("worktrees: unexpected ls-tree line %q", line)
-		}
-		meta, entryName := line[:tabIdx], line[tabIdx+1:]
-		fields := strings.Fields(meta)
-		if len(fields) < 2 {
-			return nil, fmt.Errorf("worktrees: unexpected ls-tree metadata %q", meta)
-		}
-		entryType := "file"
-		if fields[1] == "tree" {
-			entryType = "dir"
-		}
-		entryPath := entryName
-		if path != "" {
-			entryPath = path + "/" + entryName
-		}
-		entries = append(entries, gitclone.TreeEntry{Name: entryName, Path: entryPath, Type: entryType})
-	}
-	return entries, nil
-}
