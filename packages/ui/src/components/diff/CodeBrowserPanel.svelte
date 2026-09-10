@@ -323,7 +323,18 @@
               class="code-browser-entry code-browser-entry--dir"
               onclick={() => openDir(entry.path)}
             >
-              <span class="code-browser-entry-icon">📁</span>
+              <svg
+                class="code-browser-entry-icon code-browser-entry-icon--dir"
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <path
+                  d="M1.75 1A1.75 1.75 0 000 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0016 13.25v-8.5A1.75 1.75 0 0014.25 3H7.5a.25.25 0 01-.2-.1l-.9-1.2C6.07 1.26 5.55 1 5 1H1.75z"
+                />
+              </svg>
               <span class="code-browser-entry-name">{entry.name}</span>
             </button>
           {:else}
@@ -333,7 +344,19 @@
               class:code-browser-entry--active={browser.path === entry.path}
               onclick={() => browser.navigateTo(entry.path)}
             >
-              <span class="code-browser-entry-icon">📄</span>
+              <svg
+                class="code-browser-entry-icon code-browser-entry-icon--file"
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <path
+                  fill-rule="evenodd"
+                  d="M2 1.75C2 .784 2.784 0 3.75 0h6.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v9.586A1.75 1.75 0 0113.25 16h-9.5A1.75 1.75 0 012 14.25Zm1.75-.25a.25.25 0 00-.25.25v12.5c0 .138.112.25.25.25h9.5a.25.25 0 00.25-.25V6.5h-3a1 1 0 01-1-1v-3ZM9.5 4.5V1.87L12.13 4.5Z"
+                />
+              </svg>
               <span class="code-browser-entry-name">{entry.name}</span>
             </button>
           {/if}
@@ -529,8 +552,12 @@
   }
   .code-browser-entry-icon {
     flex-shrink: 0;
-    font-size: 12px;
-    line-height: 1;
+  }
+  .code-browser-entry-icon--dir {
+    color: var(--accent-blue);
+  }
+  .code-browser-entry-icon--file {
+    color: var(--text-muted);
   }
   .code-browser-content {
     flex: 1;
