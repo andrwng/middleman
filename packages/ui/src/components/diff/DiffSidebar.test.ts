@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { STORES_KEY } from "../../context.js";
+import { setReviewNavCollapsed } from "../../lib/uiState.svelte.js";
 import DiffSidebar from "./DiffSidebar.svelte";
 
 function diffStub() {
@@ -76,6 +77,13 @@ function worktreeSessionStub() {
   };
 }
 
+function codeBrowserStub(isOpen = false) {
+  return {
+    isOpen,
+    navigateTo: vi.fn(async () => {}),
+  };
+}
+
 // ReviewCommentsSection (mounted in the sidebar) reads detail + viewer at
 // render; provide empty stubs so it renders its empty state without crashing.
 function detailStub() {
@@ -90,23 +98,27 @@ function viewerStub() {
   };
 }
 
-function renderSidebar() {
-  return render(DiffSidebar, {
+function renderSidebar(overrides: { diff?: ReturnType<typeof diffStub>; codeBrowser?: ReturnType<typeof codeBrowserStub> } = {}) {
+  const diff = overrides.diff ?? diffStub();
+  const codeBrowser = overrides.codeBrowser ?? codeBrowserStub();
+  const rendered = render(DiffSidebar, {
     context: new Map<symbol, unknown>([
       [
         STORES_KEY,
         {
-          diff: diffStub(),
+          diff,
           pulls: pullsStub(),
           ai: aiStub(),
           reviewThreads: reviewThreadsStub(),
           worktreeSession: worktreeSessionStub(),
           detail: detailStub(),
           viewer: viewerStub(),
+          codeBrowser,
         },
       ],
     ]),
   });
+  return { ...rendered, diff, codeBrowser };
 }
 
 beforeEach(() => {
@@ -136,5 +148,37 @@ describe("DiffSidebar collapse-to-rail", () => {
     const rail = container.querySelector(".diff-sidebar--rail");
     expect(rail).toBeTruthy();
     expect(rail?.textContent ?? "").toMatch(/0c.+0d.+0q.+1f/);
+  });
+});
+
+describe("DiffSidebar file click", () => {
+  beforeEach(() => {
+    // isReviewNavCollapsed's backing $state is a module-level singleton,
+    // initialized once at module load and mutated in place by
+    // toggleReviewNavCollapsed -- localStorage.clear() alone (the other
+    // beforeEach above) doesn't reset it, so a rail-collapsed assertion
+    // earlier in this file leaves it collapsed for every test after,
+    // hiding the file rows these tests click on.
+    setReviewNavCollapsed(false);
+  });
+
+  it("requests the diff scroll but does not touch the code browser when it's closed", async () => {
+    const { diff, codeBrowser } = renderSidebar({ codeBrowser: codeBrowserStub(false) });
+    await fireEvent.click(screen.getByText("a.go"));
+
+    expect(diff.requestScrollToFile).toHaveBeenCalledWith("a.go");
+    expect(codeBrowser.navigateTo).not.toHaveBeenCalled();
+  });
+
+  // The code browser panel takes over the diff area's own slot while
+  // open, so requestScrollToFile alone has nothing visible to scroll --
+  // this is what makes clicking a sidebar file open it in the code
+  // viewer instead, matching what's actually on screen.
+  it("also opens the file in the code browser when it's open", async () => {
+    const { diff, codeBrowser } = renderSidebar({ codeBrowser: codeBrowserStub(true) });
+    await fireEvent.click(screen.getByText("a.go"));
+
+    expect(diff.requestScrollToFile).toHaveBeenCalledWith("a.go");
+    expect(codeBrowser.navigateTo).toHaveBeenCalledWith("a.go");
   });
 });

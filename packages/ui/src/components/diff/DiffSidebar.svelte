@@ -14,7 +14,22 @@
   // Reusable file-tree + commit-list panel for the diff Files view.
   // Mounted by PRListView and PullDetail as the left pane of the
   // Files tab.
-  const { diff, pulls, ai } = getStores();
+  const { diff, pulls, ai, codeBrowser } = getStores();
+
+  // Clicking a file always requests the diff scroll (consumed once
+  // .diff-area is mounted -- which it isn't while the code browser panel
+  // is open, since the panel takes over that same slot, so this request
+  // just waits and fires once the panel closes). Additionally opening the
+  // file in the code browser only when it's already open mirrors how the
+  // symbol-refs gutter's "browse this hit" action works: this sidebar
+  // doesn't own codeBrowserOpen (that's private DiffView state), but the
+  // store's own isOpen tracks it just as reliably, since DiffView's Close
+  // handling always calls browser.close() in the same click that flips
+  // codeBrowserOpen false.
+  function onFileClick(path: string): void {
+    diff.requestScrollToFile(path);
+    if (codeBrowser.isOpen) void codeBrowser.navigateTo(path);
+  }
 
   // Persisted collapse-to-rail state. When collapsed we render a
   // narrow vertical rail with a tiny counts label. The outer
@@ -189,7 +204,7 @@
             class:diff-file-row--active={diff.getActiveFile() === f.path}
             class:diff-file-row--nested={!!group.dir}
             class:diff-file-row--viewed={diff.isFileReviewed(f.path)}
-            onclick={() => diff.requestScrollToFile(f.path)}
+            onclick={() => onFileClick(f.path)}
             title={f.path}
           >
             <span class="diff-file-status" style="color: {statusColor(f.status)}">{statusLetter(f.status)}</span>
