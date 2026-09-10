@@ -1,7 +1,8 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { STORES_KEY } from "../../context.js";
-import type { CodeBrowserStatus, TreeEntry } from "../../stores/codeBrowser.svelte.js";
+import { createCodeBrowserStore, type CodeBrowserStatus, type TreeEntry } from "../../stores/codeBrowser.svelte.js";
+import type { MiddlemanClient } from "../../types.js";
 
 // Mock highlight utils to avoid loading real Shiki (WASM + grammar) in
 // tests, matching the convention established in DiffFile.test.ts. Returns
@@ -376,6 +377,70 @@ describe("CodeBrowserPanel", () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  // The highlight must be persistent, not timed (matching
+  // scrollToDiffLine.ts's flashDiffLine and its documented reason: a
+  // fixed timeout can fire mid-smooth-scroll, decaying the highlight
+  // before or during the landing it was meant to mark). It's cleared
+  // only by navigating to a different file. Uses the REAL store (not
+  // the fake used elsewhere in this file) so navigateTo genuinely
+  // updates browser.path/content and the reveal effect's clearing logic
+  // is exercised end-to-end, not asserted by reading the source.
+  it("keeps the highlight until a different file is opened, never clears it on its own", async () => {
+    const scrollIntoView = vi.fn();
+    HTMLElement.prototype.scrollIntoView = scrollIntoView;
+    const client = {
+      GET: vi.fn(async (path: string, opts: { params: { query: Record<string, unknown> } }) => {
+        if (path.includes("code-browser-state")) return { data: { path: "" } };
+        if (path.includes("/tree")) return { data: { path: "", entries: [] } };
+        if (path.includes("/blob")) {
+          const p = opts.params.query.path;
+          return {
+            data: { content: p === "src/a.txt" ? "one\ntwo\nthree" : "four\nfive", truncated: false },
+          };
+        }
+        throw new Error(`unexpected GET ${path}`);
+      }),
+      PUT: vi.fn(async () => ({ data: { path: "src/other.txt" } })),
+      POST: vi.fn(),
+      DELETE: vi.fn(),
+    } as unknown as MiddlemanClient;
+    const codeBrowser = createCodeBrowserStore({ client });
+
+    render(CodeBrowserPanel, {
+      props: {
+        owner: "acme",
+        name: "widget",
+        number: 1,
+        sha: "deadbeef",
+        initialPath: "src/a.txt",
+        reveal: { path: "src/a.txt", line: 2, nonce: 1 },
+        onclose: vi.fn(),
+      },
+      context: new Map<symbol, unknown>([[STORES_KEY, { codeBrowser }]]),
+    });
+
+    await screen.findByText("two");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(document.querySelector('[data-line="2"]')?.className).toContain(
+      "code-browser-line-row--flash",
+    );
+
+    // Still there well past where the old 1500ms timeout would have
+    // cleared it -- nothing times this out.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(document.querySelector('[data-line="2"]')?.className).toContain(
+      "code-browser-line-row--flash",
+    );
+
+    // Navigating to a different file is what actually clears it -- its
+    // own line 2 ("five") must not inherit the previous file's highlight.
+    await codeBrowser.navigateTo("src/other.txt");
+    await screen.findByText("five");
+    expect(document.querySelector('[data-line="2"]')?.className).not.toContain(
+      "code-browser-line-row--flash",
+    );
   });
 
   it("opens the Go to file palette on 't' and navigates to the selected file", async () => {

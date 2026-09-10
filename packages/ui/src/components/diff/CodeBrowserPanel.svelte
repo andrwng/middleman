@@ -87,6 +87,12 @@
   $effect(() => {
     const version = ++tokenVersion;
     const content = browser.content;
+    // A new file means any highlighted line belonged to the previous one
+    // -- clear it here rather than on a timer (see the persistent-vs-timed
+    // rationale on flashedLine below). If a reveal request is pending for
+    // THIS file, the reveal effect (which runs after `lines` updates)
+    // re-sets it immediately after.
+    flashedLine = null;
     if (content == null) {
       lines = [];
       tokens = new Map();
@@ -178,11 +184,18 @@
   const currentEntries = $derived(browser.entriesByDir.get(currentDir));
 
   // --- Jump-to-line reveal (symbol-refs "browse this hit") ---
+  //
+  // Matches scrollToDiffLine.ts's flashDiffLine as closely as this
+  // panel's flat (non-virtualized) rendering allows: smooth scrolling,
+  // and a highlight that's cleared by the next navigation event rather
+  // than a timer. flashDiffLine's own comment explains why a timed flash
+  // is wrong here too: a long smooth-scroll can still be travelling when
+  // a fixed timeout fires, so the highlight decays before -- or during --
+  // the landing it was meant to mark.
 
   let flashedLine = $state<number | null>(null);
   let contentEl = $state<HTMLDivElement | undefined>();
   let lastHandledRevealNonce = -1;
-  let flashTimeout: ReturnType<typeof setTimeout> | undefined;
 
   // Waits for `reveal`'s target path to actually be the open file (it may
   // be issued before navigateTo's fetch resolves) and for that file's
@@ -197,12 +210,8 @@
     flashedLine = line;
     void tick().then(() => {
       const el = contentEl?.querySelector(`[data-line="${line}"]`);
-      el?.scrollIntoView?.({ block: "center" });
+      el?.scrollIntoView?.({ block: "center", behavior: "smooth" });
     });
-    clearTimeout(flashTimeout);
-    flashTimeout = setTimeout(() => {
-      flashedLine = null;
-    }, 1500);
     onRevealed?.();
   });
 
