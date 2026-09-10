@@ -93,6 +93,69 @@ func TestAPITree_RootAndSubdir(t *testing.T) {
 	assert.Equal(generated.TreeEntryJSON{Name: "readme.md", Path: "docs/readme.md", Type: "file"}, subEntries[0])
 }
 
+// TestAPITree_Recursive reuses TestAPITree_RootAndSubdir's nested-directory
+// fixture setup to prove ?recursive=true flattens the whole tree to file
+// paths, ignoring Path, rather than listing one directory's immediate
+// entries.
+func TestAPITree_Recursive(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+
+	dir := t.TempDir()
+	database, err := db.Open(filepath.Join(dir, "test.db"))
+	require.NoError(err)
+	t.Cleanup(func() { database.Close() })
+
+	bareDir := filepath.Join(dir, "clones")
+	require.NoError(os.MkdirAll(bareDir, 0o755))
+	bare := filepath.Join(bareDir, "github.com", "acme", "widget.git")
+
+	work := filepath.Join(dir, "work")
+	runGit(t, dir, "init", "--bare", "--initial-branch=main", bare)
+	runGit(t, dir, "clone", bare, work)
+	runGit(t, work, "config", "user.email", "test@test.com")
+	runGit(t, work, "config", "user.name", "Test")
+
+	mkFile := func(rel, body string) {
+		full := filepath.Join(work, rel)
+		require.NoError(os.MkdirAll(filepath.Dir(full), 0o755))
+		require.NoError(os.WriteFile(full, []byte(body), 0o644))
+	}
+	mkFile("root.txt", "at the root\n")
+	mkFile("docs/readme.md", "# nested doc\n")
+
+	runGit(t, work, "add", ".")
+	runGit(t, work, "commit", "-m", "seed")
+	runGit(t, work, "push", "origin", "main")
+	headSHA := testGitSHA(t, work, "HEAD")
+
+	clones := gitclone.New(bareDir, nil)
+	mock := &mockGH{}
+	repos := []ghclient.RepoRef{{Owner: "acme", Name: "widget", PlatformHost: "github.com"}}
+	syncer := ghclient.NewSyncer(map[string]ghclient.Client{"github.com": mock}, database, nil, repos, time.Minute, nil, nil)
+	t.Cleanup(syncer.Stop)
+	srv := New(database, syncer, nil, "/", nil, ServerOptions{Clones: clones})
+	seedPR(t, database, "acme", "widget", 1)
+	client := setupTestClient(t, srv)
+	ctx := context.Background()
+
+	recursive := true
+	resp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberTreeWithResponse(
+		ctx, "acme", "widget", 1,
+		&generated.GetReposByOwnerByNamePullsByNumberTreeParams{Sha: &headSHA, Recursive: &recursive})
+	require.NoError(err)
+	require.Equal(http.StatusOK, resp.StatusCode())
+	require.NotNil(resp.JSON200)
+	assert.Equal("", resp.JSON200.Path, "recursive listing ignores Path")
+	require.NotNil(resp.JSON200.Entries)
+	entries := *resp.JSON200.Entries
+	assert.Contains(entries, generated.TreeEntryJSON{Name: "root.txt", Path: "root.txt", Type: "file"})
+	assert.Contains(entries, generated.TreeEntryJSON{Name: "readme.md", Path: "docs/readme.md", Type: "file"})
+	for _, e := range entries {
+		assert.Equal("file", e.Type, "recursive listing must never include a dir entry")
+	}
+}
+
 func TestAPITree_NonexistentPath(t *testing.T) {
 	client, _, mergeBase, _, _ := setupTestServerWithClones(t)
 	ctx := context.Background()
@@ -199,7 +262,25 @@ func TestAPILocalDispatchTreeServesWorktreeFiles(t *testing.T) {
 	require.NotNil(wtResp.JSON200.Entries)
 	assert.Contains(*wtResp.JSON200.Entries, generated.TreeEntryJSON{Name: "untracked.txt", Path: "untracked.txt", Type: "file"})
 
-	// 4. Missing path: 404 (not 502).
+	// 4. Recursive listing at HEAD SHA: every file flattened, including
+	// the nested one, still no untracked.txt (HEAD, not working tree).
+	recursive := true
+	recResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberTreeWithResponse(
+		ctx, "local", "demo", w.ID,
+		&generated.GetReposByOwnerByNamePullsByNumberTreeParams{Sha: &headSHA, Recursive: &recursive})
+	require.NoError(err)
+	require.Equal(http.StatusOK, recResp.StatusCode())
+	require.NotNil(recResp.JSON200)
+	require.NotNil(recResp.JSON200.Entries)
+	recEntries := *recResp.JSON200.Entries
+	assert.Contains(recEntries, generated.TreeEntryJSON{Name: "doc.md", Path: "doc.md", Type: "file"})
+	assert.Contains(recEntries, generated.TreeEntryJSON{Name: "nested.txt", Path: "sub/nested.txt", Type: "file"})
+	for _, e := range recEntries {
+		assert.Equal("file", e.Type, "recursive listing must never include a dir entry")
+		assert.NotEqual("untracked.txt", e.Name, "HEAD recursive listing should not see uncommitted files")
+	}
+
+	// 4a. Missing path: 404 (not 502).
 	missingPath := "does-not-exist"
 	missResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberTreeWithResponse(
 		ctx, "local", "demo", w.ID,

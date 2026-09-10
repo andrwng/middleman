@@ -424,14 +424,23 @@ func (s *Server) getTreeLocal(
 	if err != nil {
 		return nil, huma.Error404NotFound("worktree not found")
 	}
-	entries, err := worktrees.Tree(ctx, w.Path, input.SHA, input.Path)
+	var entries []gitclone.TreeEntry
+	if input.Recursive {
+		entries, err = worktrees.TreeRecursive(ctx, w.Path, input.SHA)
+	} else {
+		entries, err = worktrees.Tree(ctx, w.Path, input.SHA, input.Path)
+	}
 	if err != nil {
 		if errors.Is(err, worktrees.ErrNotFound) {
 			return nil, huma.Error404NotFound("path not found: " + err.Error())
 		}
 		return nil, huma.Error502BadGateway("read tree: " + err.Error())
 	}
-	return &getTreeOutput{Body: treeResponse{Path: input.Path, Entries: toTreeEntryJSON(entries)}}, nil
+	responsePath := input.Path
+	if input.Recursive {
+		responsePath = ""
+	}
+	return &getTreeOutput{Body: treeResponse{Path: responsePath, Entries: toTreeEntryJSON(entries)}}, nil
 }
 
 // getFilesLocal returns the lightweight file list for a worktree's

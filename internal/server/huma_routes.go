@@ -2507,11 +2507,12 @@ func (s *Server) getBlob(ctx context.Context, input *getBlobInput) (*getBlobOutp
 // --- Tree (directory listing for the code browser panel) ---
 
 type getTreeInput struct {
-	Owner  string `path:"owner"`
-	Name   string `path:"name"`
-	Number int    `path:"number"`
-	Path   string `query:"path" doc:"Directory path within the repo, empty for root"`
-	SHA    string `query:"sha"  doc:"Commit/tree SHA to list"`
+	Owner     string `path:"owner"`
+	Name      string `path:"name"`
+	Number    int    `path:"number"`
+	Path      string `query:"path" doc:"Directory path within the repo, empty for root"`
+	SHA       string `query:"sha"  doc:"Commit/tree SHA to list"`
+	Recursive bool   `query:"recursive" doc:"List every file in the repo, flattened, ignoring Path. For the code browser's fuzzy file finder."`
 }
 
 type getTreeOutput struct{ Body treeResponse }
@@ -2544,14 +2545,24 @@ func (s *Server) getTree(ctx context.Context, input *getTreeInput) (*getTreeOutp
 	}
 
 	host := s.syncer.HostForRepo(input.Owner, input.Name)
-	entries, err := s.clones.Tree(ctx, host, input.Owner, input.Name, input.SHA, input.Path)
+	var entries []gitclone.TreeEntry
+	var err error
+	if input.Recursive {
+		entries, err = s.clones.TreeRecursive(ctx, host, input.Owner, input.Name, input.SHA)
+	} else {
+		entries, err = s.clones.Tree(ctx, host, input.Owner, input.Name, input.SHA, input.Path)
+	}
 	if err != nil {
 		if errors.Is(err, gitclone.ErrNotFound) {
 			return nil, huma.Error404NotFound("path not found: " + err.Error())
 		}
 		return nil, huma.Error502BadGateway("read tree: " + err.Error())
 	}
-	return &getTreeOutput{Body: treeResponse{Path: input.Path, Entries: toTreeEntryJSON(entries)}}, nil
+	responsePath := input.Path
+	if input.Recursive {
+		responsePath = ""
+	}
+	return &getTreeOutput{Body: treeResponse{Path: responsePath, Entries: toTreeEntryJSON(entries)}}, nil
 }
 
 func toTreeEntryJSON(entries []gitclone.TreeEntry) []treeEntryJSON {

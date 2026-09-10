@@ -1447,6 +1447,9 @@ type GetReposByOwnerByNamePullsByNumberTreeParams struct {
 
 	// Sha Commit/tree SHA to list
 	Sha *string `form:"sha,omitempty" json:"sha,omitempty"`
+
+	// Recursive List every file in the repo, flattened, ignoring Path. For the code browser's fuzzy file finder.
+	Recursive *bool `form:"recursive,omitempty" json:"recursive,omitempty"`
 }
 
 // ListStacksParams defines parameters for ListStacks.
@@ -7787,6 +7790,22 @@ func NewGetReposByOwnerByNamePullsByNumberTreeRequest(server string, owner strin
 		if params.Sha != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "sha", *params.Sha, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Recursive != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "recursive", *params.Recursive, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err

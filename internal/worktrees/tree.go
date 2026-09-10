@@ -76,6 +76,7 @@ func treeFromRev(ctx context.Context, worktreePath, sha, path string) ([]gitclon
 func isRevNotFoundError(err error) bool {
 	msg := err.Error()
 	return strings.Contains(msg, "does not exist") ||
-		strings.Contains(msg, "Not a valid object name")
+		strings.Contains(msg, "Not a valid object name") ||
+		strings.Contains(msg, "not a tree object")
 }
 

@@ -5383,6 +5383,8 @@ export interface operations {
                 path?: string;
                 /** @description Commit/tree SHA to list */
                 sha?: string;
+                /** @description List every file in the repo, flattened, ignoring Path. For the code browser's fuzzy file finder. */
+                recursive?: boolean;
             };
             header?: never;
             path: {

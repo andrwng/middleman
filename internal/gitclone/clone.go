@@ -210,5 +210,6 @@ func isNotFoundError(stderr string) bool {
 		strings.Contains(s, "bad object") ||
 		strings.Contains(s, "not a valid object name") ||
 		strings.Contains(s, "not a valid commit name") ||
-		strings.Contains(s, "does not exist")
+		strings.Contains(s, "does not exist") ||
+		strings.Contains(s, "not a tree object")
 }
