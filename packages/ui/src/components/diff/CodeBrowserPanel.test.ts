@@ -3,6 +3,25 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { STORES_KEY } from "../../context.js";
 import type { CodeBrowserStatus, TreeEntry } from "../../stores/codeBrowser.svelte.js";
 
+// Mock highlight utils to avoid loading real Shiki (WASM + grammar) in
+// tests, matching the convention established in DiffFile.test.ts. Returns
+// deterministic dual-theme tokens for the one line this suite highlights,
+// so both the token-boundary assertion and the dark/light color-wiring
+// assertion below are exercised against fixed data rather than Shiki's
+// actual keyword tokenization.
+vi.mock("../../utils/highlight.js", () => ({
+  langFromPath: (path: string) => (path.endsWith(".ts") ? "typescript" : undefined),
+  tokenizeLineDual: (code: string) =>
+    Promise.resolve(
+      code === "const x = 1;"
+        ? [
+            { content: "const", darkColor: "#ff7b72", lightColor: "#cf222e" },
+            { content: " x = 1;" },
+          ]
+        : [{ content: code }],
+    ),
+}));
+
 import CodeBrowserPanel from "./CodeBrowserPanel.svelte";
 
 interface FakeStoreOverrides {
@@ -151,6 +170,12 @@ describe("CodeBrowserPanel", () => {
 
   it("renders highlighted tokens instead of raw <pre> text for a known language", async () => {
     renderPanel({ path: "src/a.ts", status: "ready", content: "const x = 1;" });
-    expect(await screen.findByText("const")).toBeTruthy();
+    const token = await screen.findByText("const");
+    expect(token.tagName).toBe("SPAN");
+    // Verify the dual-theme wiring itself, not just that tokenization
+    // split the line: the span must carry both the dark and light color
+    // custom properties DiffLine.svelte's CSS switches on.
+    expect((token as HTMLElement).style.getPropertyValue("--dc")).toBe("#ff7b72");
+    expect((token as HTMLElement).style.getPropertyValue("--lc")).toBe("#cf222e");
   });
 });
