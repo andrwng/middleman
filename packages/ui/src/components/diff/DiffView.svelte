@@ -30,6 +30,12 @@
   let scrollRaf = 0;
   let reviewPanelOpen = $state(false);
   let codeBrowserOpen = $state(false);
+  // Set by the symbol-refs gutter's browse action to seed the panel at
+  // a specific hit's path, overriding the active-file default below.
+  // Cleared on close so the next plain open (toolbar/`b`) goes back to
+  // defaulting from the active file rather than getting stuck on
+  // whatever was last browsed from a hit.
+  let browsePath: string | undefined = $state();
 
   // Symbol references gutter width — horizontally resizable, persisted
   // across reloads. The drag handle lives here (not in the gutter
@@ -232,6 +238,17 @@
     return () => window.removeEventListener("keydown", handleKeydown);
   });
 
+  // Passed down to SymbolRefsGutter as its browse-action callback.
+  // SymbolRefsGutter lives inside this component's subtree (a column
+  // rendered alongside .diff-area below), and this is the ONE place
+  // codeBrowserOpen/CodeBrowserPanel are owned -- so the gutter reaches
+  // the panel through this callback rather than opening a second
+  // instance of its own.
+  function browseToPath(path: string): void {
+    browsePath = path;
+    codeBrowserOpen = true;
+  }
+
   // Auto-mark commit as reviewed when its diff finishes loading
   $effect(() => {
     if (scope.kind === "commit" && diff && !loading) {
@@ -382,7 +399,13 @@
               onpointerup={onGutterResizeEnd}
               onpointercancel={onGutterResizeEnd}
             ></div>
-            <SymbolRefsGutter {owner} {name} {number} width={symbolRefsGutterWidth} />
+            <SymbolRefsGutter
+              {owner}
+              {name}
+              {number}
+              width={symbolRefsGutterWidth}
+              onBrowse={browseToPath}
+            />
           {/if}
         </div>
       </div>
@@ -400,8 +423,8 @@
     {name}
     {number}
     sha={currentSha}
-    initialPath={diffStore.getActiveFile() ?? ""}
-    onclose={() => { codeBrowserOpen = false; }}
+    initialPath={browsePath ?? diffStore.getActiveFile() ?? ""}
+    onclose={() => { codeBrowserOpen = false; browsePath = undefined; }}
   />
 {/if}
 

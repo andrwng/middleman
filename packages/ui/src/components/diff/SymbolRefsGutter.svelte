@@ -20,9 +20,18 @@
     // Column width in px, resolved and persisted by DiffView (the
     // resize handle lives there, not here).
     width: number;
+    // Opens DiffView's own code browser panel at the given path. A
+    // callback prop rather than this component reaching into the
+    // codeBrowser store itself: SymbolRefsGutter lives inside DiffView's
+    // subtree, which already owns the single `{#if codeBrowserOpen}
+    // <CodeBrowserPanel>` instance (Task 9). Calling the store directly
+    // from here would either require mounting a second panel or racing
+    // that instance's own open() call -- routing through DiffView keeps
+    // there being exactly one.
+    onBrowse: (path: string) => void;
   }
 
-  const { owner, name, number, width }: Props = $props();
+  const { owner, name, number, width, onBrowse }: Props = $props();
 
   const { symbolRefs: symbolRefsStore, diff: diffStore } = getStores();
 
@@ -396,6 +405,15 @@
   function toggleNoisy(): void {
     noisyExpanded = !noisyExpanded;
   }
+
+  // browseHit is additive: it opens the hit's file in the code browser
+  // panel alongside (not instead of) the row's own click, which still
+  // reveals-and-jumps in the diff. Line/kind aren't passed through --
+  // the code browser shows a file, not a specific line -- so only the
+  // path matters here.
+  function browseHit(hit: SymbolHit): void {
+    onBrowse(hit.path);
+  }
 </script>
 
 {#snippet fileGroup(group: FileGroup)}
@@ -411,17 +429,31 @@
       <span class="symref-group__count">{group.hits.length}</span>
     </div>
     {#each group.hits as hit, i (i)}
-      <button
-        type="button"
-        class="symref-row"
-        class:symref-row--definition={hit.kind === "definition"}
-        onclick={() => void jumpTo(hit)}
-        title={hit.text}
-      >
-        <span class="symref-row__line">{hit.line}</span>
-        <span class="symref-row__kind symref-row__kind--{hit.kind}">{hit.tag ? hit.tag.kind : kindLabel(hit.kind)}</span>
-        <span class="symref-row__text">{hit.tag ? taggedLabel(hit.tag, query, hit.path) : hit.text}</span>
-      </button>
+      <div class="symref-row-wrap">
+        <button
+          type="button"
+          class="symref-row"
+          class:symref-row--definition={hit.kind === "definition"}
+          onclick={() => void jumpTo(hit)}
+          title={hit.text}
+        >
+          <span class="symref-row__line">{hit.line}</span>
+          <span class="symref-row__kind symref-row__kind--{hit.kind}">{hit.tag ? hit.tag.kind : kindLabel(hit.kind)}</span>
+          <span class="symref-row__text">{hit.tag ? taggedLabel(hit.tag, query, hit.path) : hit.text}</span>
+        </button>
+        <button
+          type="button"
+          class="symref-row__browse"
+          onclick={() => browseHit(hit)}
+          aria-label={`Browse ${hit.path} in the code browser`}
+          title="Browse this file"
+        >
+          <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M2 2.5h8v7H2z" stroke-linejoin="round" />
+            <path d="M2 4.5h8" />
+          </svg>
+        </button>
+      </div>
       {#if isMissingJump(hit)}
         <div class="symref-row__notice">Not part of the rendered diff — nothing to jump to.</div>
       {/if}
@@ -739,11 +771,22 @@
     color: var(--accent-amber);
   }
 
+  .symref-row-wrap {
+    display: flex;
+    align-items: stretch;
+    width: 100%;
+  }
+
+  .symref-row-wrap:hover .symref-row__browse {
+    opacity: 1;
+  }
+
   .symref-row {
     display: flex;
     align-items: center;
     gap: 6px;
-    width: 100%;
+    flex: 1;
+    min-width: 0;
     padding: 2px 8px 2px 12px;
     text-align: left;
     color: var(--text-secondary);
@@ -752,6 +795,31 @@
   .symref-row:hover {
     background: var(--bg-surface-hover);
     color: var(--text-primary);
+  }
+
+  .symref-row__browse {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    padding: 0 6px;
+    color: var(--text-muted);
+    /* Hidden until the row is hovered/focused so the gutter's normal
+       (unhovered) look is unchanged -- this action is secondary to the
+       row's own click, which stays the primary, always-visible target. */
+    opacity: 0;
+  }
+
+  .symref-row__browse:hover,
+  .symref-row__browse:focus-visible {
+    opacity: 1;
+    background: var(--bg-surface-hover);
+    color: var(--text-primary);
+  }
+
+  .symref-row__browse:focus-visible {
+    outline: 1px solid var(--accent-blue);
   }
 
   .symref-row__line {

@@ -134,17 +134,17 @@ function fakeDiffStore(files: string[], sha = "abc123") {
   };
 }
 
-function renderGutter(overrides: FakeStoreOverrides = {}) {
+function renderGutter(overrides: FakeStoreOverrides = {}, onBrowse: (path: string) => void = vi.fn()) {
   const symbolRefsStore = fakeSymbolRefsStore(overrides);
   const diffFiles = overrides.diffFiles ?? (overrides.hits ?? []).map((h) => h.path);
   const diffStore = fakeDiffStore(diffFiles, overrides.sha);
   const rendered = render(SymbolRefsGutter, {
-    props: { owner: "o", name: "n", number: 1, width: 320 },
+    props: { owner: "o", name: "n", number: 1, width: 320, onBrowse },
     context: new Map<symbol, unknown>([
       [STORES_KEY, { symbolRefs: symbolRefsStore, diff: diffStore }],
     ]),
   });
-  return { ...rendered, symbolRefsStore, diffStore };
+  return { ...rendered, symbolRefsStore, diffStore, onBrowse };
 }
 
 // stubClient drives a real createSymbolRefsStore for the one test that
@@ -339,6 +339,20 @@ describe("SymbolRefsGutter", () => {
     expect(diffStore.consumeRevealTarget).toHaveBeenCalledTimes(1);
   });
 
+  it("opens the code browser panel at the hit's path when its browse action is clicked, without also jumping in the diff", async () => {
+    const hits = [hit({ path: "pkg/foo.go", line: 42, text: "func Foo()", kind: "definition" })];
+    const onBrowse = vi.fn();
+    renderGutter({ hits, inPrTotal: 1 }, onBrowse);
+
+    await fireEvent.click(screen.getByRole("button", { name: /browse/i, hidden: true }));
+
+    expect(onBrowse).toHaveBeenCalledTimes(1);
+    expect(onBrowse).toHaveBeenCalledWith("pkg/foo.go");
+    // Additive, not a replacement: the row's own reveal-and-jump click
+    // handler must not also fire from the browse action.
+    expect(scrollToDiffLineMock).not.toHaveBeenCalled();
+  });
+
   it("the close button calls symbolRefs.close()", async () => {
     const { symbolRefsStore } = renderGutter({ hits: [hit()], inPrTotal: 1 });
     await fireEvent.click(screen.getByTitle("Close"));
@@ -365,7 +379,7 @@ describe("SymbolRefsGutter", () => {
     const symbolRefsStore = createSymbolRefsStore({ client });
     const diffStore = fakeDiffStore(["a.go"]);
     render(SymbolRefsGutter, {
-      props: { owner: "o", name: "n", number: 1, width: 320 },
+      props: { owner: "o", name: "n", number: 1, width: 320, onBrowse: vi.fn() },
       context: new Map<symbol, unknown>([
         [STORES_KEY, { symbolRefs: symbolRefsStore, diff: diffStore }],
       ]),
@@ -933,7 +947,7 @@ describe("SymbolRefsGutter: header search input", () => {
     });
     store.openBlank();
     const { container } = render(SymbolRefsGutter, {
-      props: { owner: "o", name: "n", number: 1, width: 320 },
+      props: { owner: "o", name: "n", number: 1, width: 320, onBrowse: vi.fn() },
       context: new Map<symbol, unknown>([
         [STORES_KEY, { symbolRefs: store, diff: fakeDiffStore(["a.go"]) }],
       ]),
@@ -979,7 +993,7 @@ describe("SymbolRefsGutter: header search input", () => {
     const store = createSymbolRefsStore({ client: stubClient([]) });
     store.openBlank();
     const { container } = render(SymbolRefsGutter, {
-      props: { owner: "o", name: "n", number: 1, width: 320 },
+      props: { owner: "o", name: "n", number: 1, width: 320, onBrowse: vi.fn() },
       context: new Map<symbol, unknown>([
         [STORES_KEY, { symbolRefs: store, diff: fakeDiffStore([]) }],
       ]),
