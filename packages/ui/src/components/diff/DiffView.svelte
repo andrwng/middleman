@@ -55,27 +55,13 @@
     | undefined = $state();
   let codeBrowserRevealNonce = 0;
 
-  // The code browser panel lives as a resizable flex column beside the
-  // diff (and, when both are open, beside the symbol-refs gutter too),
-  // the same layout mechanism the gutter itself already uses -- not an
-  // overlay. This deliberately reverses an earlier iteration of this
-  // panel (position:fixed, covering the whole diff area): the reviewer
-  // asked to keep the diff and/or the symbol-refs search visible
-  // alongside an open file instead of it covering everything.
-  const CODE_BROWSER_PANEL_WIDTH_KEY = "code-browser-panel-width";
-  const DEFAULT_CODE_BROWSER_PANEL_WIDTH = 520;
-
-  function loadCodeBrowserPanelWidth(): number {
-    try {
-      const v = Number(localStorage.getItem(CODE_BROWSER_PANEL_WIDTH_KEY));
-      if (Number.isFinite(v) && v > 0) return v;
-    } catch {
-      /* localStorage unavailable — fall through to default */
-    }
-    return DEFAULT_CODE_BROWSER_PANEL_WIDTH;
-  }
-
-  let codeBrowserPanelWidth = $state(loadCodeBrowserPanelWidth());
+  // The code browser panel takes over the diff area's own flex slot
+  // (replacing it, not squeezing it) when open -- the symbol-refs
+  // gutter, a fixed-width sibling column, is entirely unaffected by
+  // whether the panel is open. This deliberately reverses an earlier
+  // iteration of this panel that gave it its own separate resizable
+  // column: reviewed and rejected -- it shrank the diff area for no
+  // reason once the diff itself was no longer even shown underneath.
 
   // Symbol references gutter width — horizontally resizable, persisted
   // across reloads. The drag handle lives here (not in the gutter
@@ -94,41 +80,31 @@
   }
 
   let symbolRefsGutterWidth = $state(loadSymbolRefsGutterWidth());
+  let resizingSymbolRefsGutter = false;
+  let gutterResizeStartX = 0;
+  let gutterResizeStartWidth = 0;
 
-  // Generic horizontal-resize handling shared by the symbol-refs gutter
-  // and the code browser panel -- both are fixed-width flex columns that
-  // widen when their handle is dragged toward the diff body.
-  type ResizeTarget = "symref" | "codeBrowser";
-  let resizing: ResizeTarget | null = null;
-  let resizeStartX = 0;
-  let resizeStartWidth = 0;
-
-  function onResizeStart(target: ResizeTarget, e: PointerEvent): void {
-    resizing = target;
-    resizeStartX = e.clientX;
-    resizeStartWidth = target === "symref" ? symbolRefsGutterWidth : codeBrowserPanelWidth;
+  function onGutterResizeStart(e: PointerEvent): void {
+    resizingSymbolRefsGutter = true;
+    gutterResizeStartX = e.clientX;
+    gutterResizeStartWidth = symbolRefsGutterWidth;
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
   }
-  function onResizeMove(e: PointerEvent): void {
-    if (!resizing) return;
-    // Dragging the handle left (toward the diff body) widens the column.
-    const delta = resizeStartX - e.clientX;
-    const next = clampGutterWidth(resizeStartWidth + delta, diffAreaRow?.clientWidth ?? 0);
-    if (resizing === "symref") {
-      symbolRefsGutterWidth = next;
-    } else {
-      codeBrowserPanelWidth = next;
-    }
+  function onGutterResizeMove(e: PointerEvent): void {
+    if (!resizingSymbolRefsGutter) return;
+    // Dragging the handle left (toward the diff body) widens the gutter.
+    const delta = gutterResizeStartX - e.clientX;
+    symbolRefsGutterWidth = clampGutterWidth(
+      gutterResizeStartWidth + delta,
+      diffAreaRow?.clientWidth ?? 0,
+    );
   }
-  function onResizeEnd(e: PointerEvent): void {
-    if (!resizing) return;
-    const target = resizing;
-    resizing = null;
+  function onGutterResizeEnd(e: PointerEvent): void {
+    if (!resizingSymbolRefsGutter) return;
+    resizingSymbolRefsGutter = false;
     (e.target as HTMLElement).releasePointerCapture(e.pointerId);
     try {
-      const key = target === "symref" ? SYMBOL_REFS_GUTTER_WIDTH_KEY : CODE_BROWSER_PANEL_WIDTH_KEY;
-      const value = target === "symref" ? symbolRefsGutterWidth : codeBrowserPanelWidth;
-      localStorage.setItem(key, String(Math.round(value)));
+      localStorage.setItem(SYMBOL_REFS_GUTTER_WIDTH_KEY, String(Math.round(symbolRefsGutterWidth)));
     } catch {
       /* localStorage unavailable — width still applies for this session */
     }
@@ -421,19 +397,50 @@
     </div>
   {/if}
 
+  {#snippet codeBrowserPanel()}
+    <CodeBrowserPanel
+      {owner}
+      {name}
+      {number}
+      sha={currentSha}
+      initialPath={codeBrowserSeedPath ?? ""}
+      forcePath={codeBrowserForcePath}
+      reveal={codeBrowserReveal}
+      onRevealed={() => { codeBrowserReveal = undefined; }}
+      onclose={() => {
+        codeBrowserOpen = false;
+        codeBrowserSeedPath = undefined;
+        codeBrowserForcePath = false;
+        codeBrowserReveal = undefined;
+      }}
+    />
+  {/snippet}
+
   <div class="diff-body">
     {#if loading && !diff}
-      <div class="diff-state">
-        <svg class="diff-spinner" width="20" height="20" viewBox="0 0 20 20" fill="none">
-          <circle cx="10" cy="10" r="8" stroke="currentColor" stroke-opacity="0.2" stroke-width="2" />
-          <path d="M18 10a8 8 0 0 0-8-8" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-        </svg>
-        <p class="diff-state-msg">Loading diff</p>
-      </div>
+      {#if codeBrowserOpen}
+        <!-- Browsing files at a commit doesn't depend on the PR's diff
+             having loaded -- the panel must stay reachable (and take
+             over this whole area, same as once the diff has loaded)
+             while it's still loading, not just once it's ready. -->
+        {@render codeBrowserPanel()}
+      {:else}
+        <div class="diff-state">
+          <svg class="diff-spinner" width="20" height="20" viewBox="0 0 20 20" fill="none">
+            <circle cx="10" cy="10" r="8" stroke="currentColor" stroke-opacity="0.2" stroke-width="2" />
+            <path d="M18 10a8 8 0 0 0-8-8" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+          </svg>
+          <p class="diff-state-msg">Loading diff</p>
+        </div>
+      {/if}
     {:else if error}
-      <div class="diff-state">
-        <p class="diff-state-msg diff-state-msg--error">{error}</p>
-      </div>
+      {#if codeBrowserOpen}
+        {@render codeBrowserPanel()}
+      {:else}
+        <div class="diff-state">
+          <p class="diff-state-msg diff-state-msg--error">{error}</p>
+        </div>
+      {/if}
     {:else if diff}
       <div class="diff-main">
         <DiffToolbar
@@ -448,33 +455,43 @@
           }}
         />
         <div class="diff-area-row" bind:this={diffAreaRow}>
-          <div
-            class="diff-area"
-            bind:this={diffArea}
-            onscroll={onDiffScroll}
-            style:tab-size={tabWidth}
-          >
-            {#each diff.files as file (file.path)}
-              <DiffFileComponent
-                {file}
-                {owner}
-                {name}
-                {number}
-              />
-            {/each}
-          </div>
+          <!-- The code browser panel takes over this slot entirely when
+               open -- it does not shrink to share space with the diff,
+               which is hidden underneath it, same as before it existed
+               as a separate flex column. The symbol-refs gutter (a
+               fixed-width sibling, not shown here) is unaffected either
+               way. -->
+          {#if codeBrowserOpen}
+            {@render codeBrowserPanel()}
+          {:else}
+            <div
+              class="diff-area"
+              bind:this={diffArea}
+              onscroll={onDiffScroll}
+              style:tab-size={tabWidth}
+            >
+              {#each diff.files as file (file.path)}
+                <DiffFileComponent
+                  {file}
+                  {owner}
+                  {name}
+                  {number}
+                />
+              {/each}
+            </div>
+          {/if}
           {#if symbolRefsStore.isActive()}
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div
-              class="diff-column-resize"
+              class="symref-gutter-resize"
               role="separator"
               aria-orientation="vertical"
               aria-label="Resize symbol references gutter"
               title="Drag to resize the symbol references gutter"
-              onpointerdown={(e) => onResizeStart("symref", e)}
-              onpointermove={onResizeMove}
-              onpointerup={onResizeEnd}
-              onpointercancel={onResizeEnd}
+              onpointerdown={onGutterResizeStart}
+              onpointermove={onGutterResizeMove}
+              onpointerup={onGutterResizeEnd}
+              onpointercancel={onGutterResizeEnd}
             ></div>
             <SymbolRefsGutter
               {owner}
@@ -486,42 +503,6 @@
           {/if}
         </div>
       </div>
-    {/if}
-    {#if codeBrowserOpen}
-      <!-- Deliberately a sibling of the loading/error/diff branch above,
-           not nested inside {:else if diff} -- browsing files at a commit
-           doesn't depend on the PR's diff having loaded (or even existing
-           yet), so the panel must stay reachable while the diff is
-           loading or has failed to fetch, not just once it's ready. -->
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div
-        class="diff-column-resize"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize code browser panel"
-        title="Drag to resize the code browser panel"
-        onpointerdown={(e) => onResizeStart("codeBrowser", e)}
-        onpointermove={onResizeMove}
-        onpointerup={onResizeEnd}
-        onpointercancel={onResizeEnd}
-      ></div>
-      <CodeBrowserPanel
-        {owner}
-        {name}
-        {number}
-        sha={currentSha}
-        initialPath={codeBrowserSeedPath ?? ""}
-        forcePath={codeBrowserForcePath}
-        width={codeBrowserPanelWidth}
-        reveal={codeBrowserReveal}
-        onRevealed={() => { codeBrowserReveal = undefined; }}
-        onclose={() => {
-          codeBrowserOpen = false;
-          codeBrowserSeedPath = undefined;
-          codeBrowserForcePath = false;
-          codeBrowserReveal = undefined;
-        }}
-      />
     {/if}
   </div>
 </div>
@@ -598,14 +579,14 @@
     overflow: auto;
   }
 
-  .diff-column-resize {
+  .symref-gutter-resize {
     flex-shrink: 0;
     width: 6px;
     cursor: col-resize;
     background: transparent;
   }
 
-  .diff-column-resize:hover {
+  .symref-gutter-resize:hover {
     background: var(--accent-blue);
     opacity: 0.4;
   }

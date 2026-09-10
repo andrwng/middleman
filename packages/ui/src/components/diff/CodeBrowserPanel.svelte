@@ -28,11 +28,6 @@
     // default. Left false for the ordinary toolbar/`b`-hotkey open,
     // where resuming at the bookmark is the whole point.
     forcePath?: boolean;
-    // Width of the panel as a flex column beside the diff (and, when
-    // active, the symbol-refs gutter) -- controlled by DiffView the same
-    // way it controls the symbol-refs gutter's width, with its own
-    // resize handle and persisted value living there.
-    width: number;
     // See RevealRequest. Consulted once per nonce via onRevealed below.
     reveal?: RevealRequest | undefined;
     onRevealed?: () => void;
@@ -46,7 +41,6 @@
     sha,
     initialPath,
     forcePath = false,
-    width,
     reveal,
     onRevealed,
     onclose,
@@ -238,7 +232,7 @@
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="code-browser-panel" style:width="{width}px" onkeydown={onPanelKeydown}>
+<div class="code-browser-panel" onkeydown={onPanelKeydown}>
   <div class="code-browser-header">
     <span class="code-browser-title">{browser.path ?? "Browse files"}</span>
     <div class="code-browser-header-actions">
@@ -352,12 +346,15 @@
 
 <style>
   .code-browser-panel {
-    flex-shrink: 0;
+    /* Fills the same slot the diff area occupied -- it replaces the
+       diff (hidden while the panel is open), it does not shrink to
+       share space with it. */
+    flex: 1;
+    min-width: 0;
     height: 100%;
     background: var(--diff-bg);
     display: flex;
     flex-direction: column;
-    border-left: 1px solid var(--diff-border);
   }
   .code-browser-header {
     display: flex;

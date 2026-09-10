@@ -94,7 +94,6 @@ function renderPanel(
       number: 1,
       sha: "deadbeef",
       initialPath: "src/a.txt",
-      width: 480,
       ...(forcePath !== undefined && { forcePath }),
       onclose,
     },
@@ -236,7 +235,6 @@ describe("CodeBrowserPanel", () => {
       number: 1,
       sha: "deadbeef",
       initialPath: "src/other.txt",
-      width: 480,
       onclose: vi.fn(),
     });
     expect(codeBrowser.open).toHaveBeenCalledTimes(1);
@@ -247,7 +245,6 @@ describe("CodeBrowserPanel", () => {
       number: 1,
       sha: "cafef00d",
       initialPath: "src/other.txt",
-      width: 480,
       onclose: vi.fn(),
     });
     expect(codeBrowser.open).toHaveBeenCalledTimes(2);
@@ -293,7 +290,6 @@ describe("CodeBrowserPanel", () => {
         number: 1,
         sha: "deadbeef",
         initialPath: "src/a.txt",
-        width: 480,
         reveal: { path: "src/a.txt", line: 2, nonce: 1 },
         onRevealed,
         onclose: vi.fn(),
@@ -325,7 +321,6 @@ describe("CodeBrowserPanel", () => {
         number: 1,
         sha: "deadbeef",
         initialPath: "src/a.txt",
-        width: 480,
         reveal: { path: "src/a.txt", line: 2, nonce: 1 },
         onclose: vi.fn(),
       },
@@ -348,7 +343,6 @@ describe("CodeBrowserPanel", () => {
         number: 1,
         sha: "deadbeef",
         initialPath: "src/a.txt",
-        width: 480,
         onclose: vi.fn(),
       },
       context: new Map<symbol, unknown>([[STORES_KEY, { codeBrowser }]]),
@@ -375,7 +369,6 @@ describe("CodeBrowserPanel", () => {
         number: 1,
         sha: "deadbeef",
         initialPath: "src/a.txt",
-        width: 480,
         onclose: vi.fn(),
       },
       context: new Map<symbol, unknown>([[STORES_KEY, { codeBrowser }]]),
