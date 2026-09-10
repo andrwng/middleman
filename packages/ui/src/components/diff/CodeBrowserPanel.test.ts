@@ -27,6 +27,7 @@ import CodeBrowserPanel from "./CodeBrowserPanel.svelte";
 interface FakeStoreOverrides {
   path?: string | null;
   entriesByDir?: Map<string, TreeEntry[]>;
+  expandedDirs?: Set<string>;
   content?: string | null;
   status?: CodeBrowserStatus;
   error?: string | null;
@@ -36,6 +37,7 @@ function fakeCodeBrowserStore(overrides: FakeStoreOverrides = {}) {
   const {
     path = null,
     entriesByDir = new Map(),
+    expandedDirs = new Set<string>(),
     content = null,
     status = "ready",
     error = null,
@@ -50,6 +52,9 @@ function fakeCodeBrowserStore(overrides: FakeStoreOverrides = {}) {
     get entriesByDir() {
       return entriesByDir;
     },
+    get expandedDirs() {
+      return expandedDirs;
+    },
     get content() {
       return content;
     },
@@ -63,6 +68,7 @@ function fakeCodeBrowserStore(overrides: FakeStoreOverrides = {}) {
     close: vi.fn(),
     navigateTo: vi.fn(async () => {}),
     loadTree: vi.fn(async () => {}),
+    toggleDir: vi.fn(),
   };
 }
 
@@ -136,26 +142,23 @@ describe("CodeBrowserPanel", () => {
     );
   });
 
-  it("expands a directory without refetching when its children are already loaded", async () => {
+  it("renders a directory already marked expanded (via the store's expandedDirs)", async () => {
     const entriesByDir = new Map<string, TreeEntry[]>([
       ["", [dirEntry()]],
       ["src", [fileEntry()]],
     ]);
-    const { codeBrowser } = renderPanel({ entriesByDir });
-
-    await fireEvent.click(screen.getByText("src"));
+    renderPanel({ entriesByDir, expandedDirs: new Set(["src"]) });
 
     expect(await screen.findByText("a.txt")).toBeTruthy();
-    expect(codeBrowser.loadTree).not.toHaveBeenCalled();
   });
 
-  it("lazily loads a directory's children the first time it is expanded", async () => {
+  it("clicking a directory delegates expand/collapse to the store's toggleDir", async () => {
     const entriesByDir = new Map<string, TreeEntry[]>([["", [dirEntry()]]]);
     const { codeBrowser } = renderPanel({ entriesByDir });
 
     await fireEvent.click(screen.getByText("src"));
 
-    expect(codeBrowser.loadTree).toHaveBeenCalledWith("src");
+    expect(codeBrowser.toggleDir).toHaveBeenCalledWith("src");
   });
 
   it("navigates to a file when a file entry is clicked", async () => {
@@ -180,6 +183,83 @@ describe("CodeBrowserPanel", () => {
   it("shows a missing-file message when the file doesn't exist at this commit", () => {
     renderPanel({ status: "missing" });
     expect(screen.getByText(/doesn't exist/i)).toBeTruthy();
+  });
+
+  // Finding 2: a truncated /blob response (file over the size cap) must
+  // render a distinct "too large" state, not a blank pane.
+  it("shows a too-large message when the file was truncated", () => {
+    renderPanel({ status: "truncated" });
+    expect(screen.getByText(/too large/i)).toBeTruthy();
+  });
+
+  // Finding 3: status "error" must be reachable and render distinctly
+  // from "missing" -- before this fix it was dead code in the template.
+  it("shows the store's error message when status is error, distinct from missing", () => {
+    renderPanel({ status: "error", error: "read blob: exit status 128" });
+    expect(screen.getByText("read blob: exit status 128")).toBeTruthy();
+    expect(screen.queryByText(/doesn't exist/i)).toBeNull();
+  });
+
+  // Finding 5 (stale-flash on reopen): the panel's own Close control must
+  // reset the store, not just tell the parent to unmount it -- otherwise
+  // the store's state (content/path/status) survives across a close and
+  // the next mount briefly shows the previous file before its own load
+  // resolves.
+  it("resets the store via close() when the close control is activated", async () => {
+    const onclose = vi.fn();
+    const { codeBrowser } = renderPanel({}, onclose);
+    await fireEvent.click(screen.getByRole("button", { name: /close/i }));
+    expect(codeBrowser.close).toHaveBeenCalled();
+    expect(onclose).toHaveBeenCalled();
+  });
+
+  // Finding 1: initialPath must be consulted once per mount, not on every
+  // reactive change -- j/k navigation elsewhere in the diff must not
+  // silently re-seed an already-open panel to a different file. sha IS
+  // still reactive (stepping a commit re-fetches the same sticky path).
+  it("does not re-open when only initialPath changes, but does re-open when sha changes", async () => {
+    const { codeBrowser, rerender } = renderPanel();
+    expect(codeBrowser.open).toHaveBeenCalledTimes(1);
+    expect(codeBrowser.open).toHaveBeenLastCalledWith(
+      "acme",
+      "widget",
+      1,
+      "deadbeef",
+      "src/a.txt",
+    );
+
+    await rerender({
+      owner: "acme",
+      name: "widget",
+      number: 1,
+      sha: "deadbeef",
+      initialPath: "src/other.txt",
+      onclose: vi.fn(),
+    });
+    expect(codeBrowser.open).toHaveBeenCalledTimes(1);
+
+    await rerender({
+      owner: "acme",
+      name: "widget",
+      number: 1,
+      sha: "cafef00d",
+      initialPath: "src/other.txt",
+      onclose: vi.fn(),
+    });
+    expect(codeBrowser.open).toHaveBeenCalledTimes(2);
+    // Once sha legitimately triggers a re-run, it reads initialPath's
+    // current value (src/other.txt) -- untrack() only stops a prop change
+    // from being what TRIGGERS the re-run by itself; it doesn't freeze the
+    // value at mount. In DiffView's real usage this prop only changes
+    // together with a deliberate reopen (the `b` key, the toolbar button,
+    // or a symbol-refs browse action), never as a side effect of j/k.
+    expect(codeBrowser.open).toHaveBeenLastCalledWith(
+      "acme",
+      "widget",
+      1,
+      "cafef00d",
+      "src/other.txt",
+    );
   });
 
   it("renders highlighted tokens instead of raw <pre> text for a known language", async () => {

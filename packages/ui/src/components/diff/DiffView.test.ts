@@ -461,7 +461,7 @@ describe("DiffView: symbol-refs browse action opens the same code browser panel"
     expect(symbolRefsStore.isActive()).toBe(true);
   });
 
-  it("reuses the already-open panel (re-seeding it) rather than mounting a duplicate", async () => {
+  it("reuses the already-open panel (navigating it directly) rather than mounting a duplicate or re-running open()", async () => {
     // Deliberately a different path than the hit below (still "a.go", the
     // symbolRefsClient fixture's default): loadDiff's setActiveIfNeeded
     // makes this file the active one, so if the browse action's re-seed
@@ -486,12 +486,16 @@ describe("DiffView: symbol-refs browse action opens the same code browser panel"
       screen.getByRole("button", { name: /browse a\.go in the code browser/i, hidden: true }),
     );
 
-    // Still exactly one panel -- the browse action re-seeded the SAME
-    // instance rather than mounting a second one alongside it.
+    // Still exactly one panel -- the browse action reused the SAME
+    // instance rather than mounting a second one alongside it. It
+    // navigates the store directly (navigateTo) rather than re-running
+    // open() -- CodeBrowserPanel's own effect deliberately does not react
+    // to initialPath changes while mounted (see finding 1's fix), so
+    // reassigning DiffView's seed-path state here would silently do
+    // nothing; navigateTo is the correct "go to this path now" call.
     expect(screen.getAllByText("Browse files")).toHaveLength(1);
-    expect(codeBrowserStore.open).toHaveBeenCalledWith(
-      "acme", "widget", 7, "sha-head-1", "a.go", { forcePath: true },
-    );
+    expect(codeBrowserStore.open).not.toHaveBeenCalled();
+    expect(codeBrowserStore.navigateTo).toHaveBeenCalledWith("a.go");
   });
 });
 

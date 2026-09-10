@@ -51,18 +51,20 @@ test.describe("code browser panel (git-backed)", () => {
     });
   });
 
-  // Runs before the toolbar test below on purpose. createCodeBrowserStore's
-  // open() (packages/ui/src/stores/codeBrowser.svelte.ts) unconditionally
-  // prefers a previously-persisted server bookmark over the caller-supplied
-  // activeFilePath -- so once *any* prior open() in this PR has saved a
-  // bookmark, browseToPath's explicit "seed at this hit's path" (the whole
-  // point of this action, per the design doc's "opens CodeBrowserPanel at
-  // that hit's path" integration note) is silently overridden back to the
-  // stale bookmark instead. That looks like a real bug in Task 8/10's work,
-  // not something this test should paper over -- flagged in the task
-  // report rather than fixed here. Running this test first, before any
-  // other test in this file has saved a bookmark for PR #1, is what lets it
-  // actually observe the intended seeding behavior.
+  // mode.serial (declared above) is what matters for these two tests, not
+  // their relative order: both drive the code browser panel against the
+  // SAME PR #1 fixture/server (and the same code-browser-state bookmark
+  // row) under the shared "git-backed-diff" lock this file's siblings
+  // (diff-view.spec.ts, symbol-refs.spec.ts) also use, so letting them run
+  // concurrently would race that shared state. An earlier version of this
+  // comment justified the ordering by a bookmark-priority bug -- open()
+  // unconditionally preferring a stale server bookmark over a
+  // deliberately-chosen path -- but that was fixed in a200db2 via the
+  // forcePath mechanism (see OpenCodeBrowserOptions in
+  // packages/ui/src/stores/codeBrowser.svelte.ts): browseToPath below
+  // always opens with forcePath, so this test's seeding assertion holds
+  // regardless of whatever bookmark a previous test left behind, and does
+  // not depend on running before the toolbar test.
   test("the browse action on a symbol-refs hit opens the panel alongside the diff, seeded at that hit's file", async ({ page }) => {
     await page.goto("/pulls/acme/widgets/1/files");
     await page.locator(".diff-file").first().waitFor({ state: "visible", timeout: 10_000 });

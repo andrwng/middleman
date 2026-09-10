@@ -10,6 +10,7 @@
     brief: briefStore,
     reviewThreads: reviewThreadsStore,
     symbolRefs: symbolRefsStore,
+    codeBrowser: codeBrowserStore,
   } = getStores();
   import DiffToolbar from "./DiffToolbar.svelte";
   import DiffFileComponent from "./DiffFile.svelte";
@@ -27,15 +28,59 @@
 
   let diffArea: HTMLDivElement | undefined = $state();
   let diffAreaRow: HTMLDivElement | undefined = $state();
+  let diffMainEl: HTMLDivElement | undefined = $state();
   let scrollRaf = 0;
   let reviewPanelOpen = $state(false);
   let codeBrowserOpen = $state(false);
-  // Set by the symbol-refs gutter's browse action to seed the panel at
-  // a specific hit's path, overriding the active-file default below.
-  // Cleared on close so the next plain open (toolbar/`b`) goes back to
-  // defaulting from the active file rather than getting stuck on
-  // whatever was last browsed from a hit.
-  let browsePath: string | undefined = $state();
+  // Snapshot of the path CodeBrowserPanel should open at, taken once by
+  // whichever of the three open triggers (the `b` shortcut, the toolbar
+  // button, or the symbol-refs gutter's browse action) actually opens the
+  // panel. This is deliberately NOT a live expression over
+  // diffStore.getActiveFile() -- CodeBrowserPanel's own $effect reads
+  // initialPath non-reactively (see its untrack() usage), but passing a
+  // reactive expression here would still be the wrong seed semantically:
+  // j/k updates activeFile while the panel stays open (handleKeydown below
+  // keeps firing over the overlay by design), and the panel's sticky-path
+  // behavior must not silently follow that. Cleared on close so the next
+  // plain open (toolbar/`b`) re-seeds from whatever the active file is at
+  // that moment rather than reusing a stale snapshot.
+  let codeBrowserSeedPath: string | undefined = $state();
+  // Whether the pending open should bypass the saved bookmark (see
+  // OpenCodeBrowserOptions.forcePath) -- true only for the symbol-refs
+  // browse action, which passes a specific, deliberately-chosen file.
+  let codeBrowserForcePath = $state(false);
+
+  // The code browser overlay is deliberately position:fixed, sized/placed
+  // to exactly cover .diff-main (toolbar + diff body), rather than
+  // position:absolute against a newly-relative ancestor. Giving ANY
+  // ancestor between the viewport root and .diff-area a non-static
+  // position (which a "cover just the diff area" absolute overlay would
+  // require) breaks DiffFile's floating selection-toolbar: its position
+  // is computed in document coordinates (getBoundingClientRect() +
+  // window.scrollX/Y), which is only correct when nothing between it and
+  // the viewport's initial containing block is positioned. That
+  // regression was caught by the diff-view/symbol-refs e2e suite (the
+  // floating "Find other references" button rendered somewhere it
+  // shouldn't, intercepted by the fixed Notes toggle) when this was first
+  // tried as position:relative on .diff-view. position:fixed's
+  // containing block is the viewport regardless of ancestors, so tracking
+  // .diff-main's own rect here sidesteps the whole class of bug.
+  let codeBrowserHostRect =
+    $state<{ top: number; left: number; width: number; height: number } | null>(null);
+
+  function updateCodeBrowserHostRect(): void {
+    if (!diffMainEl) return;
+    const r = diffMainEl.getBoundingClientRect();
+    codeBrowserHostRect = { top: r.top, left: r.left, width: r.width, height: r.height };
+  }
+
+  $effect(() => {
+    if (!diffMainEl || typeof ResizeObserver === "undefined") return;
+    updateCodeBrowserHostRect();
+    const ro = new ResizeObserver(() => updateCodeBrowserHostRect());
+    ro.observe(diffMainEl);
+    return () => ro.disconnect();
+  });
 
   // Symbol references gutter width — horizontally resizable, persisted
   // across reloads. The drag handle lives here (not in the gutter
@@ -226,9 +271,12 @@
     // Opens the code browser panel, seeded from the active file. Gated
     // on a resolvable SHA for the same reason `s` is: the panel loads
     // the tree and file content at a specific commit, and there is no
-    // commit to browse when the scope has none.
-    if (e.key === "b" && currentSha !== "") {
+    // commit to browse when the scope has none. A no-op while already
+    // open -- there is nothing this shortcut should do to an open panel.
+    if (e.key === "b" && currentSha !== "" && !codeBrowserOpen) {
       e.preventDefault();
+      codeBrowserSeedPath = diffStore.getActiveFile() ?? "";
+      codeBrowserForcePath = false;
       codeBrowserOpen = true;
     }
   }
@@ -244,8 +292,20 @@
   // codeBrowserOpen/CodeBrowserPanel are owned -- so the gutter reaches
   // the panel through this callback rather than opening a second
   // instance of its own.
+  //
+  // If the panel is already open, navigate the existing store instance
+  // directly instead of touching codeBrowserSeedPath/forcePath: those are
+  // only consulted by CodeBrowserPanel's mount-time open() (see its
+  // untrack()'d effect), so reassigning them while the panel is already
+  // mounted would silently do nothing. navigateTo is exactly "go to this
+  // path now", with no bookmark-vs-forced ambiguity to resolve.
   function browseToPath(path: string): void {
-    browsePath = path;
+    if (codeBrowserOpen) {
+      void codeBrowserStore.navigateTo(path);
+      return;
+    }
+    codeBrowserSeedPath = path;
+    codeBrowserForcePath = true;
     codeBrowserOpen = true;
   }
 
@@ -364,11 +424,17 @@
         <p class="diff-state-msg diff-state-msg--error">{error}</p>
       </div>
     {:else if diff}
-      <div class="diff-main">
+      <div class="diff-main" bind:this={diffMainEl}>
         <DiffToolbar
           onReviewClick={() => { reviewPanelOpen = true; }}
           onRefsClick={() => symbolRefsStore.openBlank()}
-          onBrowseClick={() => { if (currentSha !== "") codeBrowserOpen = true; }}
+          onBrowseClick={() => {
+            if (currentSha !== "" && !codeBrowserOpen) {
+              codeBrowserSeedPath = diffStore.getActiveFile() ?? "";
+              codeBrowserForcePath = false;
+              codeBrowserOpen = true;
+            }
+          }}
         />
         <div class="diff-area-row" bind:this={diffAreaRow}>
           <div
@@ -423,9 +489,14 @@
     {name}
     {number}
     sha={currentSha}
-    initialPath={browsePath ?? diffStore.getActiveFile() ?? ""}
-    forcePath={browsePath !== undefined}
-    onclose={() => { codeBrowserOpen = false; browsePath = undefined; }}
+    initialPath={codeBrowserSeedPath ?? ""}
+    forcePath={codeBrowserForcePath}
+    hostRect={codeBrowserHostRect}
+    onclose={() => {
+      codeBrowserOpen = false;
+      codeBrowserSeedPath = undefined;
+      codeBrowserForcePath = false;
+    }}
   />
 {/if}
 

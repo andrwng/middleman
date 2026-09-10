@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { getStores } from "../../context.js";
   import { tokenizeLineDual, langFromPath, type DualToken } from "../../utils/highlight.js";
 
@@ -15,18 +16,51 @@
     // default. Left false for the ordinary toolbar/`b`-hotkey open,
     // where resuming at the bookmark is the whole point.
     forcePath?: boolean;
+    // Viewport rect (from DiffView's measurement of .diff-main) the
+    // overlay should exactly cover. position:fixed rather than
+    // position:absolute against a newly-positioned ancestor -- see
+    // DiffView's codeBrowserHostRect comment for why: giving any ancestor
+    // of .diff-area a non-static position breaks DiffFile's floating
+    // selection-toolbar, which computes its own position in document
+    // coordinates. Null falls back to covering the whole viewport (e.g.
+    // in unit tests, which don't measure real layout).
+    hostRect?: { top: number; left: number; width: number; height: number } | null;
     onclose: () => void;
   }
 
-  const { owner, name, number, sha, initialPath, forcePath = false, onclose }: Props = $props();
+  const {
+    owner,
+    name,
+    number,
+    sha,
+    initialPath,
+    forcePath = false,
+    hostRect = null,
+    onclose,
+  }: Props = $props();
 
   const { codeBrowser: browser } = getStores();
 
+  // Only `sha` is a tracked dependency here -- stepping a commit while the
+  // panel stays open is the one case that must re-seed the browser (same
+  // sticky path, new SHA). `initialPath`/`forcePath` are read through
+  // untrack() so they are consulted exactly once per DiffView-initiated
+  // "open" (DiffView only reassigns its seed-path state on an explicit
+  // open trigger -- the `b` key, the toolbar button, or a symbol-refs
+  // browse action -- never as a side effect of j/k file navigation or any
+  // other unrelated diff-state change). Without untrack() here, this
+  // effect would depend on `diffStore.getActiveFile()` transitively
+  // whenever DiffView passed a live expression for initialPath, and j/k
+  // (which updates activeFile) would silently re-seed the panel to a
+  // different file out from under the reader.
   $effect(() => {
-    if (forcePath) {
-      browser.open(owner, name, number, sha, initialPath, { forcePath: true });
+    const s = sha;
+    const p = untrack(() => initialPath);
+    const fp = untrack(() => forcePath);
+    if (fp) {
+      void browser.open(owner, name, number, s, p, { forcePath: true });
     } else {
-      browser.open(owner, name, number, sha, initialPath);
+      void browser.open(owner, name, number, s, p);
     }
   });
 
@@ -88,23 +122,14 @@
     }
   }
 
-  // Directories the reader has expanded. The store lazily loads a
-  // directory's children the first time it is expanded (loadTree keys
-  // entriesByDir by that directory's path); re-expanding one whose
-  // children are already cached must not refetch them.
-  let expandedDirs = $state<Set<string>>(new Set());
-
+  // Directories the reader has expanded live in the store, not here --
+  // open() seeds them with every ancestor of the opened path so the tree
+  // renders already expanded down to that file (auto-reveal), and the
+  // store's toggleDir lazily loads a directory's children the first time
+  // it is expanded (re-expanding one whose children are already cached
+  // must not refetch them).
   function toggleDir(path: string) {
-    const next = new Set(expandedDirs);
-    if (next.has(path)) {
-      next.delete(path);
-    } else {
-      next.add(path);
-      if (!browser.entriesByDir.has(path)) {
-        browser.loadTree(path);
-      }
-    }
-    expandedDirs = next;
+    browser.toggleDir(path);
   }
 </script>
 
@@ -117,10 +142,10 @@
           class="code-browser-entry code-browser-entry--dir"
           onclick={() => toggleDir(entry.path)}
         >
-          <span class="code-browser-caret">{expandedDirs.has(entry.path) ? "▾" : "▸"}</span>
+          <span class="code-browser-caret">{browser.expandedDirs.has(entry.path) ? "▾" : "▸"}</span>
           {entry.name}
         </button>
-        {#if expandedDirs.has(entry.path)}
+        {#if browser.expandedDirs.has(entry.path)}
           {@render tree(entry.path, depth + 1)}
         {/if}
       {:else}
@@ -137,11 +162,16 @@
   {/each}
 {/snippet}
 
-<div class="code-browser-overlay">
+<div
+  class="code-browser-overlay"
+  style={hostRect
+    ? `top:${hostRect.top}px; left:${hostRect.left}px; width:${hostRect.width}px; height:${hostRect.height}px;`
+    : "top:0; left:0; right:0; bottom:0;"}
+>
   <div class="code-browser-panel">
     <div class="code-browser-header">
       <span class="code-browser-title">{browser.path ?? "Browse files"}</span>
-      <button type="button" onclick={onclose}>Close</button>
+      <button type="button" onclick={() => { browser.close(); onclose(); }}>Close</button>
     </div>
     <div class="code-browser-body">
       <nav class="code-browser-tree">
@@ -152,6 +182,8 @@
           <p class="code-browser-empty">This file doesn't exist at this commit.</p>
         {:else if browser.status === "loading"}
           <p class="code-browser-empty">Loading…</p>
+        {:else if browser.status === "truncated"}
+          <p class="code-browser-empty">This file is too large to display.</p>
         {:else if browser.status === "error"}
           <p class="code-browser-empty">{browser.error ?? "Failed to load file"}</p>
         {:else}
@@ -168,8 +200,7 @@
 
 <style>
   .code-browser-overlay {
-    position: absolute;
-    inset: 0;
+    position: fixed;
     z-index: 60;
     display: flex;
     justify-content: flex-end;
