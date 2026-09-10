@@ -218,13 +218,14 @@
   // Scoped to this component's own root, not window -- the panel is a
   // sibling column of the diff, not a modal, so this must not compete
   // with DiffView's own window-level j/k/[/]/m/s/b handling. `t` mirrors
-  // GitHub's own repo file-finder shortcut.
+  // GitHub's own repo file-finder shortcut; `/` is the more common
+  // "search/find" convention and was requested alongside it.
   function onPanelKeydown(e: KeyboardEvent): void {
     if (paletteOpen) return;
     const tag = (e.target as HTMLElement).tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
-    if (e.key === "t") {
+    if (e.key === "t" || e.key === "/") {
       e.preventDefault();
       openPalette();
     }
@@ -236,7 +237,7 @@
   <div class="code-browser-header">
     <span class="code-browser-title">{browser.path ?? "Browse files"}</span>
     <div class="code-browser-header-actions">
-      <button type="button" class="code-browser-goto-btn" onclick={openPalette} title="Go to file (t)">
+      <button type="button" class="code-browser-goto-btn" onclick={openPalette} title="Go to file (t or /)">
         Go to file
       </button>
       <button type="button" onclick={() => { browser.close(); onclose(); }}>Close</button>
@@ -246,7 +247,7 @@
     <nav class="code-browser-tree">
       {#snippet tree(dirPath: string, depth: number)}
         {#each browser.entriesByDir.get(dirPath) ?? [] as entry (entry.path)}
-          <div class="code-browser-row" style="padding-left: {12 + depth * 12}px">
+          <div class="code-browser-row" style="padding-left: {8 + depth * 10}px">
             {#if entry.type === "dir"}
               <button
                 type="button"
@@ -286,11 +287,14 @@
       {:else}
         <div class="code-browser-file">
           {#each lines as line, i (i)}
-            <pre
-              class="code-browser-line"
-              class:code-browser-line--flash={i + 1 === flashedLine}
+            <div
+              class="code-browser-line-row"
+              class:code-browser-line-row--flash={i + 1 === flashedLine}
               data-line={i + 1}
-            >{#each tokens.get(i) ?? [{ content: line }] as span}<span style:--dc={span.darkColor} style:--lc={span.lightColor}>{span.content}</span>{/each}</pre>
+            >
+              <span class="code-browser-line-num">{i + 1}</span>
+              <pre class="code-browser-line">{#each tokens.get(i) ?? [{ content: line }] as span}<span style:--dc={span.darkColor} style:--lc={span.lightColor}>{span.content}</span>{/each}</pre>
+            </div>
           {/each}
         </div>
       {/if}
@@ -423,28 +427,47 @@
   .code-browser-content {
     flex: 1;
     overflow: auto;
-    padding: 8px 12px;
+    padding: 8px 0;
   }
   .code-browser-empty {
     font-family: var(--font-mono);
+    padding: 0 12px;
   }
   .code-browser-file {
     font-family: var(--font-mono);
   }
+  .code-browser-line-row {
+    display: flex;
+    align-items: stretch;
+    transition: background 0.2s ease;
+  }
+  .code-browser-line-row--flash {
+    background: color-mix(in srgb, var(--accent-amber) 25%, transparent);
+  }
+  .code-browser-line-num {
+    width: 44px;
+    flex-shrink: 0;
+    text-align: right;
+    padding: 0 8px 0 0;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--diff-line-num);
+    user-select: none;
+    line-height: 20px;
+    background: var(--diff-bg);
+  }
   .code-browser-line {
+    flex: 1;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     margin: 0;
+    padding: 0 12px 0 8px;
     font-family: var(--font-mono);
     font-size: 12px;
     line-height: 20px;
     color: var(--diff-text);
     background: transparent;
     border: none;
-    transition: background 0.2s ease;
-  }
-  .code-browser-line--flash {
-    background: color-mix(in srgb, var(--accent-amber) 25%, transparent);
   }
   /* Token colors via CSS custom properties — theme switch is pure CSS,
      no JS re-renders needed. Each span carries --dc (dark) and --lc (light). */

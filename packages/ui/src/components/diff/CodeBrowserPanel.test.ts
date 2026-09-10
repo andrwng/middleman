@@ -176,6 +176,16 @@ describe("CodeBrowserPanel", () => {
     expect(await screen.findByText("hello world")).toBeTruthy();
   });
 
+  it("renders a 1-indexed line number beside each line", async () => {
+    renderPanel({ status: "ready", content: "one\ntwo\nthree" });
+    await screen.findByText("one");
+
+    const nums = Array.from(document.querySelectorAll(".code-browser-line-num")).map(
+      (el) => el.textContent,
+    );
+    expect(nums).toEqual(["1", "2", "3"]);
+  });
+
   it("shows a loading state while a file is loading", () => {
     renderPanel({ status: "loading" });
     expect(screen.getByText(/loading/i)).toBeTruthy();
@@ -303,7 +313,7 @@ describe("CodeBrowserPanel", () => {
     expect(scrollIntoView).toHaveBeenCalled();
     expect(onRevealed).toHaveBeenCalled();
     const line2 = document.querySelector('[data-line="2"]');
-    expect(line2?.className).toContain("code-browser-line--flash");
+    expect(line2?.className).toContain("code-browser-line-row--flash");
   });
 
   it("does not re-handle a reveal whose target path doesn't match the currently open file", async () => {
@@ -357,6 +367,27 @@ describe("CodeBrowserPanel", () => {
     await fireEvent.click(option);
 
     expect(codeBrowser.navigateTo).toHaveBeenCalledWith("internal/handler.go");
+  });
+
+  it("opens the Go to file palette on '/' too", async () => {
+    const codeBrowser = fakeCodeBrowserStore();
+    codeBrowser.listAllFiles.mockResolvedValue(["README.md"]);
+    render(CodeBrowserPanel, {
+      props: {
+        owner: "acme",
+        name: "widget",
+        number: 1,
+        sha: "deadbeef",
+        initialPath: "src/a.txt",
+        onclose: vi.fn(),
+      },
+      context: new Map<symbol, unknown>([[STORES_KEY, { codeBrowser }]]),
+    });
+
+    const panel = screen.getByText("Browse files").closest(".code-browser-panel")!;
+    await fireEvent.keyDown(panel, { key: "/" });
+
+    expect(await screen.findByPlaceholderText("Go to file…")).toBeTruthy();
   });
 
   it("filters the Go to file palette by fuzzy query", async () => {
