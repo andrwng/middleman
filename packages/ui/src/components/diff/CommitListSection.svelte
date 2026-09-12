@@ -98,9 +98,24 @@
     return false;
   }
 
+  // How many commits the live span covers, for the pill's tooltip. Commits
+  // arrive newest-first, so the older end carries the higher index.
+  const spanCount = $derived.by(() => {
+    const s = scope;
+    if (s.kind !== "range" || !commits) return null;
+    const fromIdx = commits.findIndex((c) => c.sha === s.fromSha);
+    const toIdx = commits.findIndex((c) => c.sha === s.toSha);
+    if (fromIdx === -1 || toIdx === -1) return null;
+    return fromIdx - toIdx + 1;
+  });
+
+  // The anchor a shift-click would span from. The store derives it, since it
+  // is the one that knows which end of a live span the reader started from.
+  const spanAnchorSha = $derived(diffStore.getSpanAnchorSha());
+
   function handleCommitClick(sha: string, shiftKey: boolean): void {
-    if (shiftKey && scope.kind === "commit") {
-      diffStore.selectRange(scope.sha, sha);
+    if (shiftKey) {
+      diffStore.extendSpan(sha);
     } else {
       diffStore.selectCommit(sha);
     }
@@ -119,7 +134,7 @@
         <span class="commit-section__progress">{reviewProgress.reviewed}/{reviewProgress.total}</span>
       {/if}
     </button>
-    <ScopePill {scope} onreset={diffStore.resetToHead} />
+    <ScopePill {scope} {spanCount} onreset={diffStore.resetToHead} />
     {#if commits && commits.length > 0}
       <div class="commit-section__nav">
         {#if commitIndex}
@@ -170,6 +185,7 @@
             active={isActive(commit.sha)}
             reviewed={diffStore.isCommitReviewed(commit.sha)}
             onclick={handleCommitClick}
+            {spanAnchorSha}
           />
         {/each}
       {:else if commits}

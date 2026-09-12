@@ -2413,6 +2413,13 @@ export interface components {
             number: number;
             repo_tracked: boolean;
         };
+        ResolvedAnchorResponse: {
+            /** Format: int64 */
+            line?: number;
+            path?: string;
+            /** @description current | moved | removed | unmappable */
+            state: string;
+        };
         ReviewThreadCommentResponse: {
             /** @description user | agent */
             author: string;
@@ -2462,6 +2469,8 @@ export interface components {
             /** Format: int64 */
             line: number;
             path: string;
+            /** @description Where this thread's recorded anchor lands at the revision given by the 'at' query param. Absent when 'at' was not supplied. */
+            resolved?: components["schemas"]["ResolvedAnchorResponse"];
             /** @description LEFT | RIGHT */
             side: string;
             /** Format: int64 */
@@ -4650,7 +4659,10 @@ export interface operations {
     };
     "get-repos-by-owner-by-name-pulls-by-number-review-threads": {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Revision to resolve each thread's anchor against (the new-side SHA of the reader's current diff scope, or WORKING-TREE). Omitted, no resolution is computed. */
+                at?: string;
+            };
             header?: never;
             path: {
                 owner: string;

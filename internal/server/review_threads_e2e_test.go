@@ -68,7 +68,7 @@ func TestAPIReviewThreadsLifecycle(t *testing.T) {
 
 	// List returns both threads.
 	listResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(
-		ctx, "local", "demo", num,
+		ctx, "local", "demo", num, nil,
 	)
 	require.NoError(err)
 	require.Equal(http.StatusOK, listResp.StatusCode())
@@ -265,7 +265,7 @@ func TestAPIReviewThreadsRejectNonLocal(t *testing.T) {
 
 	// GET on a non-local owner is rejected.
 	getResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(
-		ctx, "acme", "widget", 1,
+		ctx, "acme", "widget", 1, nil,
 	)
 	require.NoError(err)
 	require.Equal(http.StatusBadRequest, getResp.StatusCode())
@@ -420,7 +420,7 @@ func TestAPIReviewThreadCommentEdit(t *testing.T) {
 	assert.Equal(http.StatusNotFound, agentEditResp.StatusCode())
 
 	// The agent comment's body must be unchanged.
-	listResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(ctx, "local", "demo", num)
+	listResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(ctx, "local", "demo", num, nil)
 	require.NoError(err)
 	require.Equal(http.StatusOK, listResp.StatusCode())
 	require.NotNil(listResp.JSON200.Threads)
@@ -464,7 +464,7 @@ func TestAPIReviewThreadCommentEdit(t *testing.T) {
 	assert.Equal(http.StatusNotFound, wrongThreadResp.StatusCode())
 
 	// Thread B's comment body must be unchanged.
-	listResp2, err := client.HTTP.GetReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(ctx, "local", "demo", num)
+	listResp2, err := client.HTTP.GetReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(ctx, "local", "demo", num, nil)
 	require.NoError(err)
 	require.Equal(http.StatusOK, listResp2.StatusCode())
 	require.NotNil(listResp2.JSON200.Threads)

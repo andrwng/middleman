@@ -19,7 +19,7 @@ func TestAPICodeBrowserState_CRUD(t *testing.T) {
 	require.NoError(t, err)
 	as.Equal(http.StatusOK, empty.StatusCode())
 	require.NotNil(t, empty.JSON200)
-	as.Equal("", empty.JSON200.Path)
+	as.Empty(empty.JSON200.Path)
 
 	put, err := client.HTTP.PutReposByOwnerByNamePullsByNumberCodeBrowserStateWithResponse(
 		ctx, "acme", "widget", 1,

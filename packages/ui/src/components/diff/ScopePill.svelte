@@ -4,17 +4,37 @@
   interface Props {
     scope: DiffScope;
     onreset: () => void;
+    // How many commits a span covers, for the tooltip. Omitted where the
+    // caller has no commit list to count against.
+    spanCount?: number | null;
   }
 
-  const { scope, onreset }: Props = $props();
+  const { scope, onreset, spanCount = null }: Props = $props();
 
   const dirty = $derived(scope.kind !== "head");
 
   const label = $derived.by(() => {
     if (scope.kind === "head") return "HEAD";
     if (scope.kind === "commit") return scope.sha.slice(0, 7);
-    if (scope.kind === "range") return `${scope.fromSha.slice(0, 7)}..${scope.toSha.slice(0, 7)}`;
+    // A span is diffed as ParentOf(from)..to, so it INCLUDES `from`. Labelling
+    // it "from..to" said the opposite in git's own syntax, and read as if the
+    // base commit were being left out; `from^..to` is the range actually
+    // being diffed.
+    if (scope.kind === "range") {
+      return `${scope.fromSha.slice(0, 7)}^..${scope.toSha.slice(0, 7)}`;
+    }
     return "Since last review";
+  });
+
+  const hint = $derived.by(() => {
+    if (!dirty) return "Viewing full diff";
+    if (scope.kind === "range") {
+      const from = scope.fromSha.slice(0, 7);
+      const to = scope.toSha.slice(0, 7);
+      const count = spanCount === null ? "" : `${spanCount} commits: `;
+      return `${count}${from} through ${to}, both included \u2014 click to reset`;
+    }
+    return "Reset to full diff";
   });
 </script>
 
@@ -23,7 +43,7 @@
   class:scope-pill--dirty={dirty}
   onclick={dirty ? onreset : undefined}
   disabled={!dirty}
-  title={dirty ? "Reset to full diff" : "Viewing full diff"}
+  title={hint}
 >
   <span class="scope-pill__dot"></span>
   <span class="scope-pill__label">{label}</span>

@@ -59,7 +59,7 @@ func TestAPIReviewThreadsBranchScoped(t *testing.T) {
 
 	// Listing on feat/a sees the thread.
 	listA, err := client.HTTP.GetReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(
-		ctx, "local", "demo", num)
+		ctx, "local", "demo", num, nil)
 	require.NoError(err)
 	require.Equal(http.StatusOK, listA.StatusCode())
 	require.NotNil(listA.JSON200)
@@ -72,7 +72,7 @@ func TestAPIReviewThreadsBranchScoped(t *testing.T) {
 	// Now listing returns the feat/b set (empty) — the feat/a thread is
 	// scoped out.
 	listB, err := client.HTTP.GetReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(
-		ctx, "local", "demo", num)
+		ctx, "local", "demo", num, nil)
 	require.NoError(err)
 	require.Equal(http.StatusOK, listB.StatusCode())
 	require.NotNil(listB.JSON200)
@@ -95,7 +95,7 @@ func TestAPIReviewThreadsBranchScoped(t *testing.T) {
 	require.NoError(err)
 	runGit(t, dir, "checkout", "feat/a")
 	listA2, err := client.HTTP.GetReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(
-		ctx, "local", "demo", num)
+		ctx, "local", "demo", num, nil)
 	require.NoError(err)
 	require.NotNil(listA2.JSON200)
 	require.NotNil(listA2.JSON200.Threads)

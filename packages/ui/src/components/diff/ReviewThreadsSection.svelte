@@ -4,6 +4,8 @@
   import type { ReviewThread } from "../../stores/reviewThreads.svelte.js";
   import SectionResizeHandle from "./SectionResizeHandle.svelte";
   import { getSectionHeight } from "./sectionHeights.svelte.js";
+  import { scrollToDiffLine, type DiffJumpDeps } from "./scrollToDiffLine.js";
+  import ReviewThreadCard from "./ReviewThreadCard.svelte";
 
   const { reviewThreads, worktreeSession, diff } = getStores();
   let bodyEl: HTMLDivElement | undefined = $state();
@@ -25,6 +27,10 @@
   let expanded = $state(false);
   let userCollapsed = $state(false);
   let activeId = $state<number | null>(null);
+  // The thread whose conversation is expanded in place because the diff
+  // could not host it, and why. Null when nothing is expanded.
+  let fallbackId = $state<number | null>(null);
+  let fallbackReason = $state<string>("");
   let confirmingDeleteId = $state<number | null>(null);
   $effect(() => {
     if (threads.length > 0 && !userCollapsed) expanded = true;
@@ -41,45 +47,102 @@
     }
     return `${sign}${t.line}`;
   }
+  // The row's cue for a thread whose recorded anchor no longer describes
+  // where it sits. Every non-"current" state gets one, not just "moved":
+  // a removed or unmappable thread is list-only, so the list is the ONLY
+  // place it can be noticed at all. Same vocabulary as the expanded
+  // card's reason line, so the two never disagree.
+  function driftLabel(state: string): string {
+    if (state === "removed") return "line removed";
+    if (state === "unmappable") return "position unknown";
+    return "moved";
+  }
   function isOrphan(t: ReviewThread): boolean {
     const commits = diff.getCommits();
     if (!commits || commits.length === 0) return false; // loading — don't flag
     return !commits.some((c) => c.sha === t.commit_sha);
   }
 
-  async function scrollToThread(t: ReviewThread): Promise<void> {
-    // Always navigate to HEAD scope so the thread's file is visible.
-    // (A mid-stack commit's diff only shows files modified in that commit,
-    // which can hide threads whose anchored file wasn't touched there.)
+  function jumpDeps(): DiffJumpDeps {
+    const pr = diff.getCurrentPR();
+    // Without a PR there is nothing to collapse or reveal against; the
+    // jump then simply fails and the caller expands in place.
+    return {
+      isFileCollapsed: (path) =>
+        pr ? diff.isFileCollapsed(pr.owner, pr.name, pr.number, path) : false,
+      toggleFileCollapsed: (path) => {
+        if (pr) diff.toggleFileCollapsed(pr.owner, pr.name, pr.number, path);
+      },
+      requestRevealLine: (path, line) => diff.requestRevealLine(path, line),
+      clearRevealTarget: () => diff.consumeRevealTarget(),
+    };
+  }
+
+  // Why a thread could not be placed, in the reader's terms. Stage 1 can
+  // only distinguish what is visible without a line mapping.
+  function placementReason(t: ReviewThread): string {
+    // The server knows more than the DOM does when it has resolved the
+    // anchor for us.
+    if (t.resolved?.state === "removed") return "line removed";
+    if (t.resolved?.state === "unmappable") return "position unknown";
+    const commits = diff.getCommits();
+    if (commits && commits.length > 0 && !commits.some((c) => c.sha === t.commit_sha)) {
+      return "commit rebased away";
+    }
+    // Ask about the position placement actually attempted, not the recorded
+    // one -- for a renamed thread those differ, and reporting on the old
+    // path describes the wrong file.
+    const at = reviewThreads.placementFor(t);
+    const escaped =
+      typeof CSS !== "undefined" && CSS.escape ? CSS.escape(at.path) : at.path;
+    if (!document.querySelector(`.diff-file[data-file-path="${escaped}"]`)) {
+      return "file unchanged here";
+    }
+    return "line not in this diff";
+  }
+
+  // The store's copy of this thread, which can be newer than the object
+  // this row was rendered from: re-resolving replaces the whole list, so
+  // a captured row object still carries the resolution from the scope the
+  // reader just left.
+  function latest(t: ReviewThread): ReviewThread {
+    return reviewThreads.getThreads().find((x) => x.id === t.id) ?? t;
+  }
+
+  // Returns true only when the thread actually landed on its line.
+  // "pending" does NOT count: it means the line element was not found, a
+  // reveal was requested and the view moved to the file header meanwhile
+  // -- but CollapsedRegion renders only DiffLine components and never a
+  // ReviewThreadCard, so a thread anchored in an unexpanded gap or
+  // outside the diffed range would leave the reader on a file header with
+  // no conversation and no explanation. Treating it as unplaced routes it
+  // to the expand-in-place floor instead, which is the invariant.
+  async function placeInDiff(t: ReviewThread): Promise<boolean> {
+    // A thread the server has resolved as removed or unmappable has no
+    // trustworthy position in the diff at all -- the recorded line now
+    // holds unrelated code. Don't jump anywhere; expand it in place with
+    // the reason, per the spec's list-only rule.
+    if (!reviewThreads.isPlaceable(t)) return false;
+    // A mid-stack commit's diff only shows files that commit touched, so
+    // HEAD is the scope most likely to contain the thread's file.
     const scope = diff.getScope();
     if (scope.kind !== "head") {
       await diff.resetToHead();
+      // The resolutions on hand describe the scope we just left, and the
+      // placement below reads them. DiffView's effect re-resolves for the
+      // new scope on its own, but not before this function needs the
+      // answer -- so ask for it here and wait.
+      await reviewThreads.resolveAt(diff.getCurrentCommitSha());
       await tick();
     }
-
-    const pr = diff.getCurrentPR();
-    if (
-      pr &&
-      diff.isFileCollapsed(pr.owner, pr.name, pr.number, t.path)
-    ) {
-      diff.toggleFileCollapsed(pr.owner, pr.name, pr.number, t.path);
-      await tick();
-    }
-
-    const path = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(t.path) : t.path;
-    const selector =
-      `.diff-file[data-file-path="${path}"] ` +
-      `.line-wrap[data-anchor-line="${t.line}"]` +
-      `[data-anchor-side="${t.side}"]`;
-    const el = document.querySelector<HTMLElement>(selector);
-    if (el) {
-      el.scrollIntoView({ block: "center", behavior: "smooth" });
-      el.classList.add("line-wrap--flash");
-      window.setTimeout(() => el.classList.remove("line-wrap--flash"), 1500);
-      return;
-    }
-    const fileEl = document.querySelector<HTMLElement>(`.diff-file[data-file-path="${path}"]`);
-    if (fileEl) fileEl.scrollIntoView({ block: "start", behavior: "smooth" });
+    const fresh = latest(t);
+    if (!reviewThreads.isPlaceable(fresh)) return false;
+    const at = reviewThreads.placementFor(fresh);
+    const outcome = await scrollToDiffLine(
+      { path: at.path, line: at.line, side: fresh.side === "LEFT" ? "LEFT" : "RIGHT" },
+      jumpDeps(),
+    );
+    return outcome === "line";
   }
 
   async function onApplyAll(): Promise<void> {
@@ -87,8 +150,19 @@
   }
 
   async function selectThread(t: ReviewThread): Promise<void> {
+    // Clicking the open row again closes it, so the list is navigable
+    // without the card in the way.
+    if (fallbackId === t.id) {
+      fallbackId = null;
+      return;
+    }
     activeId = t.id;
-    await scrollToThread(t);
+    fallbackId = null;
+    if (await placeInDiff(t)) return;
+    // The floor: the conversation is readable here, whatever the diff says.
+    // Report on the freshest copy -- placeInDiff may have re-resolved.
+    fallbackReason = placementReason(latest(t));
+    fallbackId = t.id;
   }
   // Two-step delete so a stale/unreachable thread (whose anchor moved off
   // the current diff, leaving no inline card) can be cleared from here:
@@ -138,6 +212,11 @@
                 title={orphan ? "anchored to a commit no longer in this branch" : t.status}
               ></span>
               <span class="thread-item__anchor">{anchorLabel(t)}</span>
+              {#if t.resolved && t.resolved.state !== "current"}
+                <span class="thread-item__drift" title="recorded at {anchorLabel(t)}">
+                  {driftLabel(t.resolved.state)}
+                </span>
+              {/if}
               <span class="thread-item__path">{t.path}</span>
               <span class="thread-item__count" title="comments">{(t.comments ?? []).length}c</span>
             </button>
@@ -153,6 +232,14 @@
               </svg>
             </button>
           </div>
+          {#if fallbackId === t.id}
+            <div class="thread-item__fallback">
+              <div class="thread-item__reason">
+                {fallbackReason} &middot; recorded at {anchorLabel(t)} in {t.commit_sha.slice(0, 7)}
+              </div>
+              <ReviewThreadCard thread={t} variant="gutter" />
+            </div>
+          {/if}
         {/each}
       </div>
       <SectionResizeHandle id="threads" body={bodyEl} label="Resize Review threads" />
@@ -277,6 +364,12 @@
     border-radius: 999px;
     flex-shrink: 0;
   }
+  .thread-item__drift {
+    font-size: 9px;
+    color: var(--accent-amber);
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
   .thread-item__path {
     font-family: var(--font-mono);
     font-size: 11px;
@@ -311,4 +404,13 @@
   .thread-item-row:hover .thread-item__delete { opacity: 1; }
   .thread-item__delete:hover { color: var(--accent-red); background: var(--bg-inset); }
   .thread-item__delete--armed { opacity: 1; color: var(--accent-red); }
+  .thread-item__fallback {
+    padding: 4px 8px 8px 20px;
+    border-bottom: 1px solid var(--diff-border);
+  }
+  .thread-item__reason {
+    font-size: 10px;
+    color: var(--accent-amber);
+    padding-bottom: 4px;
+  }
 </style>

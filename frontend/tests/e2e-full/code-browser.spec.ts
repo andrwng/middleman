@@ -65,7 +65,7 @@ test.describe("code browser panel (git-backed)", () => {
   // always opens with forcePath, so this test's seeding assertion holds
   // regardless of whatever bookmark a previous test left behind, and does
   // not depend on running before the toolbar test.
-  test("the browse action on a symbol-refs hit opens the panel alongside the diff, seeded at that hit's file", async ({ page }) => {
+  test("the browse action on a symbol-refs hit opens the panel over the diff, seeded at that hit's file", async ({ page }) => {
     await page.goto("/pulls/acme/widgets/1/files");
     await page.locator(".diff-file").first().waitFor({ state: "visible", timeout: 10_000 });
 
@@ -93,11 +93,13 @@ test.describe("code browser panel (git-backed)", () => {
     await expect(panel).toBeVisible();
     await expect(panel.locator(".code-browser-title")).toHaveText("internal/handler.go");
 
-    // Alongside, not instead of: both the gutter and the diff area are
-    // still present behind the panel, and the gutter search itself is
-    // untouched.
+    // Instead of, not alongside: 7156263 moved the panel into the diff
+    // area's own flex slot rather than giving it a third column, so
+    // .diff-area is unmounted while the panel is open. The symbol-refs
+    // gutter is a fixed-width sibling and is unaffected either way, so
+    // the search that got us here stays visible and untouched.
     await expect(gutter).toBeVisible();
-    await expect(page.locator(".diff-area")).toBeVisible();
+    await expect(page.locator(".diff-area")).toHaveCount(0);
     await expect(input).toHaveValue("HandleRequest");
   });
 
@@ -113,9 +115,11 @@ test.describe("code browser panel (git-backed)", () => {
     const panel = page.locator(".code-browser-panel");
     await expect(panel).toBeVisible();
 
-    // The diff itself stays mounted behind the panel -- this is an overlay,
-    // not a navigation away from the diff view.
-    await expect(page.locator(".diff-area")).toBeVisible();
+    // The panel replaces the diff area rather than overlaying it, so
+    // .diff-area is unmounted here too. Still the diff view, though, not a
+    // navigation away from it: the panel renders inside DiffView, which the
+    // assertion above already establishes.
+    await expect(page.locator(".diff-area")).toHaveCount(0);
 
     // Expand the fixture's one real subdirectory and open one of its files.
     const internalDir = page.locator(".code-browser-entry--dir", { hasText: "internal" });

@@ -15,7 +15,7 @@ func TestCodeBrowserState_NoRowDefault(t *testing.T) {
 	got, err := database.GetCodeBrowserState(context.Background(), mrID)
 	require.NoError(t, err)
 	assert.Equal(t, mrID, got.MergeRequestID)
-	assert.Equal(t, "", got.Path)
+	assert.Empty(t, got.Path)
 }
 
 func TestCodeBrowserState_SetThenGet(t *testing.T) {

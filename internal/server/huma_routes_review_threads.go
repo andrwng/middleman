@@ -42,18 +42,40 @@ type reviewThreadResponse struct {
 	CreatedAt     string                        `json:"created_at" doc:"UTC RFC3339 timestamp"`
 	UpdatedAt     string                        `json:"updated_at" doc:"UTC RFC3339 timestamp"`
 	Comments      []reviewThreadCommentResponse `json:"comments"`
+	Resolved      *resolvedAnchorResponse       `json:"resolved,omitempty" doc:"Where this thread's recorded anchor lands at the revision given by the 'at' query param. Absent when 'at' was not supplied."`
+}
+
+// resolvedAnchorResponse reports where a thread's recorded anchor ended up
+// at some later revision. Path and Line are meaningful for states "current"
+// and "moved"; for "removed" and "unmappable" the reader is shown the
+// recorded anchor instead and told the position could not be confirmed.
+type resolvedAnchorResponse struct {
+	State string `json:"state" doc:"current | moved | removed | unmappable"`
+	Path  string `json:"path,omitempty"`
+	Line  int    `json:"line,omitempty"`
 }
 
 type listReviewThreadsInput struct {
 	Owner  string `path:"owner"`
 	Name   string `path:"name"`
 	Number int    `path:"number"`
+	At     string `query:"at" doc:"Revision to resolve each thread's anchor against (the new-side SHA of the reader's current diff scope, or WORKING-TREE). Omitted, no resolution is computed."`
 }
 
 type listReviewThreadsOutput struct {
 	Body struct {
 		Threads []reviewThreadResponse `json:"threads"`
 	}
+}
+
+// applyAllReviewThreadsInput addresses the whole review rather than one
+// thread. It deliberately does NOT share listReviewThreadsInput: `at`
+// resolves anchors for reading and would publish a meaningless query
+// parameter on this endpoint.
+type applyAllReviewThreadsInput struct {
+	Owner  string `path:"owner"`
+	Name   string `path:"name"`
+	Number int    `path:"number"`
 }
 
 // reviewThreadDraft is one inline draft comment in a create request: an
@@ -217,6 +239,21 @@ func (s *Server) listReviewThreads(ctx context.Context, input *listReviewThreads
 	if !isLocalSource(input.Owner) {
 		return nil, huma.Error400BadRequest("review threads are local-worktree only")
 	}
+	// `at` reaches `git diff` as a positional revision argument
+	// (worktrees.FetchAnchorDiff), and git parses options anywhere on its
+	// command line -- including that slot. An `at` of
+	// "--output=/some/path" would be taken as a real option and truncate
+	// that file with diff text, over a plain GET that needs no CSRF token
+	// and no auth. Reject anything that is not a hex object id or the
+	// working-tree sentinel before any work happens; every character the
+	// pattern allows is a hex digit, so nothing it accepts can begin with
+	// the '-' an option requires. Reuses symbolRefsSHA rather than a
+	// second copy of the pattern (same defense as /blob and /symbol-refs).
+	if input.At != "" &&
+		input.At != worktrees.WorkingTreeSentinel &&
+		!symbolRefsSHA.MatchString(input.At) {
+		return nil, huma.Error400BadRequest("at must be a hex object id")
+	}
 	w, err := s.resolveLocalWorktree(ctx, input.Name, input.Number)
 	if err != nil {
 		return nil, huma.Error404NotFound("worktree not found")
@@ -229,9 +266,71 @@ func (s *Server) listReviewThreads(ctx context.Context, input *listReviewThreads
 	if err != nil {
 		return nil, huma.Error500InternalServerError("list review threads: " + err.Error())
 	}
+	if input.At != "" {
+		s.resolveThreadAnchors(ctx, w.Path, input.At, threads)
+	}
 	out := &listReviewThreadsOutput{}
 	out.Body.Threads = threads
 	return out, nil
+}
+
+// resolveThreadAnchors fills in each thread's Resolved block in place.
+//
+// A RIGHT-side line numbers the file at the anchor commit, so the mapping
+// runs from that commit forward to `at`. Diffs are memoised per source
+// revision (`at` is fixed for the whole request), because the diff text for
+// a (src, dst) pair says nothing about path or line -- so every thread
+// anchored at the same commit shares one git call rather than paying for
+// its own whole-tree diff.
+//
+// Three kinds of thread are deliberately left with Resolved nil, which the
+// UI reads as "no opinion" and places at the recorded anchor:
+//
+//   - Hidden threads. They render as a collapsed stub, never as a placed
+//     card, so resolving them would buy nothing and cost a git call.
+//
+//   - LEFT-side threads. Two separate reasons, either one sufficient. The
+//     source revision would have to be the OLD side of the reader's scope
+//     (base for the default base..working-tree scope, parent(from) for a
+//     commit span, HEAD itself for the working-tree scope) and the request
+//     does not carry it -- CommitSHA is always the scope's NEW-side sha, so
+//     neither it nor "CommitSHA^" is the right pre-image in general. And
+//     even given the right source, MapLine answers with a post-image line
+//     number, while a LEFT anchor is compared against old-side numbers in
+//     the rendered diff: different numbering spaces. LEFT anchors are only
+//     ever created on deleted lines, whose whole point is that they have no
+//     post-image, so forward-mapping them is not a meaningful question.
+//     Leaving them alone preserves today's correct placement.
+//
+//   - Threads whose stored commit_sha is not a hex object id. createReviewThreads
+//     keeps an unresolvable sha verbatim (an agent's typo reads as an
+//     orphaned thread rather than failing the whole create), so the column
+//     is not trustworthy input for argv -- see listReviewThreads' note on
+//     git's option parsing. A bogus sha legitimately reads as an orphan, so
+//     this skips that one thread and carries on with the rest rather than
+//     failing the request.
+func (s *Server) resolveThreadAnchors(
+	ctx context.Context, worktreePath, at string, threads []reviewThreadResponse,
+) {
+	diffs := map[string]worktrees.AnchorDiff{}
+	for i := range threads {
+		t := &threads[i]
+		if t.Hidden || t.Side == "LEFT" || !symbolRefsSHA.MatchString(t.CommitSHA) {
+			continue
+		}
+		src := t.CommitSHA
+		d, ok := diffs[src]
+		if !ok {
+			d = worktrees.FetchAnchorDiff(ctx, worktreePath, src, at)
+			diffs[src] = d
+		}
+		r := d.Resolve(t.Path, t.Line)
+		t.Resolved = &resolvedAnchorResponse{
+			State: string(r.State),
+			Path:  r.Path,
+			Line:  r.Line,
+		}
+	}
 }
 
 func (s *Server) createReviewThreads(ctx context.Context, input *createReviewThreadsInput) (*createReviewThreadsOutput, error) {
@@ -742,7 +841,7 @@ func (s *Server) discussReviewThread(ctx context.Context, input *reviewThreadAct
 
 // applyAllReviewThreads kicks off a single apply turn covering every
 // eligible (visible, open|discussed) thread on the MR.
-func (s *Server) applyAllReviewThreads(ctx context.Context, input *listReviewThreadsInput) (*listReviewThreadsOutput, error) {
+func (s *Server) applyAllReviewThreads(ctx context.Context, input *applyAllReviewThreadsInput) (*listReviewThreadsOutput, error) {
 	if !isLocalSource(input.Owner) {
 		return nil, huma.Error400BadRequest("review threads are local-worktree only")
 	}

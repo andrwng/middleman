@@ -7,6 +7,11 @@
   import ReviewBriefCard from "./ReviewBriefCard.svelte";
   import PRNotesPanel from "./PRNotesPanel.svelte";
   import TopSectionsStrip from "./TopSectionsStrip.svelte";
+  import SectionResizeHandle from "../diff/SectionResizeHandle.svelte";
+  import {
+    DIFF_RESERVE_BELOW,
+    getSectionHeight,
+  } from "../diff/sectionHeights.svelte.js";
   import { isReviewNavCollapsed } from "../../lib/uiState.svelte.js";
   import { getStores } from "../../context.js";
   import type { components } from "../../api/generated/schema.js";
@@ -67,6 +72,18 @@
     peeked = peeked === id ? null : id;
   }
 
+  // --- Top-block height state ----------------------------------------------
+  // The top block is bounded rather than free-growing. Left unbounded it
+  // overflowed the column, and `.review-main`'s `overflow: hidden` clipped
+  // the excess with no scrollbar -- taking the lower sections' own resize
+  // boundaries out of reach along with it. Bounded and scrollable, every
+  // boundary stays reachable and the diff always keeps a readable share.
+  let topEl: HTMLDivElement | undefined = $state();
+  const topMax = $derived.by(() => {
+    const h = getSectionHeight("top-sections");
+    return h === null ? null : `${h}px`;
+  });
+
   // --- Review-nav width state ----------------------------------------------
   const DEFAULT_REVIEW_NAV_WIDTH = 280;
   const MIN_REVIEW_NAV_WIDTH = 180;
@@ -116,6 +133,7 @@
 <div class="review-layout">
   <aside
     class="review-sidebar"
+    data-resize-column
     class:review-sidebar--collapsed={isReviewNavCollapsed()}
     style:width={isReviewNavCollapsed() ? "30px" : `${reviewNavWidth}px`}
   >
@@ -134,8 +152,13 @@
       ></div>
     {/if}
   </aside>
-  <div class="review-main">
-    <div class="top-sections" class:top-sections--consolidated={topConsolidated}>
+  <div class="review-main" data-resize-column>
+    <div
+      class="top-sections"
+      class:top-sections--consolidated={topConsolidated}
+      bind:this={topEl}
+      style:max-height={topMax}
+    >
       {#if !topConsolidated}
         <button
           type="button"
@@ -176,6 +199,12 @@
         {/if}
       {/if}
     </div>
+    <SectionResizeHandle
+      id="top-sections"
+      body={topEl}
+      label="Resize the review sections"
+      reserveBelow={DIFF_RESERVE_BELOW}
+    />
     <PRNotesPanel />
     <DiffView {owner} {name} {number} />
   </div>
@@ -231,6 +260,14 @@
     position: relative;
     display: flex;
     flex-direction: column;
+    /* Bounded and scrollable. `max-height` rather than `height` so a short
+       stack still reserves no space, and `overflow-y: auto` so content past
+       the bound stays reachable instead of being clipped by the column (which
+       is what put the AI summary's resize boundary out of reach). min-height:0
+       lets the block actually take its bound inside the flex column. */
+    max-height: 45%;
+    min-height: 0;
+    overflow-y: auto;
   }
 
   .top-sections__consolidate {

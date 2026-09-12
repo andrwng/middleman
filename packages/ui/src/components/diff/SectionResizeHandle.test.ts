@@ -34,8 +34,9 @@ function stubHeight(el: HTMLElement, height: number): void {
 }
 
 // Builds the section body the handle sizes. With `columnHeight` the body is
-// nested in a stand-in for the sidebar column, which is what bounds a drag;
-// without it the handle falls back to the viewport.
+// nested in a stand-in for the column that bounds a drag; without it the
+// handle falls back to the viewport. Columns opt in with data-resize-column,
+// so the same handle serves the review nav and the review-main column.
 function makeBody(bodyHeight: number, columnHeight?: number): HTMLElement {
   const body = document.createElement("div");
   stubHeight(body, bodyHeight);
@@ -44,7 +45,7 @@ function makeBody(bodyHeight: number, columnHeight?: number): HTMLElement {
     return body;
   }
   const column = document.createElement("aside");
-  column.className = "review-sidebar";
+  column.setAttribute("data-resize-column", "");
   stubHeight(column, columnHeight);
   column.appendChild(body);
   document.body.appendChild(column);
@@ -112,6 +113,23 @@ describe("SectionResizeHandle", () => {
     firePointer(handle, "pointerdown", 400);
     firePointer(handle, "pointermove", 5000);
     expect(getSectionHeight("commits")).toBe(400 - SECTION_RESERVE_BELOW);
+  });
+
+  it("falls back to the viewport when no ancestor opts in as a column", () => {
+    // A container that merely looks like a column does not bound the drag --
+    // only the data-resize-column contract does.
+    const body = document.createElement("div");
+    stubHeight(body, 200);
+    const bystander = document.createElement("aside");
+    bystander.className = "review-sidebar review-main";
+    stubHeight(bystander, 400);
+    bystander.appendChild(body);
+    document.body.appendChild(bystander);
+
+    const handle = renderHandle(body);
+    firePointer(handle, "pointerdown", 400);
+    firePointer(handle, "pointermove", 5000);
+    expect(getSectionHeight("commits")).toBe(window.innerHeight - SECTION_RESERVE_BELOW);
   });
 
   it("persists on release, not on every move", () => {

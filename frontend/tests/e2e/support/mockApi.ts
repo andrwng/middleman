@@ -17,6 +17,43 @@ const LOCAL_LINKS_CONTENT =
   "Filler paragraph for scroll distance.\n\n".repeat(40) +
   "## Details\n\nThe details section.\n";
 
+// The local worktree's head commit. Threads anchored here read as
+// current rather than rebased away, and it is what
+// diffStore.getCurrentCommitSha() resolves to in the head scope.
+export const LOCAL_HEAD_SHA = "abc1234def5678901234567890abcdef12345678";
+
+// One modified file with real hunk lines, served as the local worktree's
+// head-scope diff. RIGHT-side anchors exist at new_num 10, 11 and 12, so
+// a review thread on any of those has a .line-wrap to be placed on;
+// anything anchored elsewhere (or in another file) has none, which is
+// what the reachability tests need in order to fail without the floor.
+export const LOCAL_DIFF_FILE_PATH = "internal/api/handler.go";
+const LOCAL_DIFF_FILES = [
+  {
+    path: LOCAL_DIFF_FILE_PATH,
+    old_path: LOCAL_DIFF_FILE_PATH,
+    status: "modified",
+    is_binary: false,
+    is_whitespace_only: false,
+    additions: 1,
+    deletions: 0,
+    hunks: [
+      {
+        old_start: 10,
+        old_count: 2,
+        new_start: 10,
+        new_count: 3,
+        section: "func Handle",
+        lines: [
+          { type: "context", content: "\tctx := r.Context()", old_num: 10, new_num: 10 },
+          { type: "add", content: "\tlog.Println(\"handling\")", new_num: 11 },
+          { type: "context", content: "\treturn nil", old_num: 11, new_num: 12 },
+        ],
+      },
+    ],
+  },
+];
+
 const localWorktreePull = {
   ID: LOCAL_WORKTREE_ID,
   RepoID: 99,
@@ -314,6 +351,39 @@ export function getCreatedReviewThreads(): ReviewThreadRecord[] {
   return createdReviewThreads;
 }
 
+// Pre-load a thread so a GET returns it without the test having to draft
+// and submit one first — for tests about how an ALREADY-persisted thread
+// behaves (placement, reachability) rather than about creating one.
+//
+// Call from the test body, never from a fixture that runs before
+// mockApi(): mockApi() clears this state so each test starts clean.
+export function seedReviewThread(over: Partial<ReviewThreadRecord> = {}): ReviewThreadRecord {
+  const now = "2026-06-01T00:00:00Z";
+  const id = nextReviewThreadId++;
+  const record: ReviewThreadRecord = {
+    id,
+    path: LOCAL_DIFF_FILE_PATH,
+    side: "RIGHT",
+    line: 11,
+    commit_sha: LOCAL_HEAD_SHA,
+    status: "open",
+    hidden: false,
+    writes_allowed: true,
+    created_at: now,
+    updated_at: now,
+    comments: [{
+      id: nextReviewCommentId++,
+      author: "user",
+      body: `seeded thread ${id}`,
+      created_at: now,
+      sent_to_agent: false,
+    }],
+    ...over,
+  };
+  createdReviewThreads.push(record);
+  return record;
+}
+
 async function fulfillJson(route: Route, body: unknown, status = 200): Promise<void> {
   await route.fulfill({
     status,
@@ -478,19 +548,34 @@ export async function mockApi(page: Page): Promise<void> {
       return;
     }
 
-    // Working-tree-vs-HEAD diff — fetched by DocReviewSurface to compute
-    // per-line "uncommitted" highlighting for the open doc
-    // (RenderedMarkdownView's uncommittedLines prop -> .rmd-uncommitted
-    // on the matching .rmd-anchor span). Defaults to no added lines for
-    // any file so every other doc-review test's rendering is unaffected;
-    // the "uncommitted highlight" tests below override this route
-    // per-test via page.route() to inject (or explicitly withhold) an
-    // added line for README.md.
+    // The diff, in two distinct roles.
+    //
+    // With no scope params it is DiffView's own head-scope diff, and for
+    // a local worktree it serves LOCAL_DIFF_FILES so the diff pane has
+    // real lines with real (path, line, side) anchors to place review
+    // threads against.
+    //
+    // With ?commit=... it is DocReviewSurface's working-tree-vs-HEAD
+    // fetch, used only to compute per-line "uncommitted" highlighting
+    // for the open doc (RenderedMarkdownView's uncommittedLines prop ->
+    // .rmd-uncommitted on the matching .rmd-anchor span). That keeps
+    // defaulting to no added lines for any file, so every doc-review
+    // test's rendering is unaffected; the "uncommitted highlight" tests
+    // override this route per-test via page.route() to inject (or
+    // explicitly withhold) an added line for README.md.
     const diffMatch = pathname.match(
       /^\/api\/v1\/repos\/([^/]+)\/([^/]+)\/pulls\/(\d+)\/diff$/,
     );
     if (method === "GET" && diffMatch) {
-      await fulfillJson(route, { stale: false, whitespace_only_count: 0, files: [] });
+      const scoped = url.searchParams.has("commit") ||
+        url.searchParams.has("from") ||
+        url.searchParams.has("from_patchset");
+      const serveFiles = diffMatch[1] === "local" && !scoped;
+      await fulfillJson(route, {
+        stale: false,
+        whitespace_only_count: 0,
+        files: serveFiles ? LOCAL_DIFF_FILES : [],
+      });
       return;
     }
 
@@ -627,10 +712,24 @@ export async function mockApi(page: Page): Promise<void> {
       return;
     }
     const commitsMatch = pathname.match(
-      /^\/api\/v1\/repos\/[^/]+\/[^/]+\/pulls\/\d+\/commits$/,
+      /^\/api\/v1\/repos\/([^/]+)\/[^/]+\/pulls\/\d+\/commits$/,
     );
     if (method === "GET" && commitsMatch) {
-      await fulfillJson(route, { commits: [] });
+      // The local worktree gets one real commit so getCurrentCommitSha()
+      // resolves -- the diff view asks the review-threads endpoint to
+      // resolve anchors against it -- and so a thread anchored to
+      // LOCAL_HEAD_SHA does not read as rebased away. GitHub-sourced PRs
+      // keep the empty stub they have always had.
+      const commits = commitsMatch[1] === "local"
+        ? [{
+            sha: LOCAL_HEAD_SHA,
+            message: "local head",
+            author_name: "Dev",
+            authored_at: "2026-06-01T00:00:00Z",
+            parents: [],
+          }]
+        : [];
+      await fulfillJson(route, { commits });
       return;
     }
 

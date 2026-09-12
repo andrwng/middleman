@@ -481,6 +481,17 @@
   const aiThreadsForFile = $derived(aiStore.getThreadsForFile(path));
   // The store has no per-path accessor (only getThreads(), the full unfiltered
   // list for the active PR, and getThreadsAtAnchor()) — filter by path here.
+  //
+  // Note this deliberately positions threads by their RECORDED anchor
+  // (t.path / t.start_line ?? t.line in cardsForRange below), bypassing the
+  // store's placementFor/isPlaceable pair that the diff view places by. That
+  // is correct for this surface and not an oversight: the doc pane loads
+  // without an `at` revision, so no thread here ever carries a `resolved`
+  // block, and placementFor would answer with the recorded anchor anyway.
+  // Two surfaces therefore place threads out of one shared store by
+  // different rules — if this view ever starts requesting resolutions, it
+  // has to move onto placementFor/isPlaceable to stay consistent with the
+  // diff view.
   const reviewThreadsForFile = $derived(
     reviewThreadsStore.getThreads().filter((t) => t.path === path),
   );

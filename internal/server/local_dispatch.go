@@ -227,7 +227,8 @@ func (s *Server) getDiffLocal(
 	case input.Commit != "":
 		files, err = worktrees.DiffSingleCommit(ctx, w.Path, input.Commit)
 	case input.From != "" && input.To != "":
-		files, err = worktrees.DiffRange(ctx, w.Path, input.From, input.To)
+		// Inclusive of input.From, matching the PR-backed path's ParentOf(from).
+		files, err = worktrees.DiffCommitSpan(ctx, w.Path, input.From, input.To)
 	default:
 		baseRef := s.lookupBaseRefForWorktree(ctx, *w)
 		ds, dsErr := worktrees.DiffAgainstBase(ctx, w.Path, baseRef)

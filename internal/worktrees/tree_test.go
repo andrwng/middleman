@@ -2,10 +2,10 @@ package worktrees
 
 import (
 	"context"
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -79,7 +79,7 @@ func TestTree_Subdirectory(t *testing.T) {
 	for _, e := range entries {
 		assert.NotEmpty(e.Name)
 		assert.Contains([]string{"dir", "file"}, e.Type)
-		assert.True(filepath.HasPrefix(e.Path, "subdir/"), "path should be prefixed with directory name")
+		assert.True(strings.HasPrefix(e.Path, "subdir/"), "path should be prefixed with directory name")
 	}
 
 	// Test with a real SHA
@@ -101,13 +101,13 @@ func TestTree_NonexistentPath(t *testing.T) {
 	// Test with WorkingTreeSentinel
 	_, err := Tree(ctx, dir, WorkingTreeSentinel, "does/not/exist")
 	require.Error(err)
-	require.True(errors.Is(err, ErrNotFound))
+	require.ErrorIs(err, ErrNotFound)
 
 	// Test with a real SHA
 	headSHA := gitHeadT(t, dir)
 	_, err = Tree(ctx, dir, headSHA, "does/not/exist")
 	require.Error(err)
-	require.True(errors.Is(err, ErrNotFound))
+	require.ErrorIs(err, ErrNotFound)
 }
 
 func TestTree_PathTraversalRejected(t *testing.T) {
@@ -128,5 +128,5 @@ func TestTree_PathTraversalRejected(t *testing.T) {
 	// Path traversal with ".." should be rejected with ErrNotFound
 	_, err := Tree(ctx, dir, WorkingTreeSentinel, "../secret.txt")
 	require.Error(err)
-	require.True(errors.Is(err, ErrNotFound))
+	require.ErrorIs(err, ErrNotFound)
 }

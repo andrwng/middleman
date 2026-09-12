@@ -32,16 +32,15 @@ func (m *Manager) Tree(ctx context.Context, host, owner, name, sha, path string)
 // Format: <mode> SP <type> SP <sha>\t<name>
 func ParseLsTree(out []byte, path string) ([]TreeEntry, error) {
 	entries := make([]TreeEntry, 0) // non-nil empty slice
-	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimRight(string(out), "\n"), "\n") {
 		if line == "" {
 			continue
 		}
 		// <mode> SP <type> SP <sha>\t<name>
-		tabIdx := strings.IndexByte(line, '\t')
-		if tabIdx < 0 {
+		meta, entryName, ok := strings.Cut(line, "\t")
+		if !ok {
 			return nil, fmt.Errorf("gitclone: unexpected ls-tree line %q", line)
 		}
-		meta, entryName := line[:tabIdx], line[tabIdx+1:]
 		fields := strings.Fields(meta)
 		if len(fields) < 2 {
 			return nil, fmt.Errorf("gitclone: unexpected ls-tree metadata %q", meta)

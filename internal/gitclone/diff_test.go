@@ -81,6 +81,65 @@ func TestDiff(t *testing.T) {
 	assert.Equal("added", result.Files[1].Status)
 }
 
+// TestDiffRangeIsInclusiveOfTheOldestCommit pins the guarantee the UI's span
+// selection rests on. Selecting commits c1..c3 asks the server for
+// from=c1&to=c3, which resolves to Diff(ParentOf(c1), c3) -- so c1's own
+// changes have to appear. The scope pill used to render that span as
+// "c1..c3", which in git syntax means the opposite, and a reader reasonably
+// concluded the base commit was being left out.
+func TestDiffRangeIsInclusiveOfTheOldestCommit(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	dir := t.TempDir()
+	remote := filepath.Join(dir, "remote.git")
+	work := filepath.Join(dir, "work")
+
+	run(t, dir, "git", "init", "--bare", "--initial-branch=main", remote)
+	run(t, dir, "git", "clone", remote, work)
+	run(t, work, "git", "config", "user.email", "test@test.com")
+	run(t, work, "git", "config", "user.name", "Test")
+
+	require.NoError(os.WriteFile(filepath.Join(work, "base.go"),
+		[]byte("package main\n"), 0o644))
+	run(t, work, "git", "add", ".")
+	run(t, work, "git", "commit", "-m", "initial")
+	run(t, work, "git", "push", "origin", "main")
+
+	// Three commits, each adding a file of its own, so the diff's file list
+	// says exactly which commits are represented.
+	run(t, work, "git", "checkout", "-b", "feature")
+	for _, name := range []string{"first.go", "second.go", "third.go"} {
+		require.NoError(os.WriteFile(filepath.Join(work, name),
+			[]byte("package main\n"), 0o644))
+		run(t, work, "git", "add", ".")
+		run(t, work, "git", "commit", "-m", "add "+name)
+	}
+	run(t, work, "git", "push", "origin", "feature")
+
+	oldest := getSHA(t, work, "origin/feature~2") // the commit adding first.go
+	newest := getSHA(t, work, "origin/feature")   // the commit adding third.go
+
+	clonesDir := t.TempDir()
+	mgr := New(clonesDir, nil)
+	require.NoError(mgr.EnsureClone(
+		context.Background(), "github.com", "test", "repo", remote))
+
+	// The handler's from/to branch does exactly this pair of calls.
+	parent, err := mgr.ParentOf(context.Background(), "github.com", "test", "repo", oldest)
+	require.NoError(err)
+	result, err := mgr.Diff(
+		context.Background(), "github.com", "test", "repo", parent, newest, false)
+	require.NoError(err)
+
+	paths := make([]string, 0, len(result.Files))
+	for _, f := range result.Files {
+		paths = append(paths, f.Path)
+	}
+	// first.go is the one at stake: it comes from the oldest selected commit.
+	assert.ElementsMatch([]string{"first.go", "second.go", "third.go"}, paths)
+}
+
 func TestDiffWhitespaceOnly(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

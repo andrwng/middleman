@@ -22,11 +22,13 @@ vi.mock("./DiffFile.svelte", () => ({
 
 // DiffView has no broader unit-test suite by design -- its layout is real
 // flexbox that jsdom doesn't implement, and the Playwright suite is the
-// actual net for that (see Task 9/10 history). This file exists solely to
-// cover the scope-change effect guarding the symbol-refs gutter: DiffView
-// is the one place that reacts to both diffStore's scope and
-// symbolRefsStore's active search, so the guard can only be exercised by
-// mounting it, not by testing either store in isolation.
+// actual net for that (see Task 9/10 history). This file covers the two
+// cross-store effects that only exist here, and so can only be exercised
+// by mounting the component rather than by testing either store alone:
+// the scope-change guard on the symbol-refs gutter (diffStore's scope vs
+// symbolRefsStore's active search), and the revision that review-thread
+// anchor resolution is requested against (diffStore's current SHA vs the
+// threads store).
 
 // Deliberately fails every request so `diff`/`commits` stay null/empty
 // throughout. This suite only cares about the scope-tracking effect, not
@@ -137,14 +139,21 @@ function symbolRefsClient(): MiddlemanClient {
   } as unknown as MiddlemanClient;
 }
 
-// DiffView only calls start()/stop() on ai and brief, and load()/clear()
-// on reviewThreads -- it never reads anything back from them -- so
-// trivial fakes suffice; there's no need for the real stores here.
+// DiffView only calls start()/stop() on ai and brief, and
+// load()/resolveAt()/clear() on reviewThreads -- it never reads anything
+// back from them -- so trivial fakes suffice; there's no need for the
+// real stores here. The reviewThreads fake's calls ARE asserted (see the
+// resolution suite at the bottom), which is the point: what DiffView
+// asks for is the seam this feature's other tests all mocked past.
 function fakeLifecycleStore() {
   return { start: vi.fn(), stop: vi.fn() };
 }
 function fakeReviewThreadsStore() {
-  return { load: vi.fn(async () => {}), clear: vi.fn() };
+  return {
+    load: vi.fn(async () => {}),
+    resolveAt: vi.fn(async () => {}),
+    clear: vi.fn(),
+  };
 }
 
 // DiffToolbar (rendered once `diff` loads) reads this store straight from
@@ -198,6 +207,7 @@ function renderDiffView() {
   const diffStore = createDiffStore({ client });
   const symbolRefsStore = createSymbolRefsStore({ client });
   const codeBrowserStore = fakeCodeBrowserStore();
+  const reviewThreadsStore = fakeReviewThreadsStore();
   render(DiffView, {
     props: { owner: "acme", name: "widget", number: 7 },
     context: new Map<symbol, unknown>([
@@ -205,14 +215,14 @@ function renderDiffView() {
         diff: diffStore,
         ai: fakeLifecycleStore(),
         brief: fakeLifecycleStore(),
-        reviewThreads: fakeReviewThreadsStore(),
+        reviewThreads: reviewThreadsStore,
         symbolRefs: symbolRefsStore,
         codeBrowser: codeBrowserStore,
         detail: fakeDetailStore(),
       }],
     ]),
   });
-  return { diffStore, symbolRefsStore, codeBrowserStore };
+  return { diffStore, symbolRefsStore, codeBrowserStore, reviewThreadsStore };
 }
 
 beforeEach(() => {
@@ -562,5 +572,74 @@ describe("DiffView: symbol-refs browse bypasses a stale bookmark", () => {
 
     // Never resolves to the stale bookmark.
     expect(codeBrowserStore.path).not.toBe("b.go");
+  });
+});
+
+// The seam every other test of this feature mocked past: diffStore's
+// revision -> the threads store's resolution request. The mount-time
+// sample this replaces was always "" (loadDiff nulls `commits` for the
+// new PR and loadCommits only assigns them after an awaited fetch), so
+// `at` never left the browser and the whole server-side resolution was
+// dead code in practice.
+describe("DiffView: resolving review-thread anchors against the reader's revision", () => {
+  it("asks for resolution once the revision arrives, not at mount", async () => {
+    installCommitsFetch(() => "sha-head-1");
+    const { diffStore, reviewThreadsStore } = renderDiffView();
+
+    // Mount cannot know the revision, so it must not claim one.
+    expect(reviewThreadsStore.load).toHaveBeenCalledWith("acme", "widget", 7);
+
+    await waitFor(() => {
+      expect(diffStore.getCurrentCommitSha()).toBe("sha-head-1");
+    });
+    await waitFor(() => {
+      expect(reviewThreadsStore.resolveAt).toHaveBeenCalledWith("sha-head-1");
+    });
+  });
+
+  it("re-resolves when the reader changes scope", async () => {
+    installCommitsFetch(() => "sha-head-1");
+    const { diffStore, reviewThreadsStore } = renderDiffView();
+    await waitFor(() => {
+      expect(reviewThreadsStore.resolveAt).toHaveBeenCalledWith("sha-head-1");
+    });
+
+    // Picking a commit renumbers the diff, so every resolution on hand
+    // now describes the scope the reader left.
+    diffStore.selectCommit("sha-a");
+    await waitFor(() => {
+      expect(reviewThreadsStore.resolveAt).toHaveBeenCalledWith("sha-a");
+    });
+
+    // And back again.
+    await diffStore.resetToHead();
+    await waitFor(() => {
+      expect(reviewThreadsStore.resolveAt).toHaveBeenLastCalledWith("sha-head-1");
+    });
+  });
+
+  it("never asks for resolution against an unknown revision", async () => {
+    // Every request fails, so `commits` stays null and there is no
+    // revision to resolve against. Sending "" would make the server
+    // treat `at` as absent while the store recorded it as present.
+    const { reviewThreadsStore } = renderDiffView();
+    await tick();
+    await tick();
+    expect(reviewThreadsStore.resolveAt).not.toHaveBeenCalled();
+  });
+
+  it("does not re-resolve while the revision is unchanged", async () => {
+    // The effect writes the revision it just resolved; if that write were
+    // reactive it would re-trigger the effect that made it. A no-op
+    // scope reassignment is the cheapest way to notice such a loop.
+    installCommitsFetch(() => "sha-head-1");
+    const { diffStore, reviewThreadsStore } = renderDiffView();
+    await waitFor(() => {
+      expect(reviewThreadsStore.resolveAt).toHaveBeenCalledTimes(1);
+    });
+    await diffStore.refresh();
+    await tick();
+    await tick();
+    expect(reviewThreadsStore.resolveAt).toHaveBeenCalledTimes(1);
   });
 });

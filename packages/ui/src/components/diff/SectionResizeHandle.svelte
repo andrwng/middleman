@@ -7,10 +7,11 @@
     type SectionId,
   } from "./sectionHeights.svelte.js";
 
-  // The draggable boundary at the bottom of a sidebar section. Dragging it
-  // sizes the section above; whatever sits below slides, and the file list at
-  // the foot of the column absorbs the difference. See sectionHeights for why
-  // the space comes from there.
+  // The draggable boundary at the bottom of a resizable section. Dragging it
+  // sizes the section above; whatever sits below slides, and the elastic pane
+  // at the foot of the column absorbs the difference -- the file list in the
+  // review nav, the diff itself in the review-main column. See sectionHeights
+  // for why the space comes from there.
 
   interface Props {
     id: SectionId;
@@ -18,8 +19,11 @@
     // first render pass and populated well before a pointer can reach us.
     body: HTMLElement | null | undefined;
     label: string;
+    // Height a drag always leaves for whatever sits below. Defaults to the
+    // section reserve; the top-block divider asks for the larger diff reserve.
+    reserveBelow?: number;
   }
-  const { id, body, label }: Props = $props();
+  const { id, body, label, reserveBelow }: Props = $props();
 
   let dragging = false;
   let startY = 0;
@@ -31,9 +35,11 @@
     dragging = true;
     startY = e.clientY;
     startHeight = body.getBoundingClientRect().height;
-    // The column bounds how tall the section may get. Measured once per drag:
-    // re-reading it per move would cost a layout on every pixel.
-    const column = body.closest(".review-sidebar");
+    // The column bounds how tall the section may get. A column opts in with
+    // data-resize-column rather than being matched by class name, so the same
+    // handle serves both stacks. Measured once per drag: re-reading it per
+    // move would cost a layout on every pixel.
+    const column = body.closest("[data-resize-column]");
     columnHeight = column
       ? column.getBoundingClientRect().height
       : window.innerHeight;
@@ -44,7 +50,7 @@
   function onPointerMove(e: PointerEvent): void {
     if (!dragging) return;
     const desired = startHeight + (e.clientY - startY);
-    setSectionHeight(id, clampSectionHeight(desired, columnHeight));
+    setSectionHeight(id, clampSectionHeight(desired, columnHeight, reserveBelow));
   }
 
   function onPointerUp(e: PointerEvent): void {
@@ -74,6 +80,10 @@
 <style>
   .section-resize {
     height: 6px;
+    /* Several parents are flex columns, where the default shrink factor would
+       let a tight column squeeze the handle to nothing -- an invisible,
+       un-hoverable boundary. It never gives up its 6px. */
+    flex-shrink: 0;
     cursor: row-resize;
     background: transparent;
   }
