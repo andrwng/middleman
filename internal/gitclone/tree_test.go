@@ -2,7 +2,6 @@ package gitclone
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,7 +28,7 @@ func TestTree_NonexistentPath(t *testing.T) {
 
 	_, err := mgr.Tree(context.Background(), host, owner, name, sha, "does/not/exist")
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrNotFound))
+	assert.ErrorIs(t, err, ErrNotFound)
 }
 
 func TestTree_NonexistentSHA(t *testing.T) {
@@ -37,7 +36,7 @@ func TestTree_NonexistentSHA(t *testing.T) {
 
 	_, err := mgr.Tree(context.Background(), host, owner, name, "0000000000000000000000000000000000000000", "")
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrNotFound))
+	assert.ErrorIs(t, err, ErrNotFound)
 }
 
 func TestTree_Subdirectory(t *testing.T) {

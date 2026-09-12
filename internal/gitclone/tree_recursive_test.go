@@ -2,7 +2,6 @@ package gitclone
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -35,5 +34,5 @@ func TestTreeRecursive_NonexistentSHA(t *testing.T) {
 
 	_, err := mgr.TreeRecursive(context.Background(), host, owner, name, "0000000000000000000000000000000000000000")
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrNotFound))
+	assert.ErrorIs(t, err, ErrNotFound)
 }

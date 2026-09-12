@@ -146,7 +146,7 @@ func TestAPITree_Recursive(t *testing.T) {
 	require.NoError(err)
 	require.Equal(http.StatusOK, resp.StatusCode())
 	require.NotNil(resp.JSON200)
-	assert.Equal("", resp.JSON200.Path, "recursive listing ignores Path")
+	assert.Empty(resp.JSON200.Path, "recursive listing ignores Path")
 	require.NotNil(resp.JSON200.Entries)
 	entries := *resp.JSON200.Entries
 	assert.Contains(entries, generated.TreeEntryJSON{Name: "root.txt", Path: "root.txt", Type: "file"})

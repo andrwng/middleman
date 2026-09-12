@@ -2,7 +2,6 @@ package worktrees
 
 import (
 	"context"
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -60,5 +59,5 @@ func TestTreeRecursive_NonexistentSHA(t *testing.T) {
 
 	_, err := TreeRecursive(ctx, dir, "0000000000000000000000000000000000000000")
 	require.Error(err)
-	require.True(errors.Is(err, ErrNotFound))
+	require.ErrorIs(err, ErrNotFound)
 }
