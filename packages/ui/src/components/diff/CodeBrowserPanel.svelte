@@ -153,14 +153,27 @@
   // currentDir locally and never touches browser.path.
   let currentDir = $state("");
 
+  // Syncing has to key off the open file CHANGING, not off the two values
+  // disagreeing. Comparing against currentDir made this effect depend on
+  // the state it writes, so every local folder navigation re-ran it, found
+  // browser.path still pointing into the old directory, and snapped the
+  // listing straight back -- browsing to any directory other than the open
+  // file's own was impossible. lastSyncedPath is a plain let, not $state,
+  // for the same reason: a reactive write here would re-trigger the effect
+  // that made it. untrack keeps the reads below out of the dependencies.
+  let lastSyncedPath: string | null = null;
+
   $effect(() => {
     const p = browser.path;
-    if (p == null) return;
+    if (p == null || p === lastSyncedPath) return;
+    lastSyncedPath = p;
     const idx = p.lastIndexOf("/");
     const dir = idx === -1 ? "" : p.slice(0, idx);
-    if (dir === currentDir) return;
-    currentDir = dir;
-    if (!browser.entriesByDir.has(dir)) void browser.loadTree(dir);
+    untrack(() => {
+      if (dir === currentDir) return;
+      currentDir = dir;
+      if (!browser.entriesByDir.has(dir)) void browser.loadTree(dir);
+    });
   });
 
   function openDir(path: string): void {

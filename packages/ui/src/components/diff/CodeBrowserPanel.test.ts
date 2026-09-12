@@ -186,6 +186,14 @@ describe("CodeBrowserPanel", () => {
     const repoRoot = screen.getByRole("button", { name: "widget" });
     await fireEvent.click(repoRoot);
 
+    // The text "src" alone cannot tell the two states apart: it is the
+    // directory entry when the root is listed and the breadcrumb segment
+    // when src is. What distinguishes them is which breadcrumb segment is
+    // the current (disabled) one, and whether src's contents are still
+    // listed -- so assert those, or this passes whether or not the
+    // listing actually moved.
+    expect((screen.getByRole("button", { name: "widget" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByText("a.txt")).toBeNull();
     expect(await screen.findByText("src")).toBeTruthy();
     expect(codeBrowser.navigateTo).not.toHaveBeenCalled();
   });
