@@ -507,6 +507,7 @@ func (s *Server) registerAPI(api huma.API) {
 
 	s.registerSessionRoutes(api)
 	s.registerReviewThreadRoutes(api)
+	s.registerReviewCommentAnchorRoutes(api)
 }
 
 func NewOpenAPI() *huma.OpenAPI {

@@ -717,6 +717,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/repos/{owner}/{name}/pulls/{number}/review-comment-anchors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get repos by owner by name pulls by number review comment anchors */
+        get: operations["get-repos-by-owner-by-name-pulls-by-number-review-comment-anchors"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/repos/{owner}/{name}/pulls/{number}/review-threads": {
         parameters: {
             query?: never;
@@ -2419,6 +2436,39 @@ export interface components {
             path?: string;
             /** @description current | moved | removed | unmappable */
             state: string;
+        };
+        ReviewCommentAnchorResponse: {
+            /**
+             * Format: int64
+             * @description GitHub review comment id
+             */
+            comment_id: number;
+            /**
+             * Format: int64
+             * @description Set for current and moved
+             */
+            line?: number;
+            /** @description Set for current and moved */
+            path?: string;
+            /**
+             * Format: int64
+             * @description First line of a multi-line comment, when it still precedes line
+             */
+            start_line?: number;
+            /** @description current | moved | removed | unmappable */
+            state: string;
+        };
+        ReviewCommentAnchorsResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/ReviewCommentAnchorsResponse.json
+             */
+            readonly $schema?: string;
+            /** @description One entry per resolved comment. Comments absent here (left side, file-level, no clone yet, out of time) keep their recorded position. */
+            anchors: components["schemas"]["ReviewCommentAnchorResponse"][] | null;
+            /** @description Revision the anchors were resolved against; empty when none was available */
+            at: string;
         };
         ReviewThreadCommentResponse: {
             /** @description user | agent */
@@ -4644,6 +4694,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SubmitReviewResponseBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-repos-by-owner-by-name-pulls-by-number-review-comment-anchors": {
+        parameters: {
+            query?: {
+                /** @description Revision to resolve against: the new-side SHA of the diff on screen. Defaults to the pull request's diff head. */
+                at?: string;
+            };
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewCommentAnchorsResponse"];
                 };
             };
             /** @description Error */

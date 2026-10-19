@@ -85,6 +85,8 @@ type Server struct {
 	viewerLogin string
 	viewerName  string
 
+	reviewAnchors reviewAnchorCache
+
 	// bg tracks short-lived goroutines that HTTP handlers spawn
 	// outside of the Syncer's own wait group (e.g. mergePR's
 	// post-failure refresh). Shutdown waits on bg before the

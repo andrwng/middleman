@@ -294,6 +294,33 @@ func TestNormalizeReviewCommentEvent_FallsBackToOriginalLine(t *testing.T) {
 	assert.Contains(event.MetadataJSON, `"line":10`)
 	assert.Contains(event.MetadataJSON, `"start_line":8`)
 	assert.Contains(event.MetadataJSON, `"commit_id":"old-sha"`)
+	assert.Contains(event.MetadataJSON, `"original_line":10`)
+	assert.Contains(event.MetadataJSON, `"original_start_line":8`)
+	assert.Contains(event.MetadataJSON, `"original_commit_id":"old-sha"`)
+}
+
+func TestNormalizeReviewCommentEvent_KeepsOriginalAnchorBesideCurrent(t *testing.T) {
+	assert := Assert.New(t)
+
+	// GitHub moved this comment to a newer commit; the creation anchor must
+	// survive next to the current one.
+	c := &gh.PullRequestComment{
+		ID:                new(int64(2)),
+		Path:              new("a.go"),
+		Line:              new(14),
+		StartLine:         new(12),
+		CommitID:          new("new-sha"),
+		OriginalLine:      new(10),
+		OriginalStartLine: new(8),
+		OriginalCommitID:  new("old-sha"),
+	}
+
+	event := NormalizeReviewCommentEvent(10, c)
+	assert.Contains(event.MetadataJSON, `"line":14`)
+	assert.Contains(event.MetadataJSON, `"commit_id":"new-sha"`)
+	assert.Contains(event.MetadataJSON, `"original_line":10`)
+	assert.Contains(event.MetadataJSON, `"original_start_line":8`)
+	assert.Contains(event.MetadataJSON, `"original_commit_id":"old-sha"`)
 }
 
 func TestNormalizeForcePushEvent(t *testing.T) {

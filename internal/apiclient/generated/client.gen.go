@@ -947,6 +947,36 @@ type ResolvedAnchorResponse struct {
 	State string `json:"state"`
 }
 
+// ReviewCommentAnchorResponse defines model for ReviewCommentAnchorResponse.
+type ReviewCommentAnchorResponse struct {
+	// CommentId GitHub review comment id
+	CommentId int64 `json:"comment_id"`
+
+	// Line Set for current and moved
+	Line *int64 `json:"line,omitempty"`
+
+	// Path Set for current and moved
+	Path *string `json:"path,omitempty"`
+
+	// StartLine First line of a multi-line comment, when it still precedes line
+	StartLine *int64 `json:"start_line,omitempty"`
+
+	// State current | moved | removed | unmappable
+	State string `json:"state"`
+}
+
+// ReviewCommentAnchorsResponse defines model for ReviewCommentAnchorsResponse.
+type ReviewCommentAnchorsResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+
+	// Anchors One entry per resolved comment. Comments absent here (left side, file-level, no clone yet, out of time) keep their recorded position.
+	Anchors *[]ReviewCommentAnchorResponse `json:"anchors"`
+
+	// At Revision the anchors were resolved against; empty when none was available
+	At string `json:"at"`
+}
+
 // ReviewThreadCommentResponse defines model for ReviewThreadCommentResponse.
 type ReviewThreadCommentResponse struct {
 	// Author user | agent
@@ -1441,6 +1471,12 @@ type GetReposByOwnerByNamePullsByNumberDiffParams struct {
 	ToPatchset *int64 `form:"to_patchset,omitempty" json:"to_patchset,omitempty"`
 }
 
+// GetReposByOwnerByNamePullsByNumberReviewCommentAnchorsParams defines parameters for GetReposByOwnerByNamePullsByNumberReviewCommentAnchors.
+type GetReposByOwnerByNamePullsByNumberReviewCommentAnchorsParams struct {
+	// At Revision to resolve against: the new-side SHA of the diff on screen. Defaults to the pull request's diff head.
+	At *string `form:"at,omitempty" json:"at,omitempty"`
+}
+
 // GetReposByOwnerByNamePullsByNumberReviewThreadsParams defines parameters for GetReposByOwnerByNamePullsByNumberReviewThreads.
 type GetReposByOwnerByNamePullsByNumberReviewThreadsParams struct {
 	// At Revision to resolve each thread's anchor against (the new-side SHA of the reader's current diff scope, or WORKING-TREE). Omitted, no resolution is computed.
@@ -1819,6 +1855,9 @@ type ClientInterface interface {
 	PostReposByOwnerByNamePullsByNumberReviewWithBody(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	PostReposByOwnerByNamePullsByNumberReview(ctx context.Context, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberReviewJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetReposByOwnerByNamePullsByNumberReviewCommentAnchors request
+	GetReposByOwnerByNamePullsByNumberReviewCommentAnchors(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberReviewCommentAnchorsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetReposByOwnerByNamePullsByNumberReviewThreads request
 	GetReposByOwnerByNamePullsByNumberReviewThreads(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberReviewThreadsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2773,6 +2812,18 @@ func (c *Client) PostReposByOwnerByNamePullsByNumberReviewWithBody(ctx context.C
 
 func (c *Client) PostReposByOwnerByNamePullsByNumberReview(ctx context.Context, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberReviewJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPostReposByOwnerByNamePullsByNumberReviewRequest(c.Server, owner, name, number, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetReposByOwnerByNamePullsByNumberReviewCommentAnchors(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberReviewCommentAnchorsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetReposByOwnerByNamePullsByNumberReviewCommentAnchorsRequest(c.Server, owner, name, number, params)
 	if err != nil {
 		return nil, err
 	}
@@ -6536,6 +6587,76 @@ func NewPostReposByOwnerByNamePullsByNumberReviewRequestWithBody(server string, 
 	return req, nil
 }
 
+// NewGetReposByOwnerByNamePullsByNumberReviewCommentAnchorsRequest generates requests for GetReposByOwnerByNamePullsByNumberReviewCommentAnchors
+func NewGetReposByOwnerByNamePullsByNumberReviewCommentAnchorsRequest(server string, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberReviewCommentAnchorsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s/review-comment-anchors", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.At != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "at", *params.At, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetReposByOwnerByNamePullsByNumberReviewThreadsRequest generates requests for GetReposByOwnerByNamePullsByNumberReviewThreads
 func NewGetReposByOwnerByNamePullsByNumberReviewThreadsRequest(server string, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberReviewThreadsParams) (*http.Request, error) {
 	var err error
@@ -8693,6 +8814,9 @@ type ClientWithResponsesInterface interface {
 
 	PostReposByOwnerByNamePullsByNumberReviewWithResponse(ctx context.Context, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberReviewJSONRequestBody, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberReviewResponse, error)
 
+	// GetReposByOwnerByNamePullsByNumberReviewCommentAnchorsWithResponse request
+	GetReposByOwnerByNamePullsByNumberReviewCommentAnchorsWithResponse(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberReviewCommentAnchorsParams, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberReviewCommentAnchorsResponse, error)
+
 	// GetReposByOwnerByNamePullsByNumberReviewThreadsWithResponse request
 	GetReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberReviewThreadsParams, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberReviewThreadsResponse, error)
 
@@ -10034,6 +10158,29 @@ func (r PostReposByOwnerByNamePullsByNumberReviewResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r PostReposByOwnerByNamePullsByNumberReviewResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetReposByOwnerByNamePullsByNumberReviewCommentAnchorsResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *ReviewCommentAnchorsResponse
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r GetReposByOwnerByNamePullsByNumberReviewCommentAnchorsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetReposByOwnerByNamePullsByNumberReviewCommentAnchorsResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -11509,6 +11656,15 @@ func (c *ClientWithResponses) PostReposByOwnerByNamePullsByNumberReviewWithRespo
 		return nil, err
 	}
 	return ParsePostReposByOwnerByNamePullsByNumberReviewResponse(rsp)
+}
+
+// GetReposByOwnerByNamePullsByNumberReviewCommentAnchorsWithResponse request returning *GetReposByOwnerByNamePullsByNumberReviewCommentAnchorsResponse
+func (c *ClientWithResponses) GetReposByOwnerByNamePullsByNumberReviewCommentAnchorsWithResponse(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberReviewCommentAnchorsParams, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberReviewCommentAnchorsResponse, error) {
+	rsp, err := c.GetReposByOwnerByNamePullsByNumberReviewCommentAnchors(ctx, owner, name, number, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetReposByOwnerByNamePullsByNumberReviewCommentAnchorsResponse(rsp)
 }
 
 // GetReposByOwnerByNamePullsByNumberReviewThreadsWithResponse request returning *GetReposByOwnerByNamePullsByNumberReviewThreadsResponse
@@ -13616,6 +13772,39 @@ func ParsePostReposByOwnerByNamePullsByNumberReviewResponse(rsp *http.Response) 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest SubmitReviewResponseBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetReposByOwnerByNamePullsByNumberReviewCommentAnchorsResponse parses an HTTP response from a GetReposByOwnerByNamePullsByNumberReviewCommentAnchorsWithResponse call
+func ParseGetReposByOwnerByNamePullsByNumberReviewCommentAnchorsResponse(rsp *http.Response) (*GetReposByOwnerByNamePullsByNumberReviewCommentAnchorsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetReposByOwnerByNamePullsByNumberReviewCommentAnchorsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ReviewCommentAnchorsResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

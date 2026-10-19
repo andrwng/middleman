@@ -141,6 +141,14 @@ type reviewCommentMetadata struct {
 	ReviewID    int64  `json:"review_id,omitempty"`
 	HTMLURL     string `json:"html_url,omitempty"`
 	SubjectType string `json:"subject_type,omitempty"`
+
+	// The anchor as GitHub recorded it when the comment was created. Unlike
+	// Line/CommitID above, which mix current and original values when
+	// GitHub has marked the comment outdated, these three always describe
+	// the same commit, so re-anchoring can map them forward exactly.
+	OriginalLine      int    `json:"original_line,omitempty"`
+	OriginalStartLine int    `json:"original_start_line,omitempty"`
+	OriginalCommitID  string `json:"original_commit_id,omitempty"`
 }
 
 // NormalizeReviewCommentEvent converts a GitHub PullRequestComment (an inline
@@ -186,6 +194,10 @@ func NormalizeReviewCommentEvent(mrID int64, c *gh.PullRequestComment) db.MREven
 		ReviewID:    c.GetPullRequestReviewID(),
 		HTMLURL:     sanitizeURL(c.GetHTMLURL()),
 		SubjectType: c.GetSubjectType(),
+
+		OriginalLine:      c.GetOriginalLine(),
+		OriginalStartLine: c.GetOriginalStartLine(),
+		OriginalCommitID:  c.GetOriginalCommitID(),
 	})
 	event.MetadataJSON = string(metadata)
 	return event
