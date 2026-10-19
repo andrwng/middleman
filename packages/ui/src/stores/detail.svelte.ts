@@ -1,6 +1,7 @@
 import type {
   KanbanStatus,
   PullDetail,
+  ReviewCommentAnchor,
 } from "../api/types.js";
 import { apiErrorMessage } from "../api/errors.js";
 import type { MiddlemanClient } from "../types.js";
@@ -21,6 +22,36 @@ export interface PublishedReviewComment {
   // the active hidden set. The card renders dimmed instead of being
   // dropped from the map when `showHiddenThreads` is true.
   isHidden: boolean;
+}
+
+export interface ReviewCommentPlacement {
+  path: string;
+  line: number;
+  startLine: number | null;
+}
+
+// Where a published comment sits in the diff on screen, or null when it has
+// no line there. A resolution for the revision on screen wins over the
+// recorded anchor, which numbers the tree the comment was first synced
+// against. "removed" and "unmappable" place nowhere: drawing the comment at
+// its recorded line would sit it on unrelated code, which is the
+// misalignment resolution exists to fix. No resolution means no opinion,
+// so the recorded anchor stands.
+export function placeReviewComment(
+  c: PublishedReviewComment,
+  anchor: ReviewCommentAnchor | undefined,
+): ReviewCommentPlacement | null {
+  if (anchor) {
+    if (anchor.state !== "current" && anchor.state !== "moved") return null;
+    if (anchor.line == null || anchor.line <= 0) return null;
+    return {
+      path: anchor.path ?? c.path,
+      line: anchor.line,
+      startLine: anchor.start_line ?? null,
+    };
+  }
+  if (c.line <= 0) return null;
+  return { path: c.path, line: c.line, startLine: c.startLine };
 }
 
 export interface DetailStoreOptions {
@@ -66,6 +97,21 @@ export function createDetailStore(
   let syncGeneration = 0;
 
   let showHiddenThreads = $state(false);
+
+  // Published comments' positions re-anchored onto the revision on screen.
+  // anchorsFor names the pull request and revision commentAnchors were
+  // resolved for; wantedAnchors names the ones on screen now. Anchors for
+  // anything else are ignored, so a scope change shows recorded lines
+  // until its own resolution lands rather than the previous scope's.
+  let commentAnchors = $state<Map<number, ReviewCommentAnchor>>(new Map());
+  let anchorsFor = $state("");
+  let wantedAnchors = $state("");
+
+  function resetCommentAnchors(): void {
+    commentAnchors = new Map();
+    anchorsFor = "";
+    wantedAnchors = "";
+  }
 
   // platform_id → root platform_id, computed when needed. Mirrors
   // the server walk in db.ActiveHiddenReviewThreadRoots so hidden
@@ -364,6 +410,7 @@ export function createDetailStore(
 
   function clearDetail(): void {
     ++syncGeneration;
+    resetCommentAnchors();
     detail = null;
     loading = false;
     syncing = false;
@@ -378,6 +425,7 @@ export function createDetailStore(
     number: number,
   ): Promise<void> {
     const gen = ++syncGeneration;
+    resetCommentAnchors();
 
     loading = true;
     syncing = false;
@@ -416,6 +464,40 @@ export function createDetailStore(
 
     if (gen === syncGeneration) {
       void syncDetail(owner, name, number, gen);
+    }
+  }
+
+  function getReviewCommentAnchor(commentID: number): ReviewCommentAnchor | undefined {
+    if (anchorsFor === "" || anchorsFor !== wantedAnchors) return undefined;
+    return commentAnchors.get(commentID);
+  }
+
+  function getReviewCommentPlacement(c: PublishedReviewComment): ReviewCommentPlacement | null {
+    return placeReviewComment(c, getReviewCommentAnchor(c.id));
+  }
+
+  // Re-anchors published comments onto `at`, the new-side revision of the
+  // diff on screen. Best-effort: on failure comments keep their recorded
+  // lines. A response for anything but the latest request is dropped.
+  async function resolveReviewCommentAnchors(
+    owner: string,
+    name: string,
+    number: number,
+    at: string,
+  ): Promise<void> {
+    if (owner === "local" || at === "") return;
+    const key = `${prKey(owner, name, number)}@${at}`;
+    wantedAnchors = key;
+    try {
+      const { data, error: requestError } = await apiClient.GET(
+        "/repos/{owner}/{name}/pulls/{number}/review-comment-anchors",
+        { params: { path: { owner, name, number }, query: { at } } },
+      );
+      if (requestError || !data || wantedAnchors !== key) return;
+      commentAnchors = new Map((data.anchors ?? []).map((a) => [a.comment_id, a]));
+      anchorsFor = key;
+    } catch {
+      // best-effort
     }
   }
 
@@ -890,6 +972,9 @@ export function createDetailStore(
     isStaleRefreshing,
     getCommitCommentCounts,
     getReviewCommentsByFilePath,
+    getReviewCommentAnchor,
+    getReviewCommentPlacement,
+    resolveReviewCommentAnchors,
     getHiddenRootSet,
     getHiddenThreadCount,
     isShowingHiddenThreads,

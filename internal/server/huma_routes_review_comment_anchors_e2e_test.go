@@ -126,23 +126,24 @@ func (f commentAnchorFixture) addTypicalComments(t *testing.T) {
 }
 
 func TestAPIReviewCommentAnchorsDefaultToDiffHead(t *testing.T) {
+	require := require.New(t)
 	assert := Assert.New(t)
 	f := newCommentAnchorFixture(t, true)
 	f.addTypicalComments(t)
 
 	resp, got := f.anchors(t, nil)
 
-	require.Equal(t, http.StatusOK, resp.StatusCode())
+	require.Equal(http.StatusOK, resp.StatusCode())
 	assert.Equal(f.c2, resp.JSON200.At)
-	require.Contains(t, got, int64(1))
+	require.Contains(got, int64(1))
 	assert.Equal("moved", got[1].State)
 	assert.Equal("a.txt", *got[1].Path)
 	assert.EqualValues(4, *got[1].Line)
 	assert.EqualValues(3, *got[1].StartLine)
-	require.Contains(t, got, int64(2))
+	require.Contains(got, int64(2))
 	assert.Equal("moved", got[2].State)
 	assert.EqualValues(4, *got[2].Line)
-	require.Contains(t, got, int64(3))
+	require.Contains(got, int64(3))
 	assert.Equal("current", got[3].State)
 	assert.EqualValues(4, *got[3].Line)
 	assert.NotContains(got, int64(4))

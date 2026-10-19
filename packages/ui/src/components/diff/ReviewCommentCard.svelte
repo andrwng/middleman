@@ -22,16 +22,42 @@
   let replyBody = $state("");
   let replyEl: HTMLTextAreaElement | undefined = $state();
 
+  // The server's resolution for the diff on screen, when it has one.
+  // It can tell a line that shifted from one that was deleted; the
+  // commit compare below is all that is left for comments it didn't
+  // resolve.
+  const anchor = $derived(detailStore.getReviewCommentAnchor(comment.id));
   const outdated = $derived(
-    currentHeadSha !== "" && comment.commitId !== "" && comment.commitId !== currentHeadSha,
+    anchor
+      ? anchor.state === "removed" || anchor.state === "unmappable"
+      : currentHeadSha !== "" && comment.commitId !== "" && comment.commitId !== currentHeadSha,
+  );
+  const moved = $derived(anchor?.state === "moved");
+  const outdatedTitle = $derived(
+    anchor?.state === "removed"
+      ? "The commented line has since been removed"
+      : anchor?.state === "unmappable"
+        ? "Where this comment belongs in this diff could not be worked out"
+        : "This comment was made against an older commit",
+  );
+
+  // Where the card is drawn; the recorded anchor when it has no line in
+  // the diff on screen.
+  const placement = $derived(
+    detailStore.getReviewCommentPlacement(comment) ?? {
+      path: comment.path,
+      line: comment.line,
+      startLine: comment.startLine,
+    },
   );
 
   const anchorLabel = $derived.by(() => {
     const sign = comment.side === "LEFT" ? "−" : "+";
-    if (comment.startLine != null && comment.startLine !== comment.line) {
-      return `${sign}${comment.startLine}–${comment.line}`;
+    const { line, startLine } = placement;
+    if (startLine != null && startLine !== line) {
+      return `${sign}${startLine}–${line}`;
     }
-    return `${sign}${comment.line}`;
+    return `${sign}${line}`;
   });
 
   const isRoot = $derived(comment.inReplyTo === 0);
@@ -67,10 +93,10 @@
     const commits = diffStore.getCommits();
     const headSha = commits && commits.length > 0 ? commits[0]!.sha : comment.commitId;
     diffStore.addDraftComment({
-      path: comment.path,
-      line: comment.line,
+      path: placement.path,
+      line: placement.line,
       side: comment.side,
-      ...(comment.startLine != null ? { startLine: comment.startLine } : {}),
+      ...(placement.startLine != null ? { startLine: placement.startLine } : {}),
       commitSha: headSha,
       body,
       inReplyTo: comment.id,
@@ -107,7 +133,9 @@
     {/if}
     <span class="rc__anchor">{anchorLabel}</span>
     {#if outdated}
-      <span class="rc__outdated-pill" title="This comment was made against an older commit">outdated</span>
+      <span class="rc__outdated-pill" title={outdatedTitle}>outdated</span>
+    {:else if moved}
+      <span class="rc__moved-pill" title="New commits moved the commented line here">moved</span>
     {/if}
     <span class="rc__time">{timeAgo(comment.createdAt)}</span>
     {#if !replying}
@@ -256,6 +284,18 @@
     border-radius: 999px;
     background: color-mix(in srgb, var(--accent-amber) 16%, var(--bg-inset));
     color: var(--accent-amber);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+    cursor: help;
+  }
+
+  .rc__moved-pill {
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent-blue) 16%, var(--bg-inset));
+    color: var(--accent-blue);
     text-transform: uppercase;
     letter-spacing: 0.04em;
     font-weight: 600;

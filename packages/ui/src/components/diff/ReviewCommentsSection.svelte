@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import { getStores } from "../../context.js";
-  import type { PublishedReviewComment } from "../../stores/detail.svelte.js";
+  import type { PublishedReviewComment, ReviewCommentPlacement } from "../../stores/detail.svelte.js";
   import SectionResizeHandle from "./SectionResizeHandle.svelte";
   import { getSectionHeight } from "./sectionHeights.svelte.js";
 
@@ -9,8 +9,8 @@
   // click-to-jump. "Top of thread" means `in_reply_to === 0` —
   // replies stay rolled up under their root in the diff itself.
   // Grouped into "Mine" and "Others" based on the viewer's GitHub
-  // login. Outdated comments (server-side line === 0) are dropped
-  // here; they're surfaced via the existing outdated-banner.
+  // login. A comment with no line in the diff on screen is still listed,
+  // badged, and jumps to the commit it was made on.
 
   const { detail: detailStore, diff: diffStore, viewer: viewerStore } = getStores();
   let bodyEl: HTMLDivElement | undefined = $state();
@@ -23,17 +23,29 @@
     return h === null ? null : `${h}px`;
   });
 
-  const roots = $derived.by<PublishedReviewComment[]>(() => {
+  interface Entry {
+    c: PublishedReviewComment;
+    // Where the comment is drawn in the diff on screen, or null when it
+    // has no line here.
+    here: ReviewCommentPlacement | null;
+    // What the list shows and sorts by: `here`, else the recorded anchor.
+    at: ReviewCommentPlacement;
+  }
+
+  const roots = $derived.by<Entry[]>(() => {
     const byPath = detailStore.getReviewCommentsByFilePath();
-    const out: PublishedReviewComment[] = [];
+    const out: Entry[] = [];
     for (const list of byPath.values()) {
       for (const c of list) {
-        if (c.inReplyTo === 0 && c.line > 0) out.push(c);
+        if (c.inReplyTo !== 0) continue;
+        const here = detailStore.getReviewCommentPlacement(c);
+        if (here === null && c.line <= 0) continue;
+        out.push({ c, here, at: here ?? { path: c.path, line: c.line, startLine: c.startLine } });
       }
     }
     out.sort((a, b) => {
-      if (a.path !== b.path) return a.path.localeCompare(b.path);
-      return a.line - b.line;
+      if (a.at.path !== b.at.path) return a.at.path.localeCompare(b.at.path);
+      return a.at.line - b.at.line;
     });
     return out;
   });
@@ -42,12 +54,12 @@
 
   const mine = $derived(
     viewerLogin
-      ? roots.filter((c) => c.author.toLowerCase() === viewerLogin)
+      ? roots.filter((r) => r.c.author.toLowerCase() === viewerLogin)
       : [],
   );
   const others = $derived(
     viewerLogin
-      ? roots.filter((c) => c.author.toLowerCase() !== viewerLogin)
+      ? roots.filter((r) => r.c.author.toLowerCase() !== viewerLogin)
       : roots,
   );
 
@@ -65,12 +77,19 @@
     userCollapsed = !expanded;
   }
 
-  function anchorLabel(c: PublishedReviewComment): string {
-    const side = c.side === "LEFT" ? "−" : "+";
-    if (c.startLine != null && c.startLine !== c.line) {
-      return `${side}${c.startLine}–${c.line}`;
+  function anchorLabel(e: Entry): string {
+    const side = e.c.side === "LEFT" ? "−" : "+";
+    const { line, startLine } = e.at;
+    if (startLine != null && startLine !== line) {
+      return `${side}${startLine}–${line}`;
     }
-    return `${side}${c.line}`;
+    return `${side}${line}`;
+  }
+
+  function driftLabel(e: Entry): string | null {
+    if (e.here !== null) return null;
+    const state = detailStore.getReviewCommentAnchor(e.c.id)?.state;
+    return state === "removed" ? "line removed" : "position unknown";
   }
 
   function truncate(text: string, n: number): string {
@@ -79,7 +98,37 @@
     return flat.slice(0, n).trimEnd() + "…";
   }
 
-  async function scrollToComment(c: PublishedReviewComment): Promise<void> {
+  async function scrollToComment(e: Entry): Promise<void> {
+    const { c, here, at } = e;
+    // A comment with a line in the diff on screen is jumped to in place;
+    // only one without falls back to the commit it was made on, where
+    // its recorded line is valid.
+    if (here === null) await routeToCommentCommit(c);
+    const pr = diffStore.getCurrentPR();
+    if (pr && diffStore.isFileCollapsed(pr.owner, pr.name, pr.number, at.path)) {
+      diffStore.toggleFileCollapsed(pr.owner, pr.name, pr.number, at.path);
+      await tick();
+    }
+    const selector =
+      `.diff-file[data-file-path="${CSS.escape(at.path)}"] ` +
+      `.line-wrap[data-anchor-line="${at.line}"]` +
+      `[data-anchor-side="${c.side}"]`;
+    const el = document.querySelector<HTMLElement>(selector);
+    if (el) {
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      el.classList.add("line-wrap--flash");
+      window.setTimeout(() => el.classList.remove("line-wrap--flash"), 1500);
+      return;
+    }
+    const fileEl = document.querySelector<HTMLElement>(
+      `.diff-file[data-file-path="${CSS.escape(at.path)}"]`,
+    );
+    if (fileEl) {
+      fileEl.scrollIntoView({ block: "start", behavior: "smooth" });
+    }
+  }
+
+  async function routeToCommentCommit(c: PublishedReviewComment): Promise<void> {
     // Scope routing has three tiers:
     //   1. SHA is current head            → resetToHead (full base..head diff)
     //   2. SHA is a non-head PR commit    → selectCommit (per-commit diff)
@@ -109,28 +158,6 @@
       }
       // else: SHA is unreachable from current head; leave scope alone.
     }
-    const pr = diffStore.getCurrentPR();
-    if (pr && diffStore.isFileCollapsed(pr.owner, pr.name, pr.number, c.path)) {
-      diffStore.toggleFileCollapsed(pr.owner, pr.name, pr.number, c.path);
-      await tick();
-    }
-    const selector =
-      `.diff-file[data-file-path="${CSS.escape(c.path)}"] ` +
-      `.line-wrap[data-anchor-line="${c.line}"]` +
-      `[data-anchor-side="${c.side}"]`;
-    const el = document.querySelector<HTMLElement>(selector);
-    if (el) {
-      el.scrollIntoView({ block: "center", behavior: "smooth" });
-      el.classList.add("line-wrap--flash");
-      window.setTimeout(() => el.classList.remove("line-wrap--flash"), 1500);
-      return;
-    }
-    const fileEl = document.querySelector<HTMLElement>(
-      `.diff-file[data-file-path="${CSS.escape(c.path)}"]`,
-    );
-    if (fileEl) {
-      fileEl.scrollIntoView({ block: "start", behavior: "smooth" });
-    }
   }
 </script>
 
@@ -148,39 +175,45 @@
       <div class="rc-section__body" bind:this={bodyEl} style:max-height={bodyMax}>
         {#if mine.length > 0}
           <div class="rc-subhead">Mine</div>
-          {#each mine as c (c.id)}
+          {#each mine as e (e.c.id)}
             <div class="rc-item">
               <button
                 type="button"
                 class="rc-item__main"
-                onclick={() => void scrollToComment(c)}
+                onclick={() => void scrollToComment(e)}
                 title="Jump to this comment in the diff"
               >
                 <span class="rc-item__location">
-                  {c.path}
-                  <span class="rc-item__anchor">{anchorLabel(c)}</span>
+                  {e.at.path}
+                  <span class="rc-item__anchor">{anchorLabel(e)}</span>
                 </span>
-                <span class="rc-item__preview">{truncate(c.body, 80)}</span>
+                {#if driftLabel(e)}
+                  <span class="rc-item__drift">{driftLabel(e)}</span>
+                {/if}
+                <span class="rc-item__preview">{truncate(e.c.body, 80)}</span>
               </button>
             </div>
           {/each}
         {/if}
         {#if others.length > 0}
           <div class="rc-subhead">Others</div>
-          {#each others as c (c.id)}
+          {#each others as e (e.c.id)}
             <div class="rc-item">
               <button
                 type="button"
                 class="rc-item__main"
-                onclick={() => void scrollToComment(c)}
+                onclick={() => void scrollToComment(e)}
                 title="Jump to this comment in the diff"
               >
                 <span class="rc-item__location">
-                  {c.path}
-                  <span class="rc-item__anchor">{anchorLabel(c)}</span>
+                  {e.at.path}
+                  <span class="rc-item__anchor">{anchorLabel(e)}</span>
                 </span>
-                <span class="rc-item__author">{c.author}</span>
-                <span class="rc-item__preview">{truncate(c.body, 80)}</span>
+                {#if driftLabel(e)}
+                  <span class="rc-item__drift">{driftLabel(e)}</span>
+                {/if}
+                <span class="rc-item__author">{e.c.author}</span>
+                <span class="rc-item__preview">{truncate(e.c.body, 80)}</span>
               </button>
             </div>
           {/each}
@@ -309,6 +342,13 @@
   .rc-item__anchor {
     color: var(--text-muted);
     margin-left: 3px;
+  }
+
+  .rc-item__drift {
+    font-size: 9px;
+    color: var(--accent-amber);
+    flex-shrink: 0;
+    white-space: nowrap;
   }
 
   .rc-item__author {

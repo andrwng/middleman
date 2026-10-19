@@ -64,6 +64,8 @@ import { createDiffStore } from "../../stores/diff.svelte.js";
 import { createAIStore } from "../../stores/ai.svelte.js";
 import { createReviewThreadsStore } from "../../stores/reviewThreads.svelte.js";
 import { createSymbolRefsStore } from "../../stores/symbolRefs.svelte.js";
+import { placeReviewComment, type PublishedReviewComment } from "../../stores/detail.svelte.js";
+import type { ReviewCommentAnchor } from "../../api/types.js";
 
 function stubClient(): MiddlemanClient {
   return {
@@ -107,7 +109,12 @@ function uniqueOwner(): string {
 // built for the component's context, so tests that need to reach past
 // the DOM (seed a commit SHA, spy on a store method) can do so without
 // re-deriving what was passed in.
-function renderDiffFile(file: DiffFileType) {
+function renderDiffFile(
+  file: DiffFileType,
+  comments: PublishedReviewComment[] = [],
+  anchors: ReviewCommentAnchor[] = [],
+) {
+  const anchorByID = new Map(anchors.map((a) => [a.comment_id, a]));
   const owner = uniqueOwner();
   const diffStore = createDiffStore({ client: stubClient() });
   const symbolRefsStore = createSymbolRefsStore({ client: stubClient() });
@@ -122,7 +129,13 @@ function renderDiffFile(file: DiffFileType) {
           reviewThreads: createReviewThreadsStore({ client: stubClient() }),
           symbolRefs: symbolRefsStore,
           detail: {
-            getReviewCommentsByFilePath: () => new Map(),
+            getReviewCommentsByFilePath: () => {
+              const byPath = new Map<string, PublishedReviewComment[]>();
+              for (const c of comments) byPath.set(c.path, [...(byPath.get(c.path) ?? []), c]);
+              return byPath;
+            },
+            getReviewCommentAnchor: (id: number) => anchorByID.get(id),
+            getReviewCommentPlacement: (c: PublishedReviewComment) => placeReviewComment(c, anchorByID.get(c.id)),
             getHiddenRootSet: () => new Set<number>(),
             isShowingHiddenThreads: () => false,
             getHiddenThreadCount: () => 0,
@@ -591,5 +604,61 @@ describe("DiffFile selection toolbar: revealed context lines are not composer an
     expect(screen.getByTitle("Find other references to this symbol")).toBeTruthy();
     expect(screen.queryByTitle("Comment on the selected lines")).toBeNull();
     expect(screen.queryByTitle("Ask Claude about the selected lines")).toBeNull();
+  });
+});
+
+function publishedComment(over: Partial<PublishedReviewComment> = {}): PublishedReviewComment {
+  return {
+    id: 900,
+    author: "alice",
+    body: "published note",
+    createdAt: "2026-05-21T10:00:00Z",
+    path: "src/foo.ts",
+    line: 7,
+    startLine: null,
+    side: "RIGHT",
+    commitId: "c1",
+    htmlUrl: "",
+    inReplyTo: 0,
+    isHidden: false,
+    ...over,
+  };
+}
+
+// makeFile's diff renders new-side lines 1 and 2 only, so a comment
+// recorded at line 7 has no line here unless a resolution moves it.
+describe("DiffFile published review comment placement", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("draws a comment at its resolved line after a push moved it", () => {
+    const { container } = renderDiffFile(makeFile(), [publishedComment()], [
+      { comment_id: 900, state: "moved", path: "src/foo.ts", line: 2 },
+    ]);
+    expect(screen.getByText("published note")).toBeTruthy();
+    expect(container.querySelector(".rc__anchor")?.textContent).toBe("+2");
+    expect(container.querySelector(".outdated-banner")).toBeNull();
+  });
+
+  it("banners a removed comment instead of drawing it at its recorded line", () => {
+    const { container } = renderDiffFile(makeFile(), [publishedComment({ line: 2 })], [
+      { comment_id: 900, state: "removed" },
+    ]);
+    expect(screen.queryByText("published note")).toBeNull();
+    expect(container.querySelector(".outdated-banner")?.textContent).toContain("1 outdated review comment");
+  });
+
+  it("draws a comment made before a rename in the renamed file", () => {
+    renderDiffFile(makeFile({ status: "renamed", old_path: "src/old.ts" }), [publishedComment({ path: "src/old.ts" })], [
+      { comment_id: 900, state: "moved", path: "src/foo.ts", line: 2 },
+    ]);
+    expect(screen.getByText("published note")).toBeTruthy();
+  });
+
+  it("keeps an unresolved comment at its recorded line", () => {
+    const { container } = renderDiffFile(makeFile(), [publishedComment({ line: 2 })]);
+    expect(screen.getByText("published note")).toBeTruthy();
+    expect(container.querySelector(".rc__anchor")?.textContent).toBe("+2");
   });
 });

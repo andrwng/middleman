@@ -160,13 +160,16 @@ function fakeReviewThreadsStore() {
 // context too, same as codeBrowser -- only needed by the browse-action
 // tests below, which are the first in this suite to get diff loading far
 // enough for DiffToolbar to actually mount.
-function fakeDetailStore() {
+function fakeDetailStore(loaded: object | null = null) {
   return {
     getHiddenThreadCount: () => 0,
     isShowingHiddenThreads: () => false,
     setShowHiddenThreads: vi.fn(),
-    getDetail: () => null,
+    getDetail: () => loaded,
     getReviewCommentsByFilePath: () => new Map(),
+    getReviewCommentAnchor: () => undefined,
+    getReviewCommentPlacement: () => null,
+    resolveReviewCommentAnchors: vi.fn(async () => {}),
   };
 }
 
@@ -202,7 +205,7 @@ function fakeCodeBrowserStore() {
   };
 }
 
-function renderDiffView() {
+function renderDiffView(detailStore = fakeDetailStore()) {
   const client = symbolRefsClient();
   const diffStore = createDiffStore({ client });
   const symbolRefsStore = createSymbolRefsStore({ client });
@@ -218,11 +221,11 @@ function renderDiffView() {
         reviewThreads: reviewThreadsStore,
         symbolRefs: symbolRefsStore,
         codeBrowser: codeBrowserStore,
-        detail: fakeDetailStore(),
+        detail: detailStore,
       }],
     ]),
   });
-  return { diffStore, symbolRefsStore, codeBrowserStore, reviewThreadsStore };
+  return { diffStore, symbolRefsStore, codeBrowserStore, reviewThreadsStore, detailStore };
 }
 
 beforeEach(() => {
@@ -641,5 +644,30 @@ describe("DiffView: resolving review-thread anchors against the reader's revisio
     await tick();
     await tick();
     expect(reviewThreadsStore.resolveAt).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("DiffView: re-anchoring published review comments", () => {
+  it("resolves against the reader's revision and follows scope changes", async () => {
+    installCommitsFetch(() => "sha-head-1");
+    const { diffStore, detailStore } = renderDiffView(fakeDetailStore({ events: [] }));
+    await waitFor(() => {
+      expect(detailStore.resolveReviewCommentAnchors).toHaveBeenCalledWith("acme", "widget", 7, "sha-head-1");
+    });
+
+    diffStore.selectCommit("sha-a");
+    await waitFor(() => {
+      expect(detailStore.resolveReviewCommentAnchors).toHaveBeenLastCalledWith("acme", "widget", 7, "sha-a");
+    });
+  });
+
+  it("waits for the pull request's comments before resolving", async () => {
+    installCommitsFetch(() => "sha-head-1");
+    const { diffStore, detailStore } = renderDiffView(fakeDetailStore(null));
+    await waitFor(() => {
+      expect(diffStore.getCurrentCommitSha()).toBe("sha-head-1");
+    });
+    await tick();
+    expect(detailStore.resolveReviewCommentAnchors).not.toHaveBeenCalled();
   });
 });

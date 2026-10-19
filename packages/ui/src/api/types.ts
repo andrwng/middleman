@@ -9,6 +9,7 @@ export type IssueEvent = components["schemas"]["IssueEvent"];
 export type IssueDetail = components["schemas"]["IssueDetailResponse"];
 export type PREvent = components["schemas"]["MREvent"];
 export type PullDetail = components["schemas"]["MergeRequestDetailResponse"];
+export type ReviewCommentAnchor = components["schemas"]["ReviewCommentAnchorResponse"];
 export type SyncStatus = components["schemas"]["SyncStatus"];
 export type RateLimitHostStatus =
   components["schemas"]["RateLimitHostStatus"];

@@ -11,6 +11,7 @@
     reviewThreads: reviewThreadsStore,
     symbolRefs: symbolRefsStore,
     codeBrowser: codeBrowserStore,
+    detail: detailStore,
   } = getStores();
   import DiffToolbar from "./DiffToolbar.svelte";
   import DiffFileComponent from "./DiffFile.svelte";
@@ -369,6 +370,18 @@
       if (sha === "" || sha === resolvedAt) return;
       resolvedAt = sha;
       void reviewThreadsStore.resolveAt(sha);
+    });
+  });
+
+  // Published GitHub comments are re-anchored the same way. Re-asked
+  // whenever the detail reloads too, since that is how new comments
+  // arrive; the server caches resolutions, so a repeat is cheap.
+  $effect(() => {
+    const sha = currentSha;
+    const loaded = detailStore.getDetail();
+    untrack(() => {
+      if (sha === "" || loaded === null) return;
+      void detailStore.resolveReviewCommentAnchors(owner, name, number, sha);
     });
   });
 

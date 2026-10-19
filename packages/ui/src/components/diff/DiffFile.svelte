@@ -97,31 +97,34 @@
     return map;
   });
 
-  // Published review comments (synced from GitHub) for this file,
+  // Published review comments (synced from GitHub) placed in this file,
   // grouped by anchor so the render pass can place them inline
-  // alongside pending drafts.
+  // alongside pending drafts. Every path is scanned: a comment made
+  // before a rename is re-anchored into the renamed file.
   const reviewCommentsByAnchor = $derived.by(() => {
     const byFile = detailStore.getReviewCommentsByFilePath();
-    const forFile = byFile.get(file.path) ?? [];
     const map = new Map<string, PublishedReviewComment[]>();
-    for (const c of forFile) {
-      if (c.line <= 0) continue; // outdated; rendered elsewhere
-      const key = `${c.line}:${c.side}`;
-      const arr = map.get(key) ?? [];
-      arr.push(c);
-      map.set(key, arr);
+    for (const list of byFile.values()) {
+      for (const c of list) {
+        const at = detailStore.getReviewCommentPlacement(c);
+        if (at === null || at.path !== file.path) continue;
+        const key = `${at.line}:${c.side}`;
+        const arr = map.get(key) ?? [];
+        arr.push(c);
+        map.set(key, arr);
+      }
     }
     return map;
   });
 
-  // Count of comments on this file whose anchors don't resolve in
-  // the current diff (line is null because GitHub marked the comment
-  // outdated after a push). We surface this as a banner at the top
-  // of the file so the reviewer knows to look on GitHub.
+  // Count of comments made on this file that have no line in the diff on
+  // screen (the commented line was removed, or its position is unknown).
+  // We surface this as a banner at the top of the file so the reviewer
+  // knows to look on GitHub.
   const outdatedReviewCount = $derived.by(() => {
     const byFile = detailStore.getReviewCommentsByFilePath();
     const forFile = byFile.get(file.path) ?? [];
-    return forFile.filter((c) => c.line <= 0).length;
+    return forFile.filter((c) => detailStore.getReviewCommentPlacement(c) === null).length;
   });
 
   // The SHA we anchor new comments against — the newest commit in the
