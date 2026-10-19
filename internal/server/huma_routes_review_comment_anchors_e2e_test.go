@@ -176,6 +176,17 @@ func TestAPIReviewCommentAnchorsWithoutCloneHaveNoOpinion(t *testing.T) {
 	Assert.Empty(t, got, "with no clone every comment would read unmappable and drop out of the diff")
 }
 
+func TestAPIReviewCommentAnchorsForAnUnknownRevisionHaveNoOpinion(t *testing.T) {
+	f := newCommentAnchorFixture(t, true)
+	f.addTypicalComments(t)
+	unknown := "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+
+	resp, got := f.anchors(t, &unknown)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode())
+	Assert.Empty(t, got, "a revision the clone lacks would otherwise mark every comment unmappable")
+}
+
 func TestAPIReviewCommentAnchorsRejectBadRequests(t *testing.T) {
 	f := newCommentAnchorFixture(t, true)
 	client := setupTestClient(t, f.srv)

@@ -80,8 +80,16 @@ func (s *Server) listReviewCommentAnchors(
 	if s.clones == nil {
 		return out, nil
 	}
-	repoPath := s.clones.ClonePath(s.syncer.HostForRepo(input.Owner, input.Name), input.Owner, input.Name)
+	host := s.syncer.HostForRepo(input.Owner, input.Name)
+	repoPath := s.clones.ClonePath(host, input.Owner, input.Name)
 	if _, err := os.Stat(filepath.Join(repoPath, "HEAD")); err != nil {
+		return out, nil
+	}
+	// Same for a target the clone lacks (not fetched yet, or a revision
+	// from another pull request while the UI switches between them).
+	// ^{commit} makes git look the object up; a bare hex id would verify
+	// whether or not it exists.
+	if _, err := s.clones.RevParse(ctx, host, input.Owner, input.Name, at+"^{commit}"); err != nil {
 		return out, nil
 	}
 
