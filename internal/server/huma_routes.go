@@ -433,6 +433,7 @@ func (s *Server) registerAPI(api huma.API) {
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/commits", s.getCommits)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/patchsets", s.listPatchsets)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/diff", s.getDiff)
+	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/diff/hunks", s.getDiffHunks)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/files", s.getFiles)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/blob-range", s.getBlobRange)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/blob", s.getBlob)
@@ -3281,6 +3282,99 @@ func (s *Server) validateSHAs(
 		}
 	}
 	return indexMap, nil
+}
+
+// --- Diff hunks (path-batched) ---
+
+// diffHunksRequest is the POST body for /diff/hunks. Scope fields mirror
+// getDiffInput's query params (commit, from, to, whitespace). ExpectFrom/
+// ExpectTo are the diff_from/diff_to the client read from /files; if the
+// server resolves a different pair now (e.g. a sync moved the PR's head),
+// the request is rejected with 409 so the client reloads instead of
+// silently mixing hunks from two different revisions. Paths carries both
+// the new and old path for every requested file (flattened by the
+// caller) -- the server passes them through to DiffPaths/DiffRevspecPaths
+// unexpanded.
+type diffHunksRequest struct {
+	Commit     string   `json:"commit,omitempty"`
+	From       string   `json:"from,omitempty"`
+	To         string   `json:"to,omitempty"`
+	Whitespace string   `json:"whitespace,omitempty"`
+	ExpectFrom string   `json:"expect_from"`
+	ExpectTo   string   `json:"expect_to"`
+	Paths      []string `json:"paths" minItems:"1"`
+}
+
+type diffHunksInput struct {
+	Owner  string `path:"owner"`
+	Name   string `path:"name"`
+	Number int    `path:"number"`
+	Body   diffHunksRequest
+}
+
+type getDiffHunksOutput struct {
+	Body diffHunksResponse
+}
+
+// getDiffHunks serves POST /diff/hunks: given a scope and a batch of paths,
+// returns the full patch (with hunks) limited to those paths. It resolves
+// scope with the exact same resolveDiffRange/localRevspec helpers getDiff
+// and getFiles use, so a 409 fires whenever the resolved revisions differ
+// from the client's expect_from/expect_to -- the same drift /files would
+// have reported had it been called again.
+func (s *Server) getDiffHunks(ctx context.Context, input *diffHunksInput) (*getDiffHunksOutput, error) {
+	if len(input.Body.Paths) > 100 {
+		return nil, huma.Error400BadRequest("at most 100 paths per request")
+	}
+	if isLocalSource(input.Owner) {
+		return s.getDiffHunksLocal(ctx, input)
+	}
+	if s.clones == nil {
+		return nil, huma.Error503ServiceUnavailable("diff view not available: clone manager not configured")
+	}
+
+	shas, err := s.db.GetDiffSHAs(ctx, input.Owner, input.Name, input.Number)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to look up PR")
+	}
+	if shas == nil {
+		return nil, huma.Error404NotFound("pull request not found")
+	}
+	if shas.DiffHeadSHA == "" || shas.MergeBaseSHA == "" {
+		return nil, huma.Error404NotFound("diff not available for this pull request")
+	}
+
+	host := s.syncer.HostForRepo(input.Owner, input.Name)
+	hideWhitespace := input.Body.Whitespace == "hide"
+
+	diffInput := &getDiffInput{
+		Owner:      input.Owner,
+		Name:       input.Name,
+		Number:     input.Number,
+		Whitespace: input.Body.Whitespace,
+		Commit:     input.Body.Commit,
+		From:       input.Body.From,
+		To:         input.Body.To,
+	}
+	diffFrom, diffTo, err := s.resolveDiffRange(ctx, diffInput, host, shas)
+	if err != nil {
+		return nil, err
+	}
+
+	if diffFrom != input.Body.ExpectFrom || diffTo != input.Body.ExpectTo {
+		return nil, huma.Error409Conflict("diff revisions changed")
+	}
+
+	result, err := s.clones.DiffPaths(ctx, host, input.Owner, input.Name, diffFrom, diffTo, hideWhitespace, input.Body.Paths)
+	if err != nil {
+		if errors.Is(err, gitclone.ErrNotFound) {
+			return nil, huma.Error404NotFound("diff not available: referenced commit not found")
+		}
+		slog.Error("failed to compute diff hunks", "owner", input.Owner, "name", input.Name, "number", input.Number, "err", err)
+		return nil, huma.Error502BadGateway("failed to compute diff")
+	}
+
+	return &getDiffHunksOutput{Body: diffHunksResponse{Files: result.Files}}, nil
 }
 
 // --- Stacks ---

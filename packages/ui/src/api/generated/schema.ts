@@ -549,6 +549,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/repos/{owner}/{name}/pulls/{number}/diff/hunks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post repos by owner by name pulls by number diff hunks */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-diff-hunks"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/repos/{owner}/{name}/pulls/{number}/files": {
         parameters: {
             query?: never;
@@ -1769,6 +1786,30 @@ export interface components {
             old_path: string;
             path: string;
             status: string;
+        };
+        DiffHunksRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/DiffHunksRequest.json
+             */
+            readonly $schema?: string;
+            commit?: string;
+            expect_from: string;
+            expect_to: string;
+            from?: string;
+            paths: string[] | null;
+            to?: string;
+            whitespace?: string;
+        };
+        DiffHunksResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/DiffHunksResponse.json
+             */
+            readonly $schema?: string;
+            files: components["schemas"]["DiffFile"][] | null;
         };
         DiffResponse: {
             /**
@@ -4318,6 +4359,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DiffResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-diff-hunks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiffHunksRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiffHunksResponse"];
                 };
             };
             /** @description Error */

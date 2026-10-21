@@ -120,6 +120,10 @@ type filesResponse struct {
 	DiffTo   string `json:"diff_to"`
 }
 
+type diffHunksResponse struct {
+	Files []gitclone.DiffFile `json:"files"`
+}
+
 type mrImportMetadataResponse struct {
 	Number           int    `json:"number"`
 	HeadBranch       string `json:"head_branch"`

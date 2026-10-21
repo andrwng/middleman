@@ -412,6 +412,26 @@ type DiffFile struct {
 	Status           string  `json:"status"`
 }
 
+// DiffHunksRequest defines model for DiffHunksRequest.
+type DiffHunksRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema     *string   `json:"$schema,omitempty"`
+	Commit     *string   `json:"commit,omitempty"`
+	ExpectFrom string    `json:"expect_from"`
+	ExpectTo   string    `json:"expect_to"`
+	From       *string   `json:"from,omitempty"`
+	Paths      *[]string `json:"paths"`
+	To         *string   `json:"to,omitempty"`
+	Whitespace *string   `json:"whitespace,omitempty"`
+}
+
+// DiffHunksResponse defines model for DiffHunksResponse.
+type DiffHunksResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string     `json:"$schema,omitempty"`
+	Files  *[]DiffFile `json:"files"`
+}
+
 // DiffResponse defines model for DiffResponse.
 type DiffResponse struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -1564,6 +1584,9 @@ type PutReposByOwnerByNamePullsByNumberCodeBrowserStateJSONRequestBody = PutCode
 // PostPrCommentJSONRequestBody defines body for PostPrComment for application/json ContentType.
 type PostPrCommentJSONRequestBody = PostCommentInputBody
 
+// PostReposByOwnerByNamePullsByNumberDiffHunksJSONRequestBody defines body for PostReposByOwnerByNamePullsByNumberDiffHunks for application/json ContentType.
+type PostReposByOwnerByNamePullsByNumberDiffHunksJSONRequestBody = DiffHunksRequest
+
 // SetPrGithubStateJSONRequestBody defines body for SetPrGithubState for application/json ContentType.
 type SetPrGithubStateJSONRequestBody = GithubStateInputBody
 
@@ -1829,6 +1852,11 @@ type ClientInterface interface {
 
 	// GetReposByOwnerByNamePullsByNumberDiff request
 	GetReposByOwnerByNamePullsByNumberDiff(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberDiffParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PostReposByOwnerByNamePullsByNumberDiffHunksWithBody request with any body
+	PostReposByOwnerByNamePullsByNumberDiffHunksWithBody(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	PostReposByOwnerByNamePullsByNumberDiffHunks(ctx context.Context, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberDiffHunksJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetReposByOwnerByNamePullsByNumberFiles request
 	GetReposByOwnerByNamePullsByNumberFiles(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberFilesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2637,6 +2665,30 @@ func (c *Client) PostReposByOwnerByNamePullsByNumberCommitsByShaAnalyze(ctx cont
 
 func (c *Client) GetReposByOwnerByNamePullsByNumberDiff(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberDiffParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetReposByOwnerByNamePullsByNumberDiffRequest(c.Server, owner, name, number, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PostReposByOwnerByNamePullsByNumberDiffHunksWithBody(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostReposByOwnerByNamePullsByNumberDiffHunksRequestWithBody(c.Server, owner, name, number, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PostReposByOwnerByNamePullsByNumberDiffHunks(ctx context.Context, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberDiffHunksJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostReposByOwnerByNamePullsByNumberDiffHunksRequest(c.Server, owner, name, number, body)
 	if err != nil {
 		return nil, err
 	}
@@ -6004,6 +6056,67 @@ func NewGetReposByOwnerByNamePullsByNumberDiffRequest(server string, owner strin
 	return req, nil
 }
 
+// NewPostReposByOwnerByNamePullsByNumberDiffHunksRequest calls the generic PostReposByOwnerByNamePullsByNumberDiffHunks builder with application/json body
+func NewPostReposByOwnerByNamePullsByNumberDiffHunksRequest(server string, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberDiffHunksJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPostReposByOwnerByNamePullsByNumberDiffHunksRequestWithBody(server, owner, name, number, "application/json", bodyReader)
+}
+
+// NewPostReposByOwnerByNamePullsByNumberDiffHunksRequestWithBody generates requests for PostReposByOwnerByNamePullsByNumberDiffHunks with any type of body
+func NewPostReposByOwnerByNamePullsByNumberDiffHunksRequestWithBody(server string, owner string, name string, number int64, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s/diff/hunks", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGetReposByOwnerByNamePullsByNumberFilesRequest generates requests for GetReposByOwnerByNamePullsByNumberFiles
 func NewGetReposByOwnerByNamePullsByNumberFilesRequest(server string, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberFilesParams) (*http.Request, error) {
 	var err error
@@ -8858,6 +8971,11 @@ type ClientWithResponsesInterface interface {
 	// GetReposByOwnerByNamePullsByNumberDiffWithResponse request
 	GetReposByOwnerByNamePullsByNumberDiffWithResponse(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberDiffParams, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberDiffResponse, error)
 
+	// PostReposByOwnerByNamePullsByNumberDiffHunksWithBodyWithResponse request with any body
+	PostReposByOwnerByNamePullsByNumberDiffHunksWithBodyWithResponse(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberDiffHunksResponse, error)
+
+	PostReposByOwnerByNamePullsByNumberDiffHunksWithResponse(ctx context.Context, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberDiffHunksJSONRequestBody, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberDiffHunksResponse, error)
+
 	// GetReposByOwnerByNamePullsByNumberFilesWithResponse request
 	GetReposByOwnerByNamePullsByNumberFilesWithResponse(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberFilesParams, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberFilesResponse, error)
 
@@ -9994,6 +10112,29 @@ func (r GetReposByOwnerByNamePullsByNumberDiffResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r GetReposByOwnerByNamePullsByNumberDiffResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type PostReposByOwnerByNamePullsByNumberDiffHunksResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *DiffHunksResponse
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r PostReposByOwnerByNamePullsByNumberDiffHunksResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PostReposByOwnerByNamePullsByNumberDiffHunksResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -11604,6 +11745,23 @@ func (c *ClientWithResponses) GetReposByOwnerByNamePullsByNumberDiffWithResponse
 		return nil, err
 	}
 	return ParseGetReposByOwnerByNamePullsByNumberDiffResponse(rsp)
+}
+
+// PostReposByOwnerByNamePullsByNumberDiffHunksWithBodyWithResponse request with arbitrary body returning *PostReposByOwnerByNamePullsByNumberDiffHunksResponse
+func (c *ClientWithResponses) PostReposByOwnerByNamePullsByNumberDiffHunksWithBodyWithResponse(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberDiffHunksResponse, error) {
+	rsp, err := c.PostReposByOwnerByNamePullsByNumberDiffHunksWithBody(ctx, owner, name, number, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostReposByOwnerByNamePullsByNumberDiffHunksResponse(rsp)
+}
+
+func (c *ClientWithResponses) PostReposByOwnerByNamePullsByNumberDiffHunksWithResponse(ctx context.Context, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberDiffHunksJSONRequestBody, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberDiffHunksResponse, error) {
+	rsp, err := c.PostReposByOwnerByNamePullsByNumberDiffHunks(ctx, owner, name, number, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostReposByOwnerByNamePullsByNumberDiffHunksResponse(rsp)
 }
 
 // GetReposByOwnerByNamePullsByNumberFilesWithResponse request returning *GetReposByOwnerByNamePullsByNumberFilesResponse
@@ -13510,6 +13668,39 @@ func ParseGetReposByOwnerByNamePullsByNumberDiffResponse(rsp *http.Response) (*G
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest DiffResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePostReposByOwnerByNamePullsByNumberDiffHunksResponse parses an HTTP response from a PostReposByOwnerByNamePullsByNumberDiffHunksWithResponse call
+func ParsePostReposByOwnerByNamePullsByNumberDiffHunksResponse(rsp *http.Response) (*PostReposByOwnerByNamePullsByNumberDiffHunksResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PostReposByOwnerByNamePullsByNumberDiffHunksResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DiffHunksResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

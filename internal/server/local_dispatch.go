@@ -559,6 +559,37 @@ func (s *Server) getFilesLocal(
 	}}, nil
 }
 
+// getDiffHunksLocal is the local-worktree counterpart of getDiffHunks: it
+// resolves scope via localRevspec (the same helper getDiffLocal and
+// getFilesLocal use), checks it against the client's expect_from/expect_to,
+// and runs DiffRevspecPaths limited to the requested paths. Whitespace
+// hiding is not honored locally, matching getFilesLocal/getDiffLocal.
+func (s *Server) getDiffHunksLocal(
+	ctx context.Context, input *diffHunksInput,
+) (*getDiffHunksOutput, error) {
+	w, err := s.resolveLocalWorktree(ctx, input.Name, input.Number)
+	if err != nil {
+		return nil, huma.Error404NotFound("worktree not found")
+	}
+
+	revspec, diffFrom, err := s.localRevspec(ctx, *w, input.Body.Commit, input.Body.From, input.Body.To)
+	if err != nil {
+		return nil, localScopeError(err, "worktree diff hunks failed")
+	}
+	diffTo := localDiffTo(input.Body.Commit, input.Body.From, input.Body.To)
+
+	if diffFrom != input.Body.ExpectFrom || diffTo != input.Body.ExpectTo {
+		return nil, huma.Error409Conflict("diff revisions changed")
+	}
+
+	files, err := worktrees.DiffRevspecPaths(ctx, w.Path, revspec, input.Body.Paths)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("worktree diff hunks failed: " + err.Error())
+	}
+
+	return &getDiffHunksOutput{Body: diffHunksResponse{Files: files}}, nil
+}
+
 // getSymbolRefsLocal serves the symbol search for a local worktree. The
 // changed-file set comes from the same base-vs-working-tree diff
 // getFilesLocal uses, so the two views agree on what "in the PR" means.
