@@ -254,6 +254,36 @@ describe("DiffFile with a viewport window", () => {
     expect(hunkHeader()).toBeNull();
   });
 
+  it("keeps an open composer's text through a reload that swaps in an empty-hunk file", async () => {
+    // A banner Reload (diffStore.reloadDiff) keeps the diff mounted and, in
+    // lazy mode, replaces each file with its summary entry while its hunks
+    // reload. The DiffFile must keep its previous body, and the composer
+    // in it, until the replacement hunks arrive.
+    const hunkState = { value: "loaded" as "loaded" | "loading" };
+    const f = makeFile();
+    const { rerender } = renderWithWindow(f, (s) => ({
+      ...s,
+      isLazy: () => true,
+      getFileHunkState: () => hunkState.value,
+      requestHunks: vi.fn(),
+    }));
+    await toMount();
+    const wrap = document.querySelector<HTMLElement>('.line-wrap[data-anchor-line="2"][data-anchor-side="RIGHT"]')!;
+    const btn = wrap.querySelector<HTMLButtonElement>(".add-comment-btn")!;
+    await fireEvent.mouseDown(btn);
+    await fireEvent.click(btn);
+    const textarea = document.querySelector<HTMLTextAreaElement>(".composer__textarea")!;
+    await fireEvent.input(textarea, { target: { value: "unsent thought" } });
+
+    hunkState.value = "loading";
+    await rerender({ file: { ...f, hunks: [] } });
+    await tick();
+
+    const during = document.querySelector<HTMLTextAreaElement>(".composer__textarea");
+    expect(during).toBe(textarea);
+    expect(during!.value).toBe("unsent thought");
+  });
+
   it("pins the file while a pending draft is being edited, so the edit survives scrolling far away", async () => {
     const { diffStore, owner } = renderWithWindow(makeFile());
     diffStore.setActivePR(owner, "n", 1);

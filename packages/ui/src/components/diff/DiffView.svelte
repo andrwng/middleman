@@ -26,6 +26,7 @@
   import { createFileReadiness } from "./fileReadiness.js";
   import { SortedIndexSet } from "./activeFile.js";
   import { escapeForSelector } from "./scrollToDiffLine.js";
+  import { LOCAL_OWNER } from "../../utils/sources.js";
 
   interface Props {
     owner: string;
@@ -530,11 +531,17 @@
 <div class="diff-view">
   {#if diffStore.isWorktreeChanged()}
     <div class="worktree-banner" role="status">
-      <span>The worktree changed since this diff loaded.</span>
+      <span>
+        {owner === LOCAL_OWNER
+          ? "The worktree changed since this diff loaded."
+          : "This diff changed since it loaded."}
+      </span>
+      <!-- Reload in place: the old bodies (and any open composer) stay
+           until the replacement hunks arrive. -->
       <button
         type="button"
         class="worktree-banner__reload"
-        onclick={() => void diffStore.loadDiff(owner, name, number)}
+        onclick={() => void diffStore.reloadDiff()}
       >Reload</button>
     </div>
   {/if}

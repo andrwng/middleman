@@ -262,7 +262,11 @@ export function createDiffStore(opts: DiffStoreOptions) {
   );
   let layout = $state<DiffLayout>(loadLayout());
   let collapseOverrides = $state<CollapseOverrides>(loadCollapseOverrides());
-  // Collapse globs per repo key ("owner/name"), fetched once per repo.
+  // Collapse globs per route key ("owner/name#number"), fetched once per
+  // route. Globs are per repo server-side, but the client cannot tell
+  // which routes share a repo (local worktrees are "local/<basename>",
+  // and a PR and a worktree of the same repo use different owners), so
+  // it caches per route and drops every entry on save.
   // Raw state so each list keeps its identity for the compiled cache.
   let globsByRepo = $state.raw<Record<string, string[]>>({});
   const globsInflight = new Map<string, Promise<void>>();
@@ -371,18 +375,18 @@ export function createDiffStore(opts: DiffStoreOptions) {
     return `${owner}/${name}#${number}`;
   }
 
-  function repoKey(owner: string, name: string): string {
-    return `${owner}/${name}`;
-  }
-
   function isCurrentPR(owner: string, name: string, number: number): boolean {
     return (
       owner === currentOwner && name === currentName && number === currentNumber
     );
   }
 
-  function compiledGlobsFor(owner: string, name: string): GlobMatcher[] {
-    const list = globsByRepo[repoKey(owner, name)];
+  function compiledGlobsFor(
+    owner: string,
+    name: string,
+    number: number,
+  ): GlobMatcher[] {
+    const list = globsByRepo[prKey(owner, name, number)];
     if (!list || list.length === 0) return [];
     let compiled = compiledGlobs.get(list);
     if (!compiled) {
@@ -416,7 +420,7 @@ export function createDiffStore(opts: DiffStoreOptions) {
         ? { collapsed: true, reason: "user" }
         : { collapsed: false, reason: null };
     }
-    return resolveCollapse(meta, override, compiledGlobsFor(owner, name));
+    return resolveCollapse(meta, override, compiledGlobsFor(owner, name, number));
   }
 
   function isFileCollapsed(
@@ -462,13 +466,13 @@ export function createDiffStore(opts: DiffStoreOptions) {
 
   function getCollapseGlobs(): string[] {
     if (!currentOwner) return [];
-    return globsByRepo[repoKey(currentOwner, currentName)] ?? [];
+    return globsByRepo[prKey(currentOwner, currentName, currentNumber)] ?? [];
   }
 
-  // Loads the repo's globs once and caches them. Failures are not
+  // Loads the route's globs once and caches them. Failures are not
   // cached (the next load retries) and never block the diff.
   function ensureGlobs(owner: string, name: string, number: number): Promise<void> {
-    const rk = repoKey(owner, name);
+    const rk = prKey(owner, name, number);
     if (rk in globsByRepo) return Promise.resolve();
     const inflight = globsInflight.get(rk);
     if (inflight) return inflight;
@@ -494,16 +498,18 @@ export function createDiffStore(opts: DiffStoreOptions) {
     if (!currentOwner) return;
     const owner = currentOwner;
     const name = currentName;
+    const number = currentNumber;
     const { data, error } = await apiClient.PUT(COLLAPSE_GLOBS_PATH, {
-      params: { path: { owner, name, number: currentNumber } },
+      params: { path: { owner, name, number } },
       body: { globs },
     });
     if (error || !data) {
       throw new Error(apiErrorMessage(error, "failed to save collapse globs"));
     }
+    // Any other cached route may be the same repo; drop them all so the
+    // next load of each refetches.
     globsByRepo = {
-      ...globsByRepo,
-      [repoKey(owner, name)]: Array.isArray(data.globs) ? data.globs : [],
+      [prKey(owner, name, number)]: Array.isArray(data.globs) ? data.globs : [],
     };
   }
 
@@ -616,8 +622,13 @@ export function createDiffStore(opts: DiffStoreOptions) {
           ) {
             worktreeChanged = true;
           }
-          // Replace in place; keep the summary's sort order.
-          diff.files[idx] = f;
+          // Replace in place; keep the summary's sort order. Status and
+          // old_path stay as the summary paired them: a batch of only some
+          // paths can pair a copy or rename differently. Hunks, binary
+          // flag, and counts come from the loaded file.
+          diff.files[idx] = sum
+            ? { ...f, status: sum.status, old_path: sum.old_path }
+            : f;
         }
         hunkVersion++;
       },
@@ -878,19 +889,19 @@ export function createDiffStore(opts: DiffStoreOptions) {
     const params = scopeToDiffParams(s);
     if (hideWhitespace) params.set("whitespace", "hide");
     const qs = params.toString();
-    // /files takes the same scope params as /diff, except patchsets.
-    const summaryParams = new URLSearchParams(params);
-    summaryParams.delete("from_patchset");
-    summaryParams.delete("to_patchset");
-    const summaryQs = summaryParams.toString();
-
-    const summaryPromise = fetchJSON(
-      `${prefix}/files${summaryQs ? `?${summaryQs}` : ""}`,
-      ac.signal,
-    ).then(
-      (data) => normalizeSummary(data),
-      () => null,
-    );
+    // /files takes the same scope params as /diff, except patchsets:
+    // patchset scope always loads the full /diff, and a head-scope
+    // summary would briefly drive the sidebar with the wrong files.
+    const summaryPromise: Promise<DiffSummary | null> =
+      s.kind === "patchsets"
+        ? Promise.resolve(null)
+        : fetchJSON(
+            `${prefix}/files${qs ? `?${qs}` : ""}`,
+            ac.signal,
+          ).then(
+            (data) => normalizeSummary(data),
+            () => null,
+          );
     const [summary] = await Promise.all([
       summaryPromise,
       ensureGlobs(owner, name, number),
@@ -903,7 +914,7 @@ export function createDiffStore(opts: DiffStoreOptions) {
     const total = summary
       ? summary.files.reduce((n, f) => n + f.additions + f.deletions, 0)
       : 0;
-    if (summary && s.kind !== "patchsets" && total > LAZY_DIFF_LINES) {
+    if (summary && total > LAZY_DIFF_LINES) {
       enterLazyMode(owner, name, number, summary, params);
       loading = false;
       return;
@@ -1753,6 +1764,7 @@ export function createDiffStore(opts: DiffStoreOptions) {
     getFileHunkState,
     requestHunks,
     loadDiff,
+    reloadDiff: reloadDiffOnly,
     setActivePR,
     refresh,
     isRefreshing,

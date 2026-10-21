@@ -208,6 +208,9 @@ function fakeCodeBrowserStore() {
 function renderDiffView(
   detailStore = fakeDetailStore(),
   prepare?: (diffStore: ReturnType<typeof createDiffStore>) => void,
+  props: { owner: string; name: string; number: number } = {
+    owner: "acme", name: "widget", number: 7,
+  },
 ) {
   const client = symbolRefsClient();
   const diffStore = createDiffStore({ client });
@@ -216,7 +219,7 @@ function renderDiffView(
   const codeBrowserStore = fakeCodeBrowserStore();
   const reviewThreadsStore = fakeReviewThreadsStore();
   render(DiffView, {
-    props: { owner: "acme", name: "widget", number: 7 },
+    props,
     context: new Map<symbol, unknown>([
       [STORES_KEY, {
         diff: diffStore,
@@ -719,22 +722,42 @@ describe("DiffView: jumps wait for load and mount", () => {
   });
 });
 
-describe("DiffView worktree-changed banner", () => {
-  const message = "The worktree changed since this diff loaded.";
+describe("DiffView diff-changed banner", () => {
+  const worktreeMessage = "The worktree changed since this diff loaded.";
+  const prMessage = "This diff changed since it loaded.";
 
   it("is hidden while the loaded diff is current", async () => {
     renderDiffView();
     await tick();
-    expect(screen.queryByText(message)).toBeNull();
+    expect(screen.queryByText(worktreeMessage)).toBeNull();
+    expect(screen.queryByText(prMessage)).toBeNull();
   });
 
-  it("shows when the worktree changed and Reload reloads the diff", async () => {
+  it("names the diff, not a worktree, for a pull request", async () => {
+    renderDiffView(undefined, (s) => {
+      vi.spyOn(s, "isWorktreeChanged").mockReturnValue(true);
+    });
+    expect(await screen.findByText(prMessage)).toBeTruthy();
+    expect(screen.queryByText(worktreeMessage)).toBeNull();
+  });
+
+  it("names the worktree for a local worktree", async () => {
+    renderDiffView(undefined, (s) => {
+      vi.spyOn(s, "isWorktreeChanged").mockReturnValue(true);
+    }, { owner: "local", name: "demo", number: 3 });
+    expect(await screen.findByText(worktreeMessage)).toBeTruthy();
+    expect(screen.queryByText(prMessage)).toBeNull();
+  });
+
+  it("Reload refetches in place instead of clearing the diff", async () => {
     const { diffStore } = renderDiffView(undefined, (s) => {
       vi.spyOn(s, "isWorktreeChanged").mockReturnValue(true);
     });
-    expect(await screen.findByText(message)).toBeTruthy();
+    await screen.findByText(prMessage);
     const load = vi.spyOn(diffStore, "loadDiff").mockResolvedValue();
+    const reload = vi.spyOn(diffStore, "reloadDiff").mockResolvedValue();
     await fireEvent.click(screen.getByRole("button", { name: "Reload" }));
-    expect(load).toHaveBeenCalledWith("acme", "widget", 7);
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(load).not.toHaveBeenCalled();
   });
 });

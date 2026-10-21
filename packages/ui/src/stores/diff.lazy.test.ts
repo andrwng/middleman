@@ -355,16 +355,161 @@ describe("diff store lazy loading", () => {
     expect(POST).not.toHaveBeenCalled();
   });
 
-  it("fetches globs once per repo", async () => {
+  it("fetches globs once per route", async () => {
     installFetch({ files: [file("a.ts")] });
     const { client, GET } = makeClient({ globs: ["gen/**"] });
     const store = createDiffStore({ client });
     await store.loadDiff("acme", "widget", 1);
-    await store.loadDiff("acme", "widget", 2);
+    await store.loadDiff("acme", "widget", 1);
 
     const globCalls = GET.mock.calls.filter(([p]) => p === GLOBS_PATH);
     expect(globCalls).toHaveLength(1);
     expect(store.getCollapseGlobs()).toEqual(["gen/**"]);
+  });
+
+  it("does not share globs between same-basename local worktrees", async () => {
+    installFetch({ files: [file("a.ts")] });
+    const byNumber: Record<number, string[]> = { 1: ["one/**"], 2: ["two/**"] };
+    const { client, GET } = makeClient();
+    GET.mockImplementation(async (_path: string, init?: unknown) => {
+      const n = (init as { params: { path: { number: number } } }).params.path.number;
+      return { data: { globs: byNumber[n] ?? [] }, error: undefined, response: { status: 200 } };
+    });
+    const store = createDiffStore({ client });
+    await store.loadDiff("local", "demo", 1);
+    expect(store.getCollapseGlobs()).toEqual(["one/**"]);
+    await store.loadDiff("local", "demo", 2);
+    expect(store.getCollapseGlobs()).toEqual(["two/**"]);
+    expect(GET.mock.calls.filter(([p]) => p === GLOBS_PATH)).toHaveLength(2);
+  });
+
+  it("a glob save makes other views refetch", async () => {
+    installFetch({ files: [file("a.ts")] });
+    const saved: { globs: string[] } = { globs: ["old/**"] };
+    const { client, GET, PUT } = makeClient();
+    GET.mockImplementation(async () => ({
+      data: { globs: saved.globs }, error: undefined, response: { status: 200 },
+    }));
+    PUT.mockImplementation(async (_path: string, init: { body: { globs: string[] } }) => {
+      saved.globs = init.body.globs;
+      return { data: { globs: init.body.globs }, error: undefined, response: { status: 200 } };
+    });
+    const store = createDiffStore({ client });
+    // The PR view and the local view of the same repo are separate routes.
+    await store.loadDiff("acme", "widget", 7);
+    await store.loadDiff("local", "widget", 3);
+    await store.saveCollapseGlobs(["new/**"]);
+    expect(store.getCollapseGlobs()).toEqual(["new/**"]);
+
+    await store.loadDiff("acme", "widget", 7);
+    expect(store.getCollapseGlobs()).toEqual(["new/**"]);
+    expect(GET.mock.calls.filter(([p]) => p === GLOBS_PATH)).toHaveLength(3);
+  });
+
+  it("patchset scope skips the /files summary", async () => {
+    const files = largeSummaryFiles();
+    const log = installFetch({ files });
+    const { client } = makeClient();
+    const store = createDiffStore({ client });
+    store.setActivePR("acme", "widget", 1);
+
+    store.selectPatchsets(1, 2);
+    await vi.waitFor(() => {
+      expect(store.getDiff()).not.toBeNull();
+    });
+    expect(log.urls.filter((u) => u.includes("/files"))).toHaveLength(0);
+    expect(store.getFileList()?.files).toHaveLength(files.length);
+  });
+
+  it("reloadDiff keeps the current diff until the new summary arrives", async () => {
+    const files = largeSummaryFiles();
+    installFetch({ files });
+    const changed = files.map((f) =>
+      f.path === "big/a.ts" ? { ...f, additions: f.additions + 3 } : f,
+    );
+    const { client } = makeClient({ hunks: hunksFrom(changed) });
+    const store = createDiffStore({ client });
+    await store.loadDiff("acme", "widget", 1);
+    store.requestHunks("big/a.ts");
+    await vi.waitFor(() => {
+      expect(store.getFileHunkState("big/a.ts")).toBe("loaded");
+    });
+    expect(store.isWorktreeChanged()).toBe(true);
+    const before = store.getDiff();
+
+    const p = store.reloadDiff();
+    // Synchronously after the call: nothing cleared yet.
+    expect(store.getDiff()).toBe(before);
+    await p;
+    expect(store.getDiff()).not.toBeNull();
+    expect(store.isWorktreeChanged()).toBe(false);
+    expect(store.isLazy()).toBe(true);
+  });
+
+  it("keeps the summary's status and old_path when hunks load", async () => {
+    const files = largeSummaryFiles();
+    installFetch({ files });
+    // The hunk batch pairs big/new.ts differently than the summary did.
+    const repaired = files.map((f) =>
+      f.path === "big/new.ts"
+        ? { ...f, status: "copied", old_path: "big/other.ts", is_binary: true }
+        : f,
+    );
+    const { client } = makeClient({ hunks: hunksFrom(repaired) });
+    const store = createDiffStore({ client });
+    await store.loadDiff("acme", "widget", 1);
+    store.requestHunks("big/new.ts");
+    await vi.waitFor(() => {
+      expect(store.getFileHunkState("big/new.ts")).toBe("loaded");
+    });
+    const f = store.getDiff()!.files.find((x) => x.path === "big/new.ts")!;
+    expect(f.status).toBe("renamed");
+    expect(f.old_path).toBe("big/old.ts");
+    expect(f.hunks).toHaveLength(1);
+    expect(f.is_binary).toBe(true);
+  });
+
+  it("ignores a hunk batch that resolves after a scope change", async () => {
+    const files = largeSummaryFiles();
+    installFetch({ files });
+    let release: (() => void) | null = null;
+    const changed = files.map((f) => ({ ...f, additions: f.additions + 1 }));
+    const handler = hunksFrom(changed);
+    const { client, POST } = makeClient();
+    POST.mockImplementation(async (_path: string, init: { body: Record<string, unknown> }) => {
+      await new Promise<void>((r) => (release = r));
+      return handler(init.body);
+    });
+    const store = createDiffStore({ client });
+    store.setActivePR("acme", "widget", 1);
+    await store.loadDiff("acme", "widget", 1);
+    store.requestHunks("big/a.ts");
+    await vi.waitFor(() => {
+      expect(release).not.toBeNull();
+    });
+
+    await store.loadCommits();
+    await store.selectCommit("c1");
+    release!();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(store.getFileHunkState("big/a.ts")).toBe("idle");
+    expect(store.getDiff()!.files.every((f) => f.hunks.length === 0)).toBe(true);
+    expect(store.isWorktreeChanged()).toBe(false);
+  });
+
+  it("a file missing from the hunk response sets isWorktreeChanged", async () => {
+    const files = largeSummaryFiles();
+    installFetch({ files });
+    const { client } = makeClient({ hunks: hunksFrom([]) });
+    const store = createDiffStore({ client });
+    await store.loadDiff("acme", "widget", 1);
+
+    store.requestHunks("big/a.ts");
+    await vi.waitFor(() => {
+      expect(store.getFileHunkState("big/a.ts")).toBe("error");
+    });
+    expect(store.isWorktreeChanged()).toBe(true);
   });
 });
 
