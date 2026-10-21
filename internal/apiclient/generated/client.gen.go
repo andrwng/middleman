@@ -400,6 +400,13 @@ type CreateWorkspaceInputBody struct {
 	PlatformHost string  `json:"platform_host"`
 }
 
+// DiffCollapseGlobsResponse defines model for DiffCollapseGlobsResponse.
+type DiffCollapseGlobsResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string   `json:"$schema,omitempty"`
+	Globs  *[]string `json:"globs"`
+}
+
 // DiffFile defines model for DiffFile.
 type DiffFile struct {
 	Additions        int64   `json:"additions"`
@@ -1584,6 +1591,9 @@ type PutReposByOwnerByNamePullsByNumberCodeBrowserStateJSONRequestBody = PutCode
 // PostPrCommentJSONRequestBody defines body for PostPrComment for application/json ContentType.
 type PostPrCommentJSONRequestBody = PostCommentInputBody
 
+// PutReposByOwnerByNamePullsByNumberDiffCollapseGlobsJSONRequestBody defines body for PutReposByOwnerByNamePullsByNumberDiffCollapseGlobs for application/json ContentType.
+type PutReposByOwnerByNamePullsByNumberDiffCollapseGlobsJSONRequestBody = DiffCollapseGlobsResponse
+
 // PostReposByOwnerByNamePullsByNumberDiffHunksJSONRequestBody defines body for PostReposByOwnerByNamePullsByNumberDiffHunks for application/json ContentType.
 type PostReposByOwnerByNamePullsByNumberDiffHunksJSONRequestBody = DiffHunksRequest
 
@@ -1852,6 +1862,14 @@ type ClientInterface interface {
 
 	// GetReposByOwnerByNamePullsByNumberDiff request
 	GetReposByOwnerByNamePullsByNumberDiff(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberDiffParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetReposByOwnerByNamePullsByNumberDiffCollapseGlobs request
+	GetReposByOwnerByNamePullsByNumberDiffCollapseGlobs(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PutReposByOwnerByNamePullsByNumberDiffCollapseGlobsWithBody request with any body
+	PutReposByOwnerByNamePullsByNumberDiffCollapseGlobsWithBody(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	PutReposByOwnerByNamePullsByNumberDiffCollapseGlobs(ctx context.Context, owner string, name string, number int64, body PutReposByOwnerByNamePullsByNumberDiffCollapseGlobsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PostReposByOwnerByNamePullsByNumberDiffHunksWithBody request with any body
 	PostReposByOwnerByNamePullsByNumberDiffHunksWithBody(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2665,6 +2683,42 @@ func (c *Client) PostReposByOwnerByNamePullsByNumberCommitsByShaAnalyze(ctx cont
 
 func (c *Client) GetReposByOwnerByNamePullsByNumberDiff(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberDiffParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetReposByOwnerByNamePullsByNumberDiffRequest(c.Server, owner, name, number, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetReposByOwnerByNamePullsByNumberDiffCollapseGlobs(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetReposByOwnerByNamePullsByNumberDiffCollapseGlobsRequest(c.Server, owner, name, number)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PutReposByOwnerByNamePullsByNumberDiffCollapseGlobsWithBody(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutReposByOwnerByNamePullsByNumberDiffCollapseGlobsRequestWithBody(c.Server, owner, name, number, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PutReposByOwnerByNamePullsByNumberDiffCollapseGlobs(ctx context.Context, owner string, name string, number int64, body PutReposByOwnerByNamePullsByNumberDiffCollapseGlobsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutReposByOwnerByNamePullsByNumberDiffCollapseGlobsRequest(c.Server, owner, name, number, body)
 	if err != nil {
 		return nil, err
 	}
@@ -6056,6 +6110,115 @@ func NewGetReposByOwnerByNamePullsByNumberDiffRequest(server string, owner strin
 	return req, nil
 }
 
+// NewGetReposByOwnerByNamePullsByNumberDiffCollapseGlobsRequest generates requests for GetReposByOwnerByNamePullsByNumberDiffCollapseGlobs
+func NewGetReposByOwnerByNamePullsByNumberDiffCollapseGlobsRequest(server string, owner string, name string, number int64) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s/diff-collapse-globs", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPutReposByOwnerByNamePullsByNumberDiffCollapseGlobsRequest calls the generic PutReposByOwnerByNamePullsByNumberDiffCollapseGlobs builder with application/json body
+func NewPutReposByOwnerByNamePullsByNumberDiffCollapseGlobsRequest(server string, owner string, name string, number int64, body PutReposByOwnerByNamePullsByNumberDiffCollapseGlobsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPutReposByOwnerByNamePullsByNumberDiffCollapseGlobsRequestWithBody(server, owner, name, number, "application/json", bodyReader)
+}
+
+// NewPutReposByOwnerByNamePullsByNumberDiffCollapseGlobsRequestWithBody generates requests for PutReposByOwnerByNamePullsByNumberDiffCollapseGlobs with any type of body
+func NewPutReposByOwnerByNamePullsByNumberDiffCollapseGlobsRequestWithBody(server string, owner string, name string, number int64, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s/diff-collapse-globs", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewPostReposByOwnerByNamePullsByNumberDiffHunksRequest calls the generic PostReposByOwnerByNamePullsByNumberDiffHunks builder with application/json body
 func NewPostReposByOwnerByNamePullsByNumberDiffHunksRequest(server string, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberDiffHunksJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -8971,6 +9134,14 @@ type ClientWithResponsesInterface interface {
 	// GetReposByOwnerByNamePullsByNumberDiffWithResponse request
 	GetReposByOwnerByNamePullsByNumberDiffWithResponse(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberDiffParams, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberDiffResponse, error)
 
+	// GetReposByOwnerByNamePullsByNumberDiffCollapseGlobsWithResponse request
+	GetReposByOwnerByNamePullsByNumberDiffCollapseGlobsWithResponse(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberDiffCollapseGlobsResponse, error)
+
+	// PutReposByOwnerByNamePullsByNumberDiffCollapseGlobsWithBodyWithResponse request with any body
+	PutReposByOwnerByNamePullsByNumberDiffCollapseGlobsWithBodyWithResponse(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutReposByOwnerByNamePullsByNumberDiffCollapseGlobsResponse, error)
+
+	PutReposByOwnerByNamePullsByNumberDiffCollapseGlobsWithResponse(ctx context.Context, owner string, name string, number int64, body PutReposByOwnerByNamePullsByNumberDiffCollapseGlobsJSONRequestBody, reqEditors ...RequestEditorFn) (*PutReposByOwnerByNamePullsByNumberDiffCollapseGlobsResponse, error)
+
 	// PostReposByOwnerByNamePullsByNumberDiffHunksWithBodyWithResponse request with any body
 	PostReposByOwnerByNamePullsByNumberDiffHunksWithBodyWithResponse(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberDiffHunksResponse, error)
 
@@ -10112,6 +10283,52 @@ func (r GetReposByOwnerByNamePullsByNumberDiffResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r GetReposByOwnerByNamePullsByNumberDiffResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetReposByOwnerByNamePullsByNumberDiffCollapseGlobsResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *DiffCollapseGlobsResponse
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r GetReposByOwnerByNamePullsByNumberDiffCollapseGlobsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetReposByOwnerByNamePullsByNumberDiffCollapseGlobsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type PutReposByOwnerByNamePullsByNumberDiffCollapseGlobsResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *DiffCollapseGlobsResponse
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r PutReposByOwnerByNamePullsByNumberDiffCollapseGlobsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PutReposByOwnerByNamePullsByNumberDiffCollapseGlobsResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -11745,6 +11962,32 @@ func (c *ClientWithResponses) GetReposByOwnerByNamePullsByNumberDiffWithResponse
 		return nil, err
 	}
 	return ParseGetReposByOwnerByNamePullsByNumberDiffResponse(rsp)
+}
+
+// GetReposByOwnerByNamePullsByNumberDiffCollapseGlobsWithResponse request returning *GetReposByOwnerByNamePullsByNumberDiffCollapseGlobsResponse
+func (c *ClientWithResponses) GetReposByOwnerByNamePullsByNumberDiffCollapseGlobsWithResponse(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberDiffCollapseGlobsResponse, error) {
+	rsp, err := c.GetReposByOwnerByNamePullsByNumberDiffCollapseGlobs(ctx, owner, name, number, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetReposByOwnerByNamePullsByNumberDiffCollapseGlobsResponse(rsp)
+}
+
+// PutReposByOwnerByNamePullsByNumberDiffCollapseGlobsWithBodyWithResponse request with arbitrary body returning *PutReposByOwnerByNamePullsByNumberDiffCollapseGlobsResponse
+func (c *ClientWithResponses) PutReposByOwnerByNamePullsByNumberDiffCollapseGlobsWithBodyWithResponse(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutReposByOwnerByNamePullsByNumberDiffCollapseGlobsResponse, error) {
+	rsp, err := c.PutReposByOwnerByNamePullsByNumberDiffCollapseGlobsWithBody(ctx, owner, name, number, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutReposByOwnerByNamePullsByNumberDiffCollapseGlobsResponse(rsp)
+}
+
+func (c *ClientWithResponses) PutReposByOwnerByNamePullsByNumberDiffCollapseGlobsWithResponse(ctx context.Context, owner string, name string, number int64, body PutReposByOwnerByNamePullsByNumberDiffCollapseGlobsJSONRequestBody, reqEditors ...RequestEditorFn) (*PutReposByOwnerByNamePullsByNumberDiffCollapseGlobsResponse, error) {
+	rsp, err := c.PutReposByOwnerByNamePullsByNumberDiffCollapseGlobs(ctx, owner, name, number, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutReposByOwnerByNamePullsByNumberDiffCollapseGlobsResponse(rsp)
 }
 
 // PostReposByOwnerByNamePullsByNumberDiffHunksWithBodyWithResponse request with arbitrary body returning *PostReposByOwnerByNamePullsByNumberDiffHunksResponse
@@ -13668,6 +13911,72 @@ func ParseGetReposByOwnerByNamePullsByNumberDiffResponse(rsp *http.Response) (*G
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest DiffResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetReposByOwnerByNamePullsByNumberDiffCollapseGlobsResponse parses an HTTP response from a GetReposByOwnerByNamePullsByNumberDiffCollapseGlobsWithResponse call
+func ParseGetReposByOwnerByNamePullsByNumberDiffCollapseGlobsResponse(rsp *http.Response) (*GetReposByOwnerByNamePullsByNumberDiffCollapseGlobsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetReposByOwnerByNamePullsByNumberDiffCollapseGlobsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DiffCollapseGlobsResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePutReposByOwnerByNamePullsByNumberDiffCollapseGlobsResponse parses an HTTP response from a PutReposByOwnerByNamePullsByNumberDiffCollapseGlobsWithResponse call
+func ParsePutReposByOwnerByNamePullsByNumberDiffCollapseGlobsResponse(rsp *http.Response) (*PutReposByOwnerByNamePullsByNumberDiffCollapseGlobsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PutReposByOwnerByNamePullsByNumberDiffCollapseGlobsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DiffCollapseGlobsResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

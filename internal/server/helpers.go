@@ -73,6 +73,27 @@ func (s *Server) lookupRepoID(ctx context.Context, owner, name string) (int64, e
 	return repo.ID, nil
 }
 
+// resolveRepoIDForPRRoute resolves the repo id addressed by a
+// PR-shaped route (/repos/{owner}/{name}/pulls/{number}/...) for
+// endpoints whose data is per-repo rather than per-PR. For local
+// worktree owners the number is the worktree id and is used to find
+// the worktree's parent repo; for every other owner the number is
+// ignored and owner/name resolve straight to a repo. Returns
+// errRepoNotFound when the repo (or, for local owners, the
+// worktree) does not exist.
+func (s *Server) resolveRepoIDForPRRoute(
+	ctx context.Context, owner, name string, number int,
+) (int64, error) {
+	if isLocalSource(owner) {
+		w, err := s.resolveLocalWorktree(ctx, name, number)
+		if err != nil {
+			return 0, errRepoNotFound
+		}
+		return w.RepoID, nil
+	}
+	return s.lookupRepoID(ctx, owner, name)
+}
+
 // lookupMRID resolves the internal MR id from the common route tuple.
 func (s *Server) lookupMRID(ctx context.Context, ref repoNumberPathRef) (int64, error) {
 	return s.db.GetMRIDByRepoAndNumber(ctx, ref.owner, ref.name, ref.number)

@@ -549,6 +549,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/repos/{owner}/{name}/pulls/{number}/diff-collapse-globs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get repos by owner by name pulls by number diff collapse globs */
+        get: operations["get-repos-by-owner-by-name-pulls-by-number-diff-collapse-globs"];
+        /** Put repos by owner by name pulls by number diff collapse globs */
+        put: operations["put-repos-by-owner-by-name-pulls-by-number-diff-collapse-globs"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/repos/{owner}/{name}/pulls/{number}/diff/hunks": {
         parameters: {
             query?: never;
@@ -1774,6 +1792,15 @@ export interface components {
             name: string;
             owner: string;
             platform_host: string;
+        };
+        DiffCollapseGlobsResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/DiffCollapseGlobsResponse.json
+             */
+            readonly $schema?: string;
+            globs: string[] | null;
         };
         DiffFile: {
             /** Format: int64 */
@@ -4359,6 +4386,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DiffResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-repos-by-owner-by-name-pulls-by-number-diff-collapse-globs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiffCollapseGlobsResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "put-repos-by-owner-by-name-pulls-by-number-diff-collapse-globs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiffCollapseGlobsResponse"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiffCollapseGlobsResponse"];
                 };
             };
             /** @description Error */

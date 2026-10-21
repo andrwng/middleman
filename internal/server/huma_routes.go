@@ -444,6 +444,8 @@ func (s *Server) registerAPI(api huma.API) {
 	huma.Put(api, "/repos/{owner}/{name}/pulls/{number}/notes", s.putPRNotes)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/code-browser-state", s.getCodeBrowserState)
 	huma.Put(api, "/repos/{owner}/{name}/pulls/{number}/code-browser-state", s.putCodeBrowserState)
+	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/diff-collapse-globs", s.getDiffCollapseGlobs)
+	huma.Put(api, "/repos/{owner}/{name}/pulls/{number}/diff-collapse-globs", s.putDiffCollapseGlobs)
 	huma.Register(api, huma.Operation{
 		OperationID:   "hide-review-thread",
 		Method:        http.MethodPost,
@@ -2969,6 +2971,94 @@ func (s *Server) putCodeBrowserState(ctx context.Context, input *putCodeBrowserS
 		return nil, huma.Error500InternalServerError("save code browser state: " + err.Error())
 	}
 	return &getCodeBrowserStateOutput{Body: toCodeBrowserStateResponse(state)}, nil
+}
+
+// --- Per-repo diff collapse globs ---
+//
+// Globs only drive the client's initial collapsed state for large
+// diffs; the server only stores and returns them. The route is
+// PR-shaped (/repos/{owner}/{name}/pulls/{number}/diff-collapse-globs)
+// for frontend consistency with the rest of the review pane, but the
+// data is per-repo: for PR owners the number is ignored and the repo
+// is resolved from owner/name alone; for local worktree owners the
+// number is the worktree id, used only to find the worktree's parent
+// repo.
+
+const (
+	maxDiffCollapseGlobs   = 200
+	maxDiffCollapseGlobLen = 512
+)
+
+type getDiffCollapseGlobsOutput struct {
+	Body diffCollapseGlobsResponse
+}
+
+type putDiffCollapseGlobsInput struct {
+	Owner  string `path:"owner"`
+	Name   string `path:"name"`
+	Number int    `path:"number"`
+	Body   diffCollapseGlobsResponse
+}
+
+func (s *Server) getDiffCollapseGlobs(ctx context.Context, input *repoNumberInput) (*getDiffCollapseGlobsOutput, error) {
+	repoID, err := s.resolveRepoIDForPRRoute(ctx, input.Owner, input.Name, input.Number)
+	if err != nil {
+		if errors.Is(err, errRepoNotFound) {
+			return nil, huma.Error404NotFound("repo not found")
+		}
+		return nil, huma.Error500InternalServerError("resolve repo: " + err.Error())
+	}
+	globs, err := s.db.GetDiffCollapseGlobs(ctx, repoID)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("load diff collapse globs: " + err.Error())
+	}
+	return &getDiffCollapseGlobsOutput{Body: diffCollapseGlobsResponse{Globs: globs}}, nil
+}
+
+func (s *Server) putDiffCollapseGlobs(ctx context.Context, input *putDiffCollapseGlobsInput) (*getDiffCollapseGlobsOutput, error) {
+	repoID, err := s.resolveRepoIDForPRRoute(ctx, input.Owner, input.Name, input.Number)
+	if err != nil {
+		if errors.Is(err, errRepoNotFound) {
+			return nil, huma.Error404NotFound("repo not found")
+		}
+		return nil, huma.Error500InternalServerError("resolve repo: " + err.Error())
+	}
+
+	globs, err := validateDiffCollapseGlobs(input.Body.Globs)
+	if err != nil {
+		return nil, huma.Error400BadRequest(err.Error())
+	}
+
+	if err := s.db.SetDiffCollapseGlobs(ctx, repoID, globs); err != nil {
+		return nil, huma.Error500InternalServerError("save diff collapse globs: " + err.Error())
+	}
+	return &getDiffCollapseGlobsOutput{Body: diffCollapseGlobsResponse{Globs: globs}}, nil
+}
+
+// validateDiffCollapseGlobs trims each entry, rejects an empty entry,
+// one over 512 chars, or more than 200 entries, and dedupes while
+// preserving first occurrence.
+func validateDiffCollapseGlobs(raw []string) ([]string, error) {
+	if len(raw) > maxDiffCollapseGlobs {
+		return nil, fmt.Errorf("at most %d globs are allowed", maxDiffCollapseGlobs)
+	}
+	seen := make(map[string]bool, len(raw))
+	out := make([]string, 0, len(raw))
+	for _, g := range raw {
+		trimmed := strings.TrimSpace(g)
+		if trimmed == "" {
+			return nil, fmt.Errorf("glob entries must not be empty")
+		}
+		if len(trimmed) > maxDiffCollapseGlobLen {
+			return nil, fmt.Errorf("glob entries must be at most %d characters", maxDiffCollapseGlobLen)
+		}
+		if seen[trimmed] {
+			continue
+		}
+		seen[trimmed] = true
+		out = append(out, trimmed)
+	}
+	return out, nil
 }
 
 func toCodeBrowserStateResponse(s db.CodeBrowserState) codeBrowserStateResponse {

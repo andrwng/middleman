@@ -232,6 +232,14 @@ type codeBrowserStateResponse struct {
 	UpdatedAt string `json:"updated_at,omitempty" doc:"UTC RFC3339 timestamp of last save (empty when never saved)"`
 }
 
+// diffCollapseGlobsResponse is the saved set of glob patterns a repo
+// uses to start large-diff files collapsed in the review pane. The
+// globs only drive client-side initial collapse state; the server
+// just stores and returns them in saved order.
+type diffCollapseGlobsResponse struct {
+	Globs []string `json:"globs"`
+}
+
 type workspaceResponse struct {
 	ID               string  `json:"id"`
 	PlatformHost     string  `json:"platform_host"`
