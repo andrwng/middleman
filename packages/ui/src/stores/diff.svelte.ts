@@ -11,6 +11,7 @@ import {
   compileGlob,
   resolveCollapse,
   type CollapseReason,
+  type GlobMatcher,
 } from "../utils/diffCollapse.js";
 import {
   HunkLoader,
@@ -265,7 +266,7 @@ export function createDiffStore(opts: DiffStoreOptions) {
   // Raw state so each list keeps its identity for the compiled cache.
   let globsByRepo = $state.raw<Record<string, string[]>>({});
   const globsInflight = new Map<string, Promise<void>>();
-  const compiledGlobs = new WeakMap<string[], RegExp[]>();
+  const compiledGlobs = new WeakMap<string[], GlobMatcher[]>();
   // O(1) path -> file metadata for the collapse rules, rebuilt only when
   // the underlying file list changes identity.
   let metaSource: DiffFile[] | null = null;
@@ -380,7 +381,7 @@ export function createDiffStore(opts: DiffStoreOptions) {
     );
   }
 
-  function compiledGlobsFor(owner: string, name: string): RegExp[] {
+  function compiledGlobsFor(owner: string, name: string): GlobMatcher[] {
     const list = globsByRepo[repoKey(owner, name)];
     if (!list || list.length === 0) return [];
     let compiled = compiledGlobs.get(list);

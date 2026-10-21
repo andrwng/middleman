@@ -16,60 +16,159 @@ export const LAZY_DIFF_LINES = 5000;
 
 const DELETED_STATUS = "deleted";
 
-// Compiles a collapse glob into a RegExp anchored to the full path.
-//
-// Syntax:
-//   *   matches within a single path segment (not /)
-//   **  matches any number of segments, including zero
-//   ?   matches exactly one non-slash character
-// All other regex metacharacters are escaped and taken literally.
-export function compileGlob(glob: string): RegExp {
-  let pattern = "";
+// A compiled collapse glob. RegExp satisfies this shape too.
+export interface GlobMatcher {
+  test(path: string): boolean;
+}
+
+type GlobToken =
+  | { kind: "lit"; ch: string }
+  | { kind: "one" } // ?    -> one non-slash character
+  | { kind: "star" } // *   -> zero or more non-slash characters
+  | { kind: "any" } // **   -> zero or more characters of any kind
+  | { kind: "segs" }; // **/ -> zero or more whole segments, i.e. (.*/)?
+
+function tokenizeGlob(glob: string): GlobToken[] {
+  const tokens: GlobToken[] = [];
   let i = 0;
   while (i < glob.length) {
-    const ch = glob[i];
+    const ch = glob[i]!;
     if (ch === "*") {
       if (glob[i + 1] === "*") {
         // "**" consumes any number of path segments, including zero.
         // When followed by "/" (leading, e.g. "**/*.pb.go", or interior,
         // e.g. "a/**/b"), swallow that "/" into an optional "zero or more
-        // segments" group so the single separator already emitted for the
+        // segments" token so the single separator already emitted for the
         // preceding literal (if any) is preserved exactly once: "a/**/b"
-        // compiles to "a/(?:.*/)?b", matching "a/b" and "a/x/b" but not
-        // "ab" or "a/b/c". A trailing "**" with nothing after it (e.g.
-        // "proto/gen/**" or "x/**") falls through to the plain ".*" branch,
-        // which requires the preceding literal "/" to be present, so it
-        // does not match the bare prefix itself (e.g. "x/**" matches "x/y"
-        // but not bare "x").
-        let j = i + 2;
-        if (glob[j] === "/") {
-          j++;
-          pattern += "(?:.*/)?";
+        // matches "a/b" and "a/x/b" but not "ab" or "a/b/c". A trailing
+        // "**" with nothing after it (e.g. "proto/gen/**" or "x/**")
+        // becomes a plain "any characters" token, which requires the
+        // preceding literal "/" to be present, so it does not match the
+        // bare prefix itself (e.g. "x/**" matches "x/y" but not bare "x").
+        if (glob[i + 2] === "/") {
+          // Consecutive "**/" segments are equivalent to one.
+          if (tokens[tokens.length - 1]?.kind !== "segs") {
+            tokens.push({ kind: "segs" });
+          }
+          i += 3;
         } else {
-          pattern += ".*";
+          tokens.push({ kind: "any" });
+          i += 2;
         }
-        i = j;
         continue;
       }
-      pattern += "[^/]*";
+      tokens.push({ kind: "star" });
       i++;
       continue;
     }
     if (ch === "?") {
-      pattern += "[^/]";
+      tokens.push({ kind: "one" });
       i++;
       continue;
     }
-    // Escape regex metacharacters; everything else is literal.
-    pattern += ch!.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    tokens.push({ kind: "lit", ch });
     i++;
   }
-  return new RegExp(`^${pattern}$`);
+  return tokens;
+}
+
+// Compiles a collapse glob into a matcher anchored to the full path.
+//
+// Syntax:
+//   *   matches within a single path segment (not /)
+//   **  matches any number of segments, including zero
+//   ?   matches exactly one non-slash character
+// All other characters are literal.
+//
+// Matching simulates the glob as an NFA (a set of live positions advanced
+// one path character at a time) instead of compiling to a backtracking
+// RegExp. Saved globs are user input that runs against every file of every
+// diff in the repo, so a pattern like "**/**/**/...zz" must not be able to
+// freeze the tab: cost is O(path length x glob length) for any input.
+export function compileGlob(glob: string): GlobMatcher {
+  const tokens = tokenizeGlob(glob);
+  const n = tokens.length;
+  // State 2*i: about to match token i. State 2*i+1: inside the ".*/" body
+  // of a "segs" token i. State 2*n: accept.
+  const size = 2 * n + 1;
+  const accept = 2 * n;
+
+  const addClosure = (set: Uint8Array, state: number): void => {
+    // Follow epsilon edges: star/any/segs may all match the empty string.
+    let s = state;
+    while (!set[s]) {
+      set[s] = 1;
+      if (s === accept || s % 2 === 1) return;
+      const tok = tokens[s / 2]!;
+      if (tok.kind !== "star" && tok.kind !== "any" && tok.kind !== "segs") {
+        return;
+      }
+      s += 2;
+    }
+  };
+
+  return {
+    test(path: string): boolean {
+      let cur = new Uint8Array(size);
+      let next = new Uint8Array(size);
+      addClosure(cur, 0);
+      for (let p = 0; p < path.length; p++) {
+        const c = path[p]!;
+        next.fill(0);
+        let live = false;
+        for (let s = 0; s < accept; s++) {
+          if (!cur[s]) continue;
+          const i = s >> 1;
+          const after = 2 * (i + 1);
+          if (s % 2 === 1) {
+            // Inside "segs": any character continues; "/" may also end it.
+            next[s] = 1;
+            if (c === "/") addClosure(next, after);
+            live = true;
+            continue;
+          }
+          const tok = tokens[i]!;
+          switch (tok.kind) {
+            case "lit":
+              if (c === tok.ch) {
+                addClosure(next, after);
+                live = true;
+              }
+              break;
+            case "one":
+              if (c !== "/") {
+                addClosure(next, after);
+                live = true;
+              }
+              break;
+            case "star":
+              if (c !== "/") {
+                addClosure(next, s);
+                live = true;
+              }
+              break;
+            case "any":
+              addClosure(next, s);
+              live = true;
+              break;
+            case "segs":
+              next[s + 1] = 1;
+              if (c === "/") addClosure(next, after);
+              live = true;
+              break;
+          }
+        }
+        if (!live) return false;
+        [cur, next] = [next, cur];
+      }
+      return cur[accept] === 1;
+    },
+  };
 }
 
 // Returns true if path, or oldPath (for renames/copies), matches any glob.
 export function matchesAnyGlob(
-  globs: RegExp[],
+  globs: GlobMatcher[],
   path: string,
   oldPath?: string,
 ): boolean {
@@ -98,7 +197,7 @@ export interface CollapseInput {
 export function resolveCollapse(
   file: CollapseInput,
   override: boolean | undefined,
-  globs: RegExp[],
+  globs: GlobMatcher[],
 ): { collapsed: boolean; reason: CollapseReason | null } {
   if (override === true) {
     return { collapsed: true, reason: "user" };

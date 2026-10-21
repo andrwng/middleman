@@ -96,6 +96,43 @@ describe("compileGlob", () => {
   });
 });
 
+describe("compileGlob pathological patterns", () => {
+  // 30 segments, none named "zz"/ending in "x": every pattern below fails,
+  // which forces a backtracking regex to explore its full search space.
+  const path = Array.from({ length: 30 }, (_, i) => `seg${i}`).join("/");
+
+  it.each([
+    ["**/".repeat(20) + "zz", false],
+    ["*".repeat(30) + "x", false],
+    ["*/".repeat(15) + "zz", false],
+    ["*/**/".repeat(10) + "zz", false],
+    ["**".repeat(15) + "zz", false],
+    ["**/seg".repeat(10) + "zz", false],
+    ["**/".repeat(20) + "seg29", true],
+    ["*".repeat(30) + "9", true],
+  ] as const)("%s completes quickly -> %s", (glob, expected) => {
+    const start = performance.now();
+    const result = compileGlob(glob).test(path);
+    const elapsed = performance.now() - start;
+    expect(result).toBe(expected);
+    expect(elapsed).toBeLessThan(50);
+  });
+
+  it("collapses consecutive ** segments without changing semantics", () => {
+    const re = compileGlob("a/**/**/b");
+    expect(re.test("a/b")).toBe(true);
+    expect(re.test("a/x/y/b")).toBe(true);
+    expect(re.test("ab")).toBe(false);
+  });
+
+  it("keeps mid-segment ** crossing separators", () => {
+    const re = compileGlob("a**.go");
+    expect(re.test("a.go")).toBe(true);
+    expect(re.test("ab/c/d.go")).toBe(true);
+    expect(re.test("b.go")).toBe(false);
+  });
+});
+
 describe("matchesAnyGlob", () => {
   it("matches against the new path", () => {
     const globs = [compileGlob("proto/gen/**")];
