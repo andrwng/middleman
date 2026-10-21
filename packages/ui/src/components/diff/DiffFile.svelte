@@ -36,6 +36,8 @@
   const { file, owner, name, number }: Props = $props();
 
   const collapsed = $derived(diffStore.isFileCollapsed(owner, name, number, file.path));
+  // Lazy diffs: hunks arrive per file. Always "loaded" for full diffs.
+  const hunkState = $derived(diffStore.getFileHunkState(file.path));
   const lang = $derived(langFromPath(file.path));
   const layout = $derived(diffStore.getLayout());
 
@@ -604,6 +606,14 @@
     }
   });
 
+  // Interim lazy-diff wiring: request this file's hunks once it is
+  // expanded and near the viewport.
+  $effect(() => {
+    if (diffStore.isLazy() && !collapsed && inViewport && hunkState === "idle") {
+      diffStore.requestHunks(file.path);
+    }
+  });
+
   onMount(() => {
     let observer: IntersectionObserver | undefined;
     // Guard for jsdom / SSR-ish test environments where IntersectionObserver
@@ -844,7 +854,18 @@
       <span>Viewed</span>
     </label>
   </div>
-  {#if !collapsed && isMarkdown && viewMode === "rendered"}
+  {#if !collapsed && hunkState !== "loaded"}
+    <div class="file-content">
+      {#if hunkState === "error"}
+        <div class="hunk-status hunk-status--error">
+          Failed to load diff.
+          <button class="hunk-status__retry" onclick={() => diffStore.requestHunks(file.path)}>Retry</button>
+        </div>
+      {:else}
+        <div class="hunk-status">Loading diff…</div>
+      {/if}
+    </div>
+  {:else if !collapsed && isMarkdown && viewMode === "rendered"}
     <div class="file-content">
       <RenderedMarkdownView
         {owner}
@@ -1453,6 +1474,22 @@
 
   .hunk-header--split {
     display: block;
+  }
+
+  .hunk-status {
+    padding: 12px 20px;
+    color: var(--diff-line-num);
+    font-size: 13px;
+  }
+
+  .hunk-status--error {
+    color: var(--accent-red);
+  }
+
+  .hunk-status__retry {
+    margin-left: 8px;
+    font-size: 12px;
+    text-decoration: underline;
   }
 
   .binary-notice {

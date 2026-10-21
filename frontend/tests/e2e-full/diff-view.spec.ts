@@ -900,6 +900,10 @@ test.describe("diff view (git-backed)", () => {
     );
     await expect(configFile).toBeVisible();
 
+    // Whole-file deletions start collapsed (rule "deleted"); expand it.
+    await expect(configFile.locator(".diff-line")).toHaveCount(0);
+    await configFile.locator(".file-header__collapse").click();
+
     // Only deletion lines -- no additions or context.
     const deletedLines = configFile.locator(".diff-line--del");
     const addedLines = configFile.locator(".diff-line--add");

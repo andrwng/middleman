@@ -49,6 +49,7 @@ afterEach(() => {
   localStorage.removeItem("diff-hide-whitespace");
   localStorage.removeItem("diff-tab-width");
   localStorage.removeItem("diff-collapsed-files");
+  localStorage.removeItem("diff-collapse-overrides");
 });
 
 describe("createDiffStore loadDiff", () => {
@@ -124,12 +125,12 @@ describe("createDiffStore loadDiff", () => {
     expect(store.getFileList()?.files[0]?.path).toBe("b.ts");
   });
 
-  it("aborts in-flight requests when switching PRs", async () => {
+  it("aborts an in-flight /files request when switching PRs", async () => {
     const diffB = makeDiffResult(["b.ts"]);
     const filesB = makeFilesResult(["b.ts"]);
 
-    let diffAAborted = false;
     let filesAAborted = false;
+    let diffARequested = false;
 
     vi.spyOn(globalThis, "fetch").mockImplementation(
       async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -149,6 +150,55 @@ describe("createDiffStore loadDiff", () => {
           });
         }
         if (url.includes("pulls/1/diff")) {
+          diffARequested = true;
+          return Response.json(makeDiffResult(["a.ts"]));
+        }
+        if (url.includes("pulls/2/files")) {
+          return Response.json(filesB);
+        }
+        if (url.includes("pulls/2/diff")) {
+          return Response.json(diffB);
+        }
+        return Response.json({}, { status: 404 });
+      },
+    );
+
+    const store = createDiffStore({ client: stubClient(), getBasePath: () => "/" });
+
+    // Start loading PR A (its /files will hang).
+    const loadA = store.loadDiff("owner", "repo", 1);
+
+    // Switch to PR B — should abort PR A.
+    await store.loadDiff("owner", "repo", 2);
+    await loadA;
+
+    expect(filesAAborted).toBe(true);
+    // The aborted load must not go on to fetch PR A's /diff.
+    expect(diffARequested).toBe(false);
+    expect(store.getDiff()?.files[0]?.path).toBe("b.ts");
+  });
+
+  it("aborts an in-flight /diff request when switching PRs", async () => {
+    const diffB = makeDiffResult(["b.ts"]);
+    const filesB = makeFilesResult(["b.ts"]);
+
+    let diffAAborted = false;
+    let diffARequested = false;
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url =
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.href
+              : input.url;
+
+        if (url.includes("pulls/1/files")) {
+          return Response.json(makeFilesResult(["a.ts"]));
+        }
+        if (url.includes("pulls/1/diff")) {
+          diffARequested = true;
           return new Promise((_resolve, reject) => {
             init?.signal?.addEventListener("abort", () => {
               diffAAborted = true;
@@ -168,20 +218,22 @@ describe("createDiffStore loadDiff", () => {
 
     const store = createDiffStore({ client: stubClient(), getBasePath: () => "/" });
 
-    // Start loading PR A (will hang).
+    // Load PR A until its /diff request is in flight (it will hang).
     void store.loadDiff("owner", "repo", 1);
+    await vi.waitFor(() => {
+      expect(diffARequested).toBe(true);
+    });
 
-    // Switch to PR B — should abort PR A.
+    // Switch to PR B — should abort PR A's /diff.
     await store.loadDiff("owner", "repo", 2);
 
     expect(diffAAborted).toBe(true);
-    expect(filesAAborted).toBe(true);
     expect(store.getDiff()?.files[0]?.path).toBe("b.ts");
   });
 
   it("shows loading when /files fails but /diff still in flight", async () => {
     const diff = makeDiffResult(["a.ts"]);
-    let resolveDiff: () => void = () => {};
+    let resolveDiff: (() => void) | null = null;
 
     vi.spyOn(globalThis, "fetch").mockImplementation(
       async (input: RequestInfo | URL) => {
@@ -207,16 +259,17 @@ describe("createDiffStore loadDiff", () => {
     const store = createDiffStore({ client: stubClient(), getBasePath: () => "/" });
     const loadP = store.loadDiff("owner", "repo", 1);
 
-    // Wait for /files to fail.
+    // Wait for /files to fail; the store then falls back to /diff.
     await vi.waitFor(() => {
-      expect(store.getFileList()).toBeNull();
+      expect(resolveDiff).not.toBeNull();
     });
+    expect(store.getFileList()).toBeNull();
 
     // isFileListLoading must stay true — /diff is still in flight.
     expect(store.isFileListLoading()).toBe(true);
 
     // Resolve /diff — file list falls through to diff.files.
-    resolveDiff();
+    resolveDiff!();
     await loadP;
 
     expect(store.isFileListLoading()).toBe(false);
@@ -262,16 +315,21 @@ describe("createDiffStore loadDiff", () => {
     const store = createDiffStore({ client: stubClient(), getBasePath: () => "/" });
     const loadP = store.loadDiff("owner", "repo", 1);
 
-    // Verify /diff request includes whitespace=hide query param.
-    expect(fetchedUrls.some((u) => u.includes("diff?whitespace=hide"))).toBe(
+    // The /files summary is fetched first, with the same whitespace param.
+    expect(fetchedUrls.some((u) => u.includes("files?whitespace=hide"))).toBe(
       true,
     );
 
-    // /files arrives first — shows unfiltered preview.
+    // /files arrives first — shows the preview.
     resolveFiles();
     await vi.waitFor(() => {
       expect(store.getFileList()?.files).toHaveLength(2);
     });
+
+    // Verify /diff request includes whitespace=hide query param.
+    expect(fetchedUrls.some((u) => u.includes("diff?whitespace=hide"))).toBe(
+      true,
+    );
 
     // /diff arrives — authoritative, whitespace-filtered.
     resolveDiff();
@@ -356,7 +414,7 @@ describe("createDiffStore loadDiff", () => {
     expect(store.getFileList()).toBeNull();
   });
 
-  it("clears file list when /diff fails before /files resolves", async () => {
+  it("clears file list when /diff fails right after a deferred /files resolves", async () => {
     const filesResult = makeFilesResult(["a.ts"]);
     let resolveFiles: () => void = () => {};
 
@@ -385,7 +443,8 @@ describe("createDiffStore loadDiff", () => {
     const store = createDiffStore({ client: stubClient(), getBasePath: () => "/" });
     const loadP = store.loadDiff("owner", "repo", 1);
 
-    // /diff fails fast, /files still pending — release it.
+    // /files is pending (the store waits for it before /diff) — release it;
+    // /diff then fails fast.
     resolveFiles();
     await loadP;
 

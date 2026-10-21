@@ -6,6 +6,45 @@ import type {
 } from "../api/types.js";
 import type { MiddlemanClient } from "../types.js";
 import { apiErrorMessage } from "../api/errors.js";
+import {
+  LAZY_DIFF_LINES,
+  compileGlob,
+  resolveCollapse,
+  type CollapseReason,
+} from "../utils/diffCollapse.js";
+import {
+  HunkLoader,
+  MissingHunksError,
+  type HunkState,
+} from "./hunkLoader.js";
+import {
+  loadCollapseOverrides,
+  saveCollapseOverrides,
+  type CollapseOverrides,
+} from "./collapseOverrides.js";
+
+const COLLAPSE_GLOBS_PATH =
+  "/repos/{owner}/{name}/pulls/{number}/diff-collapse-globs" as const;
+const DIFF_HUNKS_PATH =
+  "/repos/{owner}/{name}/pulls/{number}/diff/hunks" as const;
+
+// Summary returned by the scoped /files endpoint: the file list with
+// per-file counts but no hunks, plus the resolved revisions the lazy
+// hunk requests pin against.
+interface DiffSummary extends FilesResult {
+  whitespace_only_count: number;
+  diff_from: string;
+  diff_to: string;
+}
+
+// Thrown by the hunk fetch when the server reports that the scope now
+// resolves to different revisions than the summary (HTTP 409).
+class HunksConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "HunksConflictError";
+  }
+}
 
 function sortFilesByPath<T extends { files?: DiffFile[] }>(result: T): T {
   if (result.files) {
@@ -68,40 +107,6 @@ export type DiffLayout = "unified" | "split";
 function loadLayout(): DiffLayout {
   const raw = safeGetItem("diff-layout");
   return raw === "split" ? "split" : "unified";
-}
-
-function loadCollapsedFiles(): Record<string, string[]> {
-  try {
-    const raw = safeGetItem("diff-collapsed-files");
-    if (!raw) return {};
-    const parsed: unknown = JSON.parse(raw);
-    if (
-      typeof parsed !== "object" ||
-      parsed === null ||
-      Array.isArray(parsed)
-    )
-      return {};
-    const result: Record<string, string[]> = {};
-    for (const [key, value] of Object.entries(
-      parsed as Record<string, unknown>,
-    )) {
-      if (
-        Array.isArray(value) &&
-        value.every((v) => typeof v === "string")
-      ) {
-        result[key] = value as string[];
-      }
-    }
-    return result;
-  } catch {
-    return {};
-  }
-}
-
-function saveCollapsedFiles(
-  cf: Record<string, string[]>,
-): void {
-  safeSetItem("diff-collapsed-files", JSON.stringify(cf));
 }
 
 function loadReviewedCommits(): Record<string, string[]> {
@@ -228,18 +233,43 @@ export function createDiffStore(opts: DiffStoreOptions) {
   let storeError = $state<string | null>(null);
   let abortController: AbortController | null = null;
 
-  let fileList = $state<FilesResult | null>(null);
+  // The scoped /files summary for the current load (file list + counts,
+  // no hunks). In lazy mode it is the authoritative file list.
+  let fileList = $state<DiffSummary | null>(null);
   let fileListLoading = $state(false);
-  let fileListAbortController: AbortController | null = null;
+
+  // --- lazy mode ---
+  // Lazy mode: the summary totals more than LAZY_DIFF_LINES changed lines,
+  // so `diff.files` starts as the summary (empty hunks) and HunkLoader
+  // fills individual files in place as they are requested.
+  let lazy = $state(false);
+  // Set when lazily loaded hunks disagree with the summary (counts differ,
+  // a file is missing, or the server answered 409). Cleared on reload.
+  let worktreeChanged = $state(false);
+  // HunkLoader is framework-free; bumping this on every state transition
+  // makes getFileHunkState reactive.
+  let hunkVersion = $state(0);
+  let hunkLoader: HunkLoader | null = null;
+  // path -> index in diff.files, and path -> raw summary entry, for the
+  // current lazy load.
+  let lazyIndex = new Map<string, number>();
+  let summaryByPath = new Map<string, DiffFile>();
 
   let tabWidth = $state(loadTabWidth());
   let hideWhitespace = $state(
     safeGetItem("diff-hide-whitespace") === "true",
   );
   let layout = $state<DiffLayout>(loadLayout());
-  let collapsedFiles = $state<Record<string, string[]>>(
-    loadCollapsedFiles(),
-  );
+  let collapseOverrides = $state<CollapseOverrides>(loadCollapseOverrides());
+  // Collapse globs per repo key ("owner/name"), fetched once per repo.
+  // Raw state so each list keeps its identity for the compiled cache.
+  let globsByRepo = $state.raw<Record<string, string[]>>({});
+  const globsInflight = new Map<string, Promise<void>>();
+  const compiledGlobs = new WeakMap<string[], RegExp[]>();
+  // O(1) path -> file metadata for the collapse rules, rebuilt only when
+  // the underlying file list changes identity.
+  let metaSource: DiffFile[] | null = null;
+  let metaByPath = new Map<string, DiffFile>();
   let activeFile = $state<string | null>(null);
   let scrollTarget = $state<string | null>(null);
   let scrolling = $state(false);
@@ -303,9 +333,14 @@ export function createDiffStore(opts: DiffStoreOptions) {
     return storeError;
   }
   function getFileList(): FilesResult | null {
-    // Prefer diff.files once available — it respects hideWhitespace
-    // and is authoritative. The lightweight /files response is a fast
-    // preview used only until the full diff arrives.
+    // In lazy mode the summary is authoritative (same scope and
+    // whitespace params as the hunks) and, unlike diff.files, does not
+    // change as hunks load in.
+    if (lazy && fileList) {
+      return { stale: fileList.stale, files: fileList.files ?? [] };
+    }
+    // Otherwise prefer diff.files once available — it is authoritative.
+    // The /files summary is a fast preview used until the diff arrives.
     if (diff) return { stale: diff.stale, files: diff.files ?? [] };
     if (fileList) return { stale: fileList.stale, files: fileList.files ?? [] };
     return null;
@@ -331,14 +366,270 @@ export function createDiffStore(opts: DiffStoreOptions) {
     return scrolling;
   }
 
+  function prKey(owner: string, name: string, number: number): string {
+    return `${owner}/${name}#${number}`;
+  }
+
+  function repoKey(owner: string, name: string): string {
+    return `${owner}/${name}`;
+  }
+
+  function isCurrentPR(owner: string, name: string, number: number): boolean {
+    return (
+      owner === currentOwner && name === currentName && number === currentNumber
+    );
+  }
+
+  function compiledGlobsFor(owner: string, name: string): RegExp[] {
+    const list = globsByRepo[repoKey(owner, name)];
+    if (!list || list.length === 0) return [];
+    let compiled = compiledGlobs.get(list);
+    if (!compiled) {
+      compiled = list.map(compileGlob);
+      compiledGlobs.set(list, compiled);
+    }
+    return compiled;
+  }
+
+  function fileMeta(path: string): DiffFile | undefined {
+    const files = getFileList()?.files ?? null;
+    if (files !== metaSource) {
+      metaSource = files;
+      metaByPath = new Map((files ?? []).map((f) => [f.path, f]));
+    }
+    return metaByPath.get(path);
+  }
+
+  function resolveFor(
+    owner: string,
+    name: string,
+    number: number,
+    path: string,
+  ): { collapsed: boolean; reason: CollapseReason | null } {
+    const override = collapseOverrides[prKey(owner, name, number)]?.[path];
+    // Default rules need the file's metadata, which the store only has
+    // for the PR it currently has loaded.
+    const meta = isCurrentPR(owner, name, number) ? fileMeta(path) : undefined;
+    if (!meta) {
+      return override === true
+        ? { collapsed: true, reason: "user" }
+        : { collapsed: false, reason: null };
+    }
+    return resolveCollapse(meta, override, compiledGlobsFor(owner, name));
+  }
+
   function isFileCollapsed(
     owner: string,
     name: string,
     number: number,
     filePath: string,
   ): boolean {
-    const key = `${owner}/${name}#${number}`;
-    return (collapsedFiles[key] ?? []).includes(filePath);
+    return resolveFor(owner, name, number, filePath).collapsed;
+  }
+
+  function getCollapseReason(path: string): CollapseReason | null {
+    if (!currentOwner) return null;
+    return resolveFor(currentOwner, currentName, currentNumber, path).reason;
+  }
+
+  function writeOverrides(key: string, entries: Record<string, boolean>): void {
+    collapseOverrides = {
+      ...collapseOverrides,
+      [key]: { ...collapseOverrides[key], ...entries },
+    };
+    saveCollapseOverrides(collapseOverrides);
+  }
+
+  function setFilesCollapsed(paths: string[], collapsed: boolean): void {
+    if (!currentOwner || paths.length === 0) return;
+    const entries: Record<string, boolean> = {};
+    for (const p of paths) entries[p] = collapsed;
+    writeOverrides(prKey(currentOwner, currentName, currentNumber), entries);
+  }
+
+  // A jump to a file or line expands it if collapsed, recorded as an
+  // explicit user choice.
+  function expandForJump(path: string): void {
+    if (!currentOwner) return;
+    if (!isFileCollapsed(currentOwner, currentName, currentNumber, path)) return;
+    writeOverrides(prKey(currentOwner, currentName, currentNumber), {
+      [path]: false,
+    });
+  }
+
+  // --- collapse globs ---
+
+  function getCollapseGlobs(): string[] {
+    if (!currentOwner) return [];
+    return globsByRepo[repoKey(currentOwner, currentName)] ?? [];
+  }
+
+  // Loads the repo's globs once and caches them. Failures are not
+  // cached (the next load retries) and never block the diff.
+  function ensureGlobs(owner: string, name: string, number: number): Promise<void> {
+    const rk = repoKey(owner, name);
+    if (rk in globsByRepo) return Promise.resolve();
+    const inflight = globsInflight.get(rk);
+    if (inflight) return inflight;
+    const p = (async () => {
+      try {
+        const { data, error } = await apiClient.GET(COLLAPSE_GLOBS_PATH, {
+          params: { path: { owner, name, number } },
+        });
+        if (error || !data) return;
+        const globs = Array.isArray(data.globs) ? data.globs : [];
+        globsByRepo = { ...globsByRepo, [rk]: globs };
+      } catch {
+        /* treat as no globs; retried on next load */
+      } finally {
+        globsInflight.delete(rk);
+      }
+    })();
+    globsInflight.set(rk, p);
+    return p;
+  }
+
+  async function saveCollapseGlobs(globs: string[]): Promise<void> {
+    if (!currentOwner) return;
+    const owner = currentOwner;
+    const name = currentName;
+    const { data, error } = await apiClient.PUT(COLLAPSE_GLOBS_PATH, {
+      params: { path: { owner, name, number: currentNumber } },
+      body: { globs },
+    });
+    if (error || !data) {
+      throw new Error(apiErrorMessage(error, "failed to save collapse globs"));
+    }
+    globsByRepo = {
+      ...globsByRepo,
+      [repoKey(owner, name)]: Array.isArray(data.globs) ? data.globs : [],
+    };
+  }
+
+  // --- lazy hunks ---
+
+  function isLazy(): boolean {
+    return lazy;
+  }
+
+  function isWorktreeChanged(): boolean {
+    return worktreeChanged;
+  }
+
+  function getFileHunkState(path: string): HunkState {
+    void hunkVersion;
+    if (!lazy) return "loaded";
+    // Between a reload starting and its summary arriving there is no
+    // loader yet; nothing is renderable.
+    if (!hunkLoader) return "loading";
+    return hunkLoader.state(path);
+  }
+
+  function requestHunks(path: string): void {
+    if (!lazy || !hunkLoader) return;
+    const f = summaryByPath.get(path);
+    if (!f) return;
+    const before = hunkLoader.state(path);
+    hunkLoader.request({
+      path: f.path,
+      old_path: f.old_path,
+      lines: f.additions + f.deletions,
+    });
+    if (hunkLoader.state(path) !== before) hunkVersion++;
+  }
+
+  function resetLazyLoader(): void {
+    hunkLoader?.reset();
+    hunkLoader = null;
+    lazyIndex = new Map();
+    summaryByPath = new Map();
+    worktreeChanged = false;
+    hunkVersion++;
+  }
+
+  function enterLazyMode(
+    owner: string,
+    name: string,
+    number: number,
+    summary: DiffSummary,
+    params: URLSearchParams,
+  ): void {
+    const files = summary.files.map((f) => ({ ...f, hunks: [] }));
+    lazyIndex = new Map(files.map((f, i) => [f.path, i]));
+    summaryByPath = new Map(summary.files.map((f) => [f.path, f]));
+    diff = {
+      stale: summary.stale,
+      whitespace_only_count: summary.whitespace_only_count,
+      files,
+    };
+    lazy = true;
+
+    // Same scope as the summary, pinned to the revisions it resolved.
+    const base: {
+      commit?: string;
+      from?: string;
+      to?: string;
+      whitespace?: string;
+      expect_from: string;
+      expect_to: string;
+    } = { expect_from: summary.diff_from, expect_to: summary.diff_to };
+    for (const k of ["commit", "from", "to", "whitespace"] as const) {
+      const v = params.get(k);
+      if (v !== null) base[k] = v;
+    }
+
+    const loader: HunkLoader = new HunkLoader({
+      fetchBatch: async (batch, signal) => {
+        const paths: string[] = [];
+        const seen = new Set<string>();
+        for (const f of batch) {
+          for (const p of [f.path, f.old_path]) {
+            if (p && !seen.has(p)) {
+              seen.add(p);
+              paths.push(p);
+            }
+          }
+        }
+        const { data, error, response } = await apiClient.POST(DIFF_HUNKS_PATH, {
+          params: { path: { owner, name, number } },
+          body: { ...base, paths },
+          signal,
+        });
+        if (response?.status === 409) {
+          throw new HunksConflictError(apiErrorMessage(error, "diff revisions changed"));
+        }
+        if (error || !data) {
+          throw new Error(apiErrorMessage(error, "failed to load diff hunks"));
+        }
+        return (data.files ?? []) as DiffFile[];
+      },
+      onLoaded: (loaded) => {
+        if (hunkLoader !== loader || !diff) return;
+        for (const f of loaded) {
+          const idx = lazyIndex.get(f.path);
+          if (idx === undefined) continue;
+          const sum = summaryByPath.get(f.path);
+          if (
+            sum &&
+            (sum.additions !== f.additions || sum.deletions !== f.deletions)
+          ) {
+            worktreeChanged = true;
+          }
+          // Replace in place; keep the summary's sort order.
+          diff.files[idx] = f;
+        }
+        hunkVersion++;
+      },
+      onError: (_paths, err) => {
+        if (hunkLoader !== loader) return;
+        if (err instanceof HunksConflictError || err instanceof MissingHunksError) {
+          worktreeChanged = true;
+        }
+        hunkVersion++;
+      },
+    });
+    hunkLoader = loader;
+    hunkVersion++;
   }
 
   // --- writes ---
@@ -455,44 +746,7 @@ export function createDiffStore(opts: DiffStoreOptions) {
   }
 
   async function reloadDiffOnly(): Promise<void> {
-    abortController?.abort();
-    // Abort any in-flight /files request so a late response from a
-    // prior loadDiff() cannot repopulate fileList after we clear it.
-    fileListAbortController?.abort();
-    fileListAbortController = null;
-    fileListLoading = false;
-    const ac = new AbortController();
-    abortController = ac;
-    fileList = null;
-
-    loading = true;
-    storeError = null;
-    try {
-      const basePath = getBasePath();
-      const reloadParams = scopeToDiffParams(scope);
-      if (hideWhitespace) reloadParams.set("whitespace", "hide");
-      const reloadQs = reloadParams.toString();
-      const url =
-        `${basePath}api/v1/repos/` +
-        `${encodeURIComponent(currentOwner)}/` +
-        `${encodeURIComponent(currentName)}/` +
-        `pulls/${currentNumber}/diff` +
-        (reloadQs ? `?${reloadQs}` : "");
-      const data = await fetchJSON(url, ac.signal);
-      if (abortController !== ac) return;
-      diff = sortFilesByPath(data as DiffResult);
-      setActiveIfNeeded(diff.files);
-    } catch (err) {
-      if (ac.signal.aborted) return;
-      if (abortController !== ac) return;
-      storeError =
-        err instanceof Error ? err.message : String(err);
-      diff = null;
-    } finally {
-      if (!ac.signal.aborted && abortController === ac) {
-        loading = false;
-      }
-    }
+    await loadScoped(currentOwner, currentName, currentNumber, false);
   }
 
   function toggleFileCollapsed(
@@ -501,20 +755,8 @@ export function createDiffStore(opts: DiffStoreOptions) {
     number: number,
     filePath: string,
   ): void {
-    const key = `${owner}/${name}#${number}`;
-    const current = collapsedFiles[key] ?? [];
-    if (current.includes(filePath)) {
-      collapsedFiles = {
-        ...collapsedFiles,
-        [key]: current.filter((f) => f !== filePath),
-      };
-    } else {
-      collapsedFiles = {
-        ...collapsedFiles,
-        [key]: [...current, filePath],
-      };
-    }
-    saveCollapsedFiles(collapsedFiles);
+    const next = !isFileCollapsed(owner, name, number, filePath);
+    writeOverrides(prKey(owner, name, number), { [filePath]: next });
   }
 
   function fetchJSON(
@@ -566,89 +808,111 @@ export function createDiffStore(opts: DiffStoreOptions) {
       patchsetsError = null;
       resetNotes();
     }
+    await loadScoped(owner, name, number, true);
+  }
 
+  function normalizeSummary(data: unknown): DiffSummary {
+    const raw = (data ?? {}) as Partial<DiffSummary>;
+    return sortFilesByPath({
+      stale: raw.stale ?? false,
+      whitespace_only_count: raw.whitespace_only_count ?? 0,
+      diff_from: raw.diff_from ?? "",
+      diff_to: raw.diff_to ?? "",
+      files: raw.files ?? [],
+    });
+  }
+
+  // loadScoped runs the load flow for the current scope:
+  //   1. the scoped /files summary (plus the repo's collapse globs, once),
+  //   2. then either the full /diff (patchset scope, small diffs, or when
+  //      the summary failed) or lazy mode, where hunks load per file.
+  // `clear` drops the displayed diff immediately (PR or scope change);
+  // otherwise (whitespace toggle, refresh) it stays until replaced.
+  async function loadScoped(
+    owner: string,
+    name: string,
+    number: number,
+    clear: boolean,
+  ): Promise<void> {
     abortController?.abort();
-    fileListAbortController?.abort();
-    const diffAc = new AbortController();
-    const filesAc = new AbortController();
-    abortController = diffAc;
-    fileListAbortController = filesAc;
-
-    diff = null;
+    const ac = new AbortController();
+    abortController = ac;
+    resetLazyLoader();
+    if (clear) {
+      diff = null;
+      lazy = false;
+    }
     fileList = null;
     loading = true;
     fileListLoading = true;
     storeError = null;
 
-    const basePath = getBasePath();
     const prefix =
-      `${basePath}api/v1/repos/` +
+      `${getBasePath()}api/v1/repos/` +
       `${encodeURIComponent(owner)}/` +
       `${encodeURIComponent(name)}/` +
       `pulls/${number}`;
+    const s = scope;
+    const params = scopeToDiffParams(s);
+    if (hideWhitespace) params.set("whitespace", "hide");
+    const qs = params.toString();
+    // /files takes the same scope params as /diff, except patchsets.
+    const summaryParams = new URLSearchParams(params);
+    summaryParams.delete("from_patchset");
+    summaryParams.delete("to_patchset");
+    const summaryQs = summaryParams.toString();
 
-    const filesPromise = (async () => {
-      try {
-        const data = await fetchJSON(
-          `${prefix}/files`,
-          filesAc.signal,
-        );
-        if (fileListAbortController !== filesAc) return;
-        fileList = sortFilesByPath(data as FilesResult);
-        setActiveIfNeeded(fileList.files);
-      } catch {
-        if (filesAc.signal.aborted) return;
-        if (fileListAbortController !== filesAc) return;
-        fileList = null;
-      } finally {
-        if (
-          !filesAc.signal.aborted &&
-          fileListAbortController === filesAc
-        ) {
-          fileListLoading = false;
-        }
-      }
-    })();
+    const summaryPromise = fetchJSON(
+      `${prefix}/files${summaryQs ? `?${summaryQs}` : ""}`,
+      ac.signal,
+    ).then(
+      (data) => normalizeSummary(data),
+      () => null,
+    );
+    const [summary] = await Promise.all([
+      summaryPromise,
+      ensureGlobs(owner, name, number),
+    ]);
+    if (abortController !== ac) return;
+    fileList = summary;
+    fileListLoading = false;
+    if (summary) setActiveIfNeeded(summary.files);
 
-    const diffPromise = (async () => {
-      try {
-        const params = scopeToDiffParams(scope);
-        if (hideWhitespace) params.set("whitespace", "hide");
-        const qs = params.toString();
-        const url = `${prefix}/diff${qs ? `?${qs}` : ""}`;
-        const data = await fetchJSON(url, diffAc.signal);
-        if (abortController !== diffAc) return;
-        diff = sortFilesByPath(data as DiffResult);
-        setActiveIfNeeded(diff.files);
-      } catch (_err) {
-        if (diffAc.signal.aborted) return;
-        if (abortController !== diffAc) return;
-        storeError =
-          _err instanceof Error ? _err.message : String(_err);
-        diff = null;
-        fileList = null;
-        // Invalidate and abort /files so a late response cannot repopulate.
-        fileListAbortController = null;
-        filesAc.abort();
-        fileListLoading = false;
-      } finally {
-        if (
-          !diffAc.signal.aborted &&
-          abortController === diffAc
-        ) {
-          loading = false;
-        }
-      }
-    })();
+    const total = summary
+      ? summary.files.reduce((n, f) => n + f.additions + f.deletions, 0)
+      : 0;
+    if (summary && s.kind !== "patchsets" && total > LAZY_DIFF_LINES) {
+      enterLazyMode(owner, name, number, summary, params);
+      loading = false;
+      return;
+    }
 
-    await Promise.allSettled([filesPromise, diffPromise]);
+    try {
+      const data = await fetchJSON(
+        `${prefix}/diff${qs ? `?${qs}` : ""}`,
+        ac.signal,
+      );
+      if (abortController !== ac) return;
+      lazy = false;
+      diff = sortFilesByPath(data as DiffResult);
+      setActiveIfNeeded(diff.files);
+    } catch (err) {
+      if (abortController !== ac) return;
+      storeError = err instanceof Error ? err.message : String(err);
+      lazy = false;
+      diff = null;
+      // The sidebar must not fall back to the summary after a failure.
+      fileList = null;
+    } finally {
+      if (abortController === ac) loading = false;
+    }
   }
 
   function clearDiff(): void {
     abortController?.abort();
     abortController = null;
-    fileListAbortController?.abort();
-    fileListAbortController = null;
+    resetLazyLoader();
+    lazy = false;
     diff = null;
     fileList = null;
     storeError = null;
@@ -1455,6 +1719,15 @@ export function createDiffStore(opts: DiffStoreOptions) {
     setLayout,
     isFileCollapsed,
     toggleFileCollapsed,
+    getCollapseReason,
+    setFilesCollapsed,
+    expandForJump,
+    getCollapseGlobs,
+    saveCollapseGlobs,
+    isLazy,
+    isWorktreeChanged,
+    getFileHunkState,
+    requestHunks,
     loadDiff,
     setActivePR,
     refresh,
