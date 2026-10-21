@@ -20,10 +20,10 @@ const LargeDiffPRNumber = 2
 // Shape of the generated large diff. Exported so tests can assert the
 // totals the /files summary reports.
 const (
-	LargeDiffSrcFiles      = 700  // src/pkg<i%20>/file<i>.go, added
-	LargeDiffSrcLines      = 80   // lines per src file
-	LargeDiffGenFiles      = 40   // gen/file<i>.pb.go, added
-	LargeDiffGenLines      = 400  // lines per gen file
+	LargeDiffSrcFiles      = 700 // src/pkg<i%20>/file<i>.go, added
+	LargeDiffSrcLines      = 80  // lines per src file
+	LargeDiffGenFiles      = 40  // gen/file<i>.pb.go, added
+	LargeDiffGenLines      = 400 // lines per gen file
 	LargeDiffDeletedPath   = "legacy/schema.sql"
 	LargeDiffDeletedLines  = 2000 // lines in the deleted file
 	LargeDiffModifiedPath  = "internal/big_table.go"
