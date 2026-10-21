@@ -4309,7 +4309,7 @@ func TestAPIGetFiles503WhenCloneManagerNil(t *testing.T) {
 	client := setupTestClient(t, srv)
 
 	resp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberFilesWithResponse(
-		context.Background(), "acme", "widget", 1,
+		context.Background(), "acme", "widget", 1, nil,
 	)
 	require.NoError(err)
 	require.Equal(http.StatusServiceUnavailable, resp.StatusCode())

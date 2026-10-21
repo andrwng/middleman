@@ -281,7 +281,7 @@ func TestAPILocalDispatchPRRoutes(t *testing.T) {
 
 	// Files endpoint matches default diff scope — both files appear.
 	filesResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberFilesWithResponse(
-		ctx, "local", "demo", w.ID,
+		ctx, "local", "demo", w.ID, nil,
 	)
 	require.NoError(err)
 	require.Equal(http.StatusOK, filesResp.StatusCode())

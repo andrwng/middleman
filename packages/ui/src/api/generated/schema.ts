@@ -1857,8 +1857,12 @@ export interface components {
              * @example /api/v1/schemas/FilesResponse.json
              */
             readonly $schema?: string;
+            diff_from: string;
+            diff_to: string;
             files: components["schemas"]["DiffFile"][] | null;
             stale: boolean;
+            /** Format: int64 */
+            whitespace_only_count: number;
         };
         GetSessionResponse: {
             /**
@@ -4329,7 +4333,15 @@ export interface operations {
     };
     "get-repos-by-owner-by-name-pulls-by-number-files": {
         parameters: {
-            query?: never;
+            query?: {
+                whitespace?: string;
+                /** @description Scope to a single commit SHA */
+                commit?: string;
+                /** @description Start SHA for range diff (inclusive) */
+                from?: string;
+                /** @description End SHA for range diff (inclusive) */
+                to?: string;
+            };
             header?: never;
             path: {
                 owner: string;

@@ -3035,47 +3035,9 @@ func (s *Server) getDiff(ctx context.Context, input *getDiffInput) (*getDiffOutp
 		return s.getDiffByPatchsets(ctx, input, host, hideWhitespace, shas.Stale())
 	}
 
-	// Determine diff range based on scope query params.
-	diffFrom := shas.MergeBaseSHA
-	diffTo := shas.DiffHeadSHA
-
-	hasCommit := input.Commit != ""
-	hasFrom := input.From != ""
-	hasTo := input.To != ""
-
-	switch {
-	case !hasCommit && !hasFrom && !hasTo:
-		// Default: full PR diff. diffFrom/diffTo already set.
-
-	case hasCommit && !hasFrom && !hasTo:
-		if _, err := s.validateSHAs(ctx, host, input, shas, input.Commit); err != nil {
-			return nil, err
-		}
-		parent, err := s.clones.ParentOf(ctx, host, input.Owner, input.Name, input.Commit)
-		if err != nil {
-			return nil, huma.Error500InternalServerError("failed to resolve parent: " + err.Error())
-		}
-		diffFrom = parent
-		diffTo = input.Commit
-
-	case !hasCommit && hasFrom && hasTo:
-		indexMap, err := s.validateSHAs(ctx, host, input, shas, input.From, input.To)
-		if err != nil {
-			return nil, err
-		}
-		// In newest-first order, "from" (older) must have a higher index than "to" (newer).
-		if indexMap[input.From] <= indexMap[input.To] {
-			return nil, huma.Error400BadRequest("invalid range: 'from' must be older than 'to'")
-		}
-		parent, err := s.clones.ParentOf(ctx, host, input.Owner, input.Name, input.From)
-		if err != nil {
-			return nil, huma.Error500InternalServerError("failed to resolve parent: " + err.Error())
-		}
-		diffFrom = parent
-		diffTo = input.To
-
-	default:
-		return nil, huma.Error400BadRequest("invalid scope: use 'commit' alone or 'from'+'to' together")
+	diffFrom, diffTo, err := s.resolveDiffRange(ctx, input, host, shas)
+	if err != nil {
+		return nil, err
 	}
 
 	result, err := s.clones.Diff(ctx, host, input.Owner, input.Name, diffFrom, diffTo, hideWhitespace)
@@ -3094,6 +3056,62 @@ func (s *Server) getDiff(ctx context.Context, input *getDiffInput) (*getDiffOutp
 		WhitespaceOnlyCount: result.WhitespaceOnlyCount,
 		Files:               result.Files,
 	}}, nil
+}
+
+// resolveDiffRange determines the diff endpoints for the commit / from-to
+// scope query params shared by getDiff and getFiles. Patchset-pair scope is
+// handled separately by getDiffByPatchsets (getFiles does not accept
+// patchset params at all), so callers must reject that combination before
+// reaching here.
+func (s *Server) resolveDiffRange(
+	ctx context.Context,
+	input *getDiffInput,
+	host string,
+	shas *db.DiffSHAs,
+) (from, to string, err error) {
+	diffFrom := shas.MergeBaseSHA
+	diffTo := shas.DiffHeadSHA
+
+	hasCommit := input.Commit != ""
+	hasFrom := input.From != ""
+	hasTo := input.To != ""
+
+	switch {
+	case !hasCommit && !hasFrom && !hasTo:
+		// Default: full PR diff. diffFrom/diffTo already set.
+
+	case hasCommit && !hasFrom && !hasTo:
+		if _, err := s.validateSHAs(ctx, host, input, shas, input.Commit); err != nil {
+			return "", "", err
+		}
+		parent, err := s.clones.ParentOf(ctx, host, input.Owner, input.Name, input.Commit)
+		if err != nil {
+			return "", "", huma.Error500InternalServerError("failed to resolve parent: " + err.Error())
+		}
+		diffFrom = parent
+		diffTo = input.Commit
+
+	case !hasCommit && hasFrom && hasTo:
+		indexMap, err := s.validateSHAs(ctx, host, input, shas, input.From, input.To)
+		if err != nil {
+			return "", "", err
+		}
+		// In newest-first order, "from" (older) must have a higher index than "to" (newer).
+		if indexMap[input.From] <= indexMap[input.To] {
+			return "", "", huma.Error400BadRequest("invalid range: 'from' must be older than 'to'")
+		}
+		parent, err := s.clones.ParentOf(ctx, host, input.Owner, input.Name, input.From)
+		if err != nil {
+			return "", "", huma.Error500InternalServerError("failed to resolve parent: " + err.Error())
+		}
+		diffFrom = parent
+		diffTo = input.To
+
+	default:
+		return "", "", huma.Error400BadRequest("invalid scope: use 'commit' alone or 'from'+'to' together")
+	}
+
+	return diffFrom, diffTo, nil
 }
 
 // getDiffByPatchsets serves the rebase-aware interdiff for a patchset
@@ -3173,9 +3191,13 @@ func (s *Server) getDiffByPatchsets(
 // --- Files (lightweight) ---
 
 type getFilesInput struct {
-	Owner  string `path:"owner"`
-	Name   string `path:"name"`
-	Number int    `path:"number"`
+	Owner      string `path:"owner"`
+	Name       string `path:"name"`
+	Number     int    `path:"number"`
+	Whitespace string `query:"whitespace"`
+	Commit     string `query:"commit" doc:"Scope to a single commit SHA"`
+	From       string `query:"from"   doc:"Start SHA for range diff (inclusive)"`
+	To         string `query:"to"     doc:"End SHA for range diff (inclusive)"`
 }
 
 type getFilesOutput struct {
@@ -3202,7 +3224,23 @@ func (s *Server) getFiles(ctx context.Context, input *getFilesInput) (*getFilesO
 	}
 
 	host := s.syncer.HostForRepo(input.Owner, input.Name)
-	files, err := s.clones.DiffFiles(ctx, host, input.Owner, input.Name, shas.MergeBaseSHA, shas.DiffHeadSHA)
+	hideWhitespace := input.Whitespace == "hide"
+
+	diffInput := &getDiffInput{
+		Owner:      input.Owner,
+		Name:       input.Name,
+		Number:     input.Number,
+		Whitespace: input.Whitespace,
+		Commit:     input.Commit,
+		From:       input.From,
+		To:         input.To,
+	}
+	diffFrom, diffTo, err := s.resolveDiffRange(ctx, diffInput, host, shas)
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := s.clones.DiffSummary(ctx, host, input.Owner, input.Name, diffFrom, diffTo, hideWhitespace)
 	if err != nil {
 		if errors.Is(err, gitclone.ErrNotFound) {
 			return nil, huma.Error404NotFound("file list not available: referenced commit not found")
@@ -3212,8 +3250,11 @@ func (s *Server) getFiles(ctx context.Context, input *getFilesInput) (*getFilesO
 	}
 
 	return &getFilesOutput{Body: filesResponse{
-		Stale: shas.Stale(),
-		Files: files,
+		Stale:               shas.Stale(),
+		WhitespaceOnlyCount: result.WhitespaceOnlyCount,
+		Files:               result.Files,
+		DiffFrom:            diffFrom,
+		DiffTo:              diffTo,
 	}}, nil
 }
 

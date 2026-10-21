@@ -220,23 +220,11 @@ func (s *Server) getDiffLocal(
 		return nil, huma.Error404NotFound("worktree not found")
 	}
 
-	var files []gitcloneDiffFile
-	switch {
-	case input.Commit == worktrees.WorkingTreeSentinel:
-		files, err = worktrees.DiffWorkingTreeVsHEAD(ctx, w.Path)
-	case input.Commit != "":
-		files, err = worktrees.DiffSingleCommit(ctx, w.Path, input.Commit)
-	case input.From != "" && input.To != "":
-		// Inclusive of input.From, matching the PR-backed path's ParentOf(from).
-		files, err = worktrees.DiffCommitSpan(ctx, w.Path, input.From, input.To)
-	default:
-		baseRef := s.lookupBaseRefForWorktree(ctx, *w)
-		ds, dsErr := worktrees.DiffAgainstBase(ctx, w.Path, baseRef)
-		if dsErr != nil {
-			return nil, huma.Error500InternalServerError("worktree diff failed: " + dsErr.Error())
-		}
-		files = ds.Files
+	revspec, _, err := s.localRevspec(ctx, *w, input.Commit, input.From, input.To)
+	if err != nil {
+		return nil, localScopeError(err, "worktree diff failed")
 	}
+	files, err := worktrees.DiffRevspec(ctx, w.Path, revspec)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("worktree diff failed: " + err.Error())
 	}
@@ -246,6 +234,97 @@ func (s *Server) getDiffLocal(
 		WhitespaceOnlyCount: 0,
 		Files:               files,
 	}}, nil
+}
+
+// localRevspec resolves the review pane's scope query params (commit,
+// from/to, or the default against-base scope) to a worktrees.Revspec plus
+// the SHA that scope's diff_from resolves to, for a local worktree. It is
+// the Revspec-dispatch counterpart of getDiff's resolveDiffRange: both
+// getDiffLocal and getFilesLocal call this once and hand the Revspec to
+// worktrees.DiffRevspec or worktrees.SummaryRevspec respectively, instead of
+// switching on scope params twice.
+//
+// baseSHA is:
+//   - commit/span scopes: the resolved parent of the oldest commit in scope
+//     (`git rev-parse <sha>^`), matching the PR-backed path's ParentOf(from).
+//   - WORKING-TREE scope: the worktree's current HEAD SHA.
+//   - default (against-base) scope: the resolved base SHA.
+//
+// An invalid combination of scope params (e.g. 'commit' with 'from'/'to')
+// returns a huma 400, exactly like the PR-backed /diff and /files endpoints;
+// callers should propagate that error as-is rather than wrapping it in a
+// 500 (see localScopeError).
+func (s *Server) localRevspec(
+	ctx context.Context, w db.Worktree, commit, from, to string,
+) (worktrees.Revspec, string, error) {
+	hasCommit := commit != ""
+	hasFrom := from != ""
+	hasTo := to != ""
+
+	switch {
+	case !hasCommit && !hasFrom && !hasTo:
+		baseRef := s.lookupBaseRefForWorktree(ctx, w)
+		base, err := worktrees.ResolveBase(ctx, w.Path, baseRef)
+		if err != nil {
+			return worktrees.Revspec{}, "", fmt.Errorf("resolve base: %w", err)
+		}
+		return worktrees.RevspecAgainstBase(base.SHA), base.SHA, nil
+
+	case hasCommit && !hasFrom && !hasTo:
+		if commit == worktrees.WorkingTreeSentinel {
+			headSHA, err := worktrees.ResolveCommitSHA(ctx, w.Path, "HEAD")
+			if err != nil {
+				return worktrees.Revspec{}, "", fmt.Errorf("resolve HEAD: %w", err)
+			}
+			return worktrees.RevspecWorkingTreeVsHEAD(), headSHA, nil
+		}
+		parent, err := worktrees.ResolveCommitSHA(ctx, w.Path, commit+"^")
+		if err != nil {
+			return worktrees.Revspec{}, "", fmt.Errorf("resolve parent of %s: %w", commit, err)
+		}
+		return worktrees.RevspecSingleCommit(commit), parent, nil
+
+	case !hasCommit && hasFrom && hasTo:
+		// Inclusive of `from`, matching the PR-backed path's ParentOf(from).
+		parent, err := worktrees.ResolveCommitSHA(ctx, w.Path, from+"^")
+		if err != nil {
+			return worktrees.Revspec{}, "", fmt.Errorf("resolve parent of %s: %w", from, err)
+		}
+		return worktrees.RevspecCommitSpan(from, to), parent, nil
+
+	default:
+		return worktrees.Revspec{}, "", huma.Error400BadRequest(
+			"invalid scope: use 'commit' alone or 'from'+'to' together")
+	}
+}
+
+// localDiffTo returns the diff_to side of a local scope's resolved range,
+// mirroring the cases localRevspec switches on. It is a plain function
+// (not folded into localRevspec) because localRevspec's single baseSHA
+// return only ever carries the diff_from side.
+func localDiffTo(commit, from, to string) string {
+	switch {
+	case commit == worktrees.WorkingTreeSentinel:
+		return ""
+	case commit != "":
+		return commit
+	case from != "" && to != "":
+		return to
+	default:
+		return ""
+	}
+}
+
+// localScopeError passes a huma.StatusError (e.g. the 400 localRevspec
+// returns for an invalid scope combo) through unwrapped, and otherwise
+// wraps the error as a 500 with msg as context. Keeps getDiffLocal and
+// getFilesLocal from turning localRevspec's intentional 400s into 500s.
+func localScopeError(err error, msg string) error {
+	var statusErr huma.StatusError
+	if errors.As(err, &statusErr) {
+		return statusErr
+	}
+	return huma.Error500InternalServerError(msg + ": " + err.Error())
 }
 
 // getCommitsLocal returns the commits between the worktree's
@@ -444,11 +523,16 @@ func (s *Server) getTreeLocal(
 	return &getTreeOutput{Body: treeResponse{Path: responsePath, Entries: toTreeEntryJSON(entries)}}, nil
 }
 
-// getFilesLocal returns the lightweight file list for a worktree's
-// default scope — base vs working tree (the same full-draft view
-// getDiffLocal serves when no scope params are passed). Hunks are
-// stripped so callers paying for the cheap endpoint don't get the
-// full patch payload.
+// getFilesLocal returns the lightweight file list for a worktree,
+// honoring the same commit / from-to scope params as getDiffLocal (default
+// scope: base vs working tree, the full-draft view). It runs only the
+// raw+numstat pair (worktrees.SummaryRevspec) — no patch content — so this
+// stays cheap even for a worktree with a huge diff; it must never fall back
+// to the full-patch DiffAgainstBase.
+//
+// whitespace is accepted on the input for shape-parity with the PR-backed
+// path but is not honored here: local mode has no whitespace-only pass, so
+// whitespace_only_count is always 0, matching today's behavior.
 func (s *Server) getFilesLocal(
 	ctx context.Context, input *getFilesInput,
 ) (*getFilesOutput, error) {
@@ -456,19 +540,22 @@ func (s *Server) getFilesLocal(
 	if err != nil {
 		return nil, huma.Error404NotFound("worktree not found")
 	}
-	baseRef := s.lookupBaseRefForWorktree(ctx, *w)
-	ds, err := worktrees.DiffAgainstBase(ctx, w.Path, baseRef)
+
+	revspec, diffFrom, err := s.localRevspec(ctx, *w, input.Commit, input.From, input.To)
+	if err != nil {
+		return nil, localScopeError(err, "worktree files failed")
+	}
+	files, err := worktrees.SummaryRevspec(ctx, w.Path, revspec)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("worktree files failed: " + err.Error())
 	}
-	files := make([]gitcloneDiffFile, 0, len(ds.Files))
-	for _, f := range ds.Files {
-		f.Hunks = nil
-		files = append(files, f)
-	}
+
 	return &getFilesOutput{Body: filesResponse{
-		Stale: false,
-		Files: files,
+		Stale:               false,
+		WhitespaceOnlyCount: 0,
+		Files:               files,
+		DiffFrom:            diffFrom,
+		DiffTo:              localDiffTo(input.Commit, input.From, input.To),
 	}}, nil
 }
 

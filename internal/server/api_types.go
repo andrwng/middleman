@@ -111,8 +111,13 @@ type diffResponse struct {
 }
 
 type filesResponse struct {
-	Stale bool                `json:"stale"`
-	Files []gitclone.DiffFile `json:"files"`
+	Stale               bool                `json:"stale"`
+	WhitespaceOnlyCount int                 `json:"whitespace_only_count"`
+	Files               []gitclone.DiffFile `json:"files"`
+	// DiffFrom/DiffTo are the resolved revisions behind this summary.
+	// For local diffs, the working-tree side is "" since it has no SHA.
+	DiffFrom string `json:"diff_from"`
+	DiffTo   string `json:"diff_to"`
 }
 
 type mrImportMetadataResponse struct {

@@ -107,6 +107,17 @@ func diffRevspec(
 	return files, nil
 }
 
+// DiffRevspec runs the raw+patch pair of git diffs for a Revspec scope and
+// returns full structured files with hunks. Exported so server-side scope
+// dispatch (getDiffLocal) can resolve a Revspec once -- via localRevspec --
+// and hand it to both this and SummaryRevspec, instead of switching on the
+// scope params a second time.
+func DiffRevspec(
+	ctx context.Context, worktreePath string, r Revspec,
+) ([]gitclone.DiffFile, error) {
+	return diffRevspec(ctx, worktreePath, r)
+}
+
 // SummaryRevspec runs the raw+numstat pair for a Revspec scope -- no patch
 // content -- the primitive behind a /files-style summary response. Mirrors
 // gitclone.DiffSummary's shape: status, old_path, and per-file counts, with
