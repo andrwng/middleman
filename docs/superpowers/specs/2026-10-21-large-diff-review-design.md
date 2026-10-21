@@ -107,12 +107,13 @@ Working-tree scopes cannot be pinned by SHA. The client compares returned
 per-file counts against the summary; on mismatch it shows a "worktree changed,
 reload" banner and does not mix versions silently.
 
-### `GET`/`PUT /repos/{owner}/{name}/diff-collapse-globs` (new)
+### `GET`/`PUT .../pulls/{number}/diff-collapse-globs` (new)
 
-`{globs: string[]}`. PUT replaces the list. Validated: non-empty, at most 200
-entries, each at most 512 chars. New table `repo_diff_collapse_globs` via
-migration. Owner `local` is not accepted. Worktree views use the worktree's
-repo owner/name.
+`{globs: string[]}`. PR-shaped so both PRs and local worktrees
+(`local/{repoName}/{worktreeId}`) resolve to a repo ID server-side. Reads and
+writes are per repo, not per PR. PUT replaces the list. Validation: each glob
+non-empty after trimming, at most 512 chars, at most 200 globs, duplicates
+removed. New table `repo_diff_collapse_globs` via migration.
 
 ### Unchanged
 
