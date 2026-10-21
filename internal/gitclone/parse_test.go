@@ -86,6 +86,103 @@ index abc..def 100644
 	}, types)
 }
 
+// TestParsePatchMatchesByPathNotPosition pins the fix for a positional
+// mismatch bug: when the patch pass omits a section for a raw file (e.g. a
+// whitespace-only file under `git diff -w`), every later raw file used to
+// get the wrong hunks/counts because ParsePatch matched by index. Here the
+// raw list has 3 files but the patch has sections only for files 1 and 3
+// (file 2's section is missing, simulating the omission); file 3's hunks
+// must land on file 3, and file 2 must end up with empty hunks rather than
+// stealing file 3's.
+func TestParsePatchMatchesByPathNotPosition(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	patch := `diff --git a/one.go b/one.go
+index aaa..bbb 100644
+--- a/one.go
++++ b/one.go
+@@ -1,1 +1,2 @@
+ line1
++added-in-one
+diff --git a/three.go b/three.go
+index ccc..ddd 100644
+--- a/three.go
++++ b/three.go
+@@ -1,1 +1,2 @@
+ line1
++added-in-three
+`
+
+	rawFiles := []DiffFile{
+		{Path: "one.go", OldPath: "one.go", Status: "modified"},
+		{Path: "two.go", OldPath: "two.go", Status: "modified"},
+		{Path: "three.go", OldPath: "three.go", Status: "modified"},
+	}
+
+	files := ParsePatch([]byte(patch), rawFiles)
+	require.Len(files, 3)
+
+	byPath := make(map[string]DiffFile, len(files))
+	for _, f := range files {
+		byPath[f.Path] = f
+	}
+
+	three := byPath["three.go"]
+	require.Len(three.Hunks, 1)
+	assert.Equal(1, three.Additions)
+	assert.Equal("added-in-three", three.Hunks[0].Lines[1].Content)
+
+	two := byPath["two.go"]
+	assert.Empty(two.Hunks)
+	assert.Zero(two.Additions)
+	assert.Zero(two.Deletions)
+
+	one := byPath["one.go"]
+	require.Len(one.Hunks, 1)
+	assert.Equal(1, one.Additions)
+}
+
+// TestParsePatchNonASCIIPath covers a C-quoted path (git quotes paths with
+// non-ASCII bytes by default). The quoted "a/caf\303\251.txt" /
+// "b/caf\303\251.txt" headers must resolve to "café.txt" so the section
+// matches its raw file and carries its hunk.
+func TestParsePatchNonASCIIPath(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	patch := "diff --git \"a/caf\\303\\251.txt\" \"b/caf\\303\\251.txt\"\n" +
+		"index aaa..bbb 100644\n" +
+		"--- \"a/caf\\303\\251.txt\"\n" +
+		"+++ \"b/caf\\303\\251.txt\"\n" +
+		"@@ -1,1 +1,2 @@\n" +
+		" line1\n" +
+		"+line2\n"
+
+	// Lead with an extra raw file that has no patch section of its own (as
+	// a whitespace-only file would), so a stale positional match would
+	// misassign café.txt's hunk to it instead.
+	rawFiles := []DiffFile{
+		{Path: "aardvark.go", OldPath: "aardvark.go", Status: "modified"},
+		{Path: "café.txt", OldPath: "café.txt", Status: "modified"},
+	}
+
+	files := ParsePatch([]byte(patch), rawFiles)
+	require.Len(files, 2)
+
+	byPath := make(map[string]DiffFile, len(files))
+	for _, f := range files {
+		byPath[f.Path] = f
+	}
+
+	cafe := byPath["café.txt"]
+	require.Len(cafe.Hunks, 1)
+	assert.Equal(1, cafe.Additions)
+
+	aardvark := byPath["aardvark.go"]
+	assert.Empty(aardvark.Hunks)
+}
+
 func TestParseNumstatZ(t *testing.T) {
 	assert := assert.New(t)
 

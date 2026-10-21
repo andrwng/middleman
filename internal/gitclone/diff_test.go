@@ -217,6 +217,106 @@ func TestDiffWhitespaceOnly(t *testing.T) {
 	assert.Contains(hiddenPaths, "real.go")
 }
 
+// TestDiffHideWhitespaceFileAfterWsOnly pins the ParsePatch positional-
+// matching fix. Under hideWhitespace=true, `git diff --raw -w` still lists
+// a whitespace-only file (the git 2.43 quirk TestDiffWhitespaceOnly also
+// exercises), but the `-w` patch pass omits that file's now-empty section.
+// With the whitespace-only file sorted between two modified files, the
+// file after it used to inherit the whitespace-only file's (empty) raw
+// slot via positional matching while its own hunk got misassigned
+// backwards -- so it came back with zero additions/deletions/hunks. Both
+// Diff and DiffPaths must report its real counts.
+func TestDiffHideWhitespaceFileAfterWsOnly(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	dir := t.TempDir()
+	remote := filepath.Join(dir, "remote.git")
+	work := filepath.Join(dir, "work")
+
+	run(t, dir, "git", "init", "--bare", "--initial-branch=main", remote)
+	run(t, dir, "git", "clone", remote, work)
+	run(t, work, "git", "config", "user.email", "test@test.com")
+	run(t, work, "git", "config", "user.name", "Test")
+
+	// Names sort as a_mod.go < m_ws.go < z_mod.go, so the whitespace-only
+	// file lands between the two modified files in git's output order.
+	require.NoError(os.WriteFile(filepath.Join(work, "a_mod.go"),
+		[]byte("package main\n\nvar a = 1\n"), 0o644))
+	require.NoError(os.WriteFile(filepath.Join(work, "m_ws.go"),
+		[]byte("package main\n\nfunc main() {\n\treturn\n}\n"), 0o644))
+	require.NoError(os.WriteFile(filepath.Join(work, "z_mod.go"),
+		[]byte("package main\n\nvar z = 1\n"), 0o644))
+	run(t, work, "git", "add", ".")
+	run(t, work, "git", "commit", "-m", "initial")
+	run(t, work, "git", "push", "origin", "main")
+
+	run(t, work, "git", "checkout", "-b", "feature")
+	require.NoError(os.WriteFile(filepath.Join(work, "a_mod.go"),
+		[]byte("package main\n\nvar a = 2\n"), 0o644))
+	// Re-indent only (whitespace-only change).
+	require.NoError(os.WriteFile(filepath.Join(work, "m_ws.go"),
+		[]byte("package main\n\nfunc main() {\n        return\n}\n"), 0o644))
+	require.NoError(os.WriteFile(filepath.Join(work, "z_mod.go"),
+		[]byte("package main\n\nvar z = 2\n"), 0o644))
+	run(t, work, "git", "add", ".")
+	run(t, work, "git", "commit", "-m", "feature")
+	run(t, work, "git", "push", "origin", "feature")
+
+	mainSHA := getSHA(t, work, "origin/main")
+	featureSHA := getSHA(t, work, "origin/feature")
+
+	clonesDir := t.TempDir()
+	mgr := New(clonesDir, nil)
+	require.NoError(mgr.EnsureClone(
+		context.Background(), "github.com", "test", "repo", remote))
+	mb, err := mgr.MergeBase(
+		context.Background(), "github.com", "test", "repo",
+		mainSHA, featureSHA)
+	require.NoError(err)
+
+	result, err := mgr.Diff(
+		context.Background(), "github.com", "test", "repo",
+		mb, featureSHA, true)
+	require.NoError(err)
+
+	byPath := make(map[string]DiffFile, len(result.Files))
+	for _, f := range result.Files {
+		byPath[f.Path] = f
+	}
+	require.NotContains(byPath, "m_ws.go", "whitespace-only file must be hidden")
+
+	zMod, ok := byPath["z_mod.go"]
+	require.True(ok, "z_mod.go missing from Diff result")
+	assert.Equal(1, zMod.Additions, "z_mod.go additions")
+	assert.Equal(1, zMod.Deletions, "z_mod.go deletions")
+	require.Len(zMod.Hunks, 1)
+
+	aMod, ok := byPath["a_mod.go"]
+	require.True(ok, "a_mod.go missing from Diff result")
+	assert.Equal(1, aMod.Additions, "a_mod.go additions")
+	assert.Equal(1, aMod.Deletions, "a_mod.go deletions")
+	require.Len(aMod.Hunks, 1)
+
+	// DiffPaths must agree on the same file.
+	pathsResult, err := mgr.DiffPaths(
+		context.Background(), "github.com", "test", "repo",
+		mb, featureSHA, true, []string{"a_mod.go", "m_ws.go", "z_mod.go"})
+	require.NoError(err)
+
+	pathsByPath := make(map[string]DiffFile, len(pathsResult.Files))
+	for _, f := range pathsResult.Files {
+		pathsByPath[f.Path] = f
+	}
+	require.NotContains(pathsByPath, "m_ws.go")
+
+	zModPaths, ok := pathsByPath["z_mod.go"]
+	require.True(ok, "z_mod.go missing from DiffPaths result")
+	assert.Equal(1, zModPaths.Additions, "DiffPaths z_mod.go additions")
+	assert.Equal(1, zModPaths.Deletions, "DiffPaths z_mod.go deletions")
+	require.Len(zModPaths.Hunks, 1)
+}
+
 func TestDiffFiles(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

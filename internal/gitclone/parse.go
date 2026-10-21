@@ -138,24 +138,95 @@ func rawStatusToString(s string) (status string, isRenameOrCopy bool) {
 	}
 }
 
+// devNullPath is what git prints in place of a missing side of a diff (a
+// pure addition has no "a/" side, a pure deletion has no "b/" side).
+const devNullPath = "/dev/null"
+
+// resolveSectionSide strips git's "a/" or "b/" prefix from one side of a
+// patch section's file header, treating "/dev/null" as absent. The
+// sourcegraph/go-diff library already runs strconv.Unquote on these names
+// while reading the "--- "/"+++ " header lines, so a C-quoted path (git
+// quotes any path with non-ASCII or special bytes unless core.quotepath is
+// disabled, e.g. `"a/caf\303\251.txt"`) arrives here already unquoted --
+// git's octal-escape quoting is a subset of Go's interpreted-string-literal
+// escapes, so strconv.Unquote decodes it correctly. That means we don't
+// need to pass -c core.quotepath=false to the patch invocations or unquote
+// again ourselves; we only need to strip the literal "a/"/"b/" prefix below.
+func resolveSectionSide(name string) (path string, present bool) {
+	if name == "" || name == devNullPath {
+		return "", false
+	}
+	if len(name) > 2 && (name[:2] == "a/" || name[:2] == "b/") {
+		name = name[2:]
+	}
+	return name, true
+}
+
+// sectionPath resolves the path a patch section should be matched against:
+// the new-side path, or the old-side path when the new side is absent
+// (deletions, where "+++" is "/dev/null"). Returns ok=false when neither
+// side resolves to a usable path, signaling the caller to fall back to
+// positional matching.
+func sectionPath(fd *godiff.FileDiff) (path string, ok bool) {
+	if p, present := resolveSectionSide(fd.NewName); present {
+		return p, true
+	}
+	if p, present := resolveSectionSide(fd.OrigName); present {
+		return p, true
+	}
+	return "", false
+}
+
 // ParsePatch parses unified diff patch output and merges it with
-// pre-populated file metadata from ParseRawZ. Files are correlated by
-// output order (git emits them in the same order).
+// pre-populated file metadata from ParseRawZ. Sections are matched to raw
+// files by path (new-side path, or old-side path for deletions), not by
+// position: git's patch pass can omit a section for a raw file the --raw
+// pass still lists (e.g. a whitespace-only file under `git diff -w`), and
+// matching by index would then misassign every later file's hunks. Only
+// when a section's path cannot be resolved at all do we fall back to
+// matching by position, on the assumption that such a section still lines
+// up with its raw counterpart.
 func ParsePatch(patch []byte, rawFiles []DiffFile) []DiffFile {
 	fileDiffs, _ := godiff.ParseMultiFileDiff(patch)
 	if len(fileDiffs) == 0 {
 		return rawFiles
 	}
 
+	pathIndex := make(map[string]int, len(rawFiles))
+	for i, f := range rawFiles {
+		pathIndex[f.Path] = i
+	}
+
+	// Raw files with no matching section keep their raw metadata, but get
+	// a non-nil Hunks so callers (and JSON serialization) see `[]` rather
+	// than relying on a separate nil-to-empty pass.
+	for i := range rawFiles {
+		rawFiles[i].Hunks = []Hunk{}
+	}
+
 	for i, fd := range fileDiffs {
-		if i >= len(rawFiles) {
-			break
+		idx := -1
+		if p, ok := sectionPath(fd); ok {
+			if j, found := pathIndex[p]; found {
+				idx = j
+			}
+			// If the resolved path isn't found in rawFiles at all, this is
+			// an anomaly (patch and raw passes disagreeing on paths); skip
+			// rather than risk assigning the hunk to the wrong file.
+		} else if i < len(rawFiles) {
+			// Positional fallback only when the section's path can't be
+			// resolved at all (e.g. an unparseable header). A positional
+			// guess otherwise is exactly the bug this function fixes.
+			idx = i
+		}
+		if idx == -1 {
+			continue
 		}
 
 		// Detect binary from extended headers.
 		for _, ext := range fd.Extended {
 			if strings.HasPrefix(ext, "Binary files ") || strings.HasPrefix(ext, "GIT binary patch") {
-				rawFiles[i].IsBinary = true
+				rawFiles[idx].IsBinary = true
 				break
 			}
 		}
@@ -216,18 +287,18 @@ func ParsePatch(patch []byte, rawFiles []DiffFile) []DiffFile {
 						Type: "add", Content: line[1:], NewNum: newNum, NoNewline: noNL,
 					})
 					newNum++
-					rawFiles[i].Additions++
+					rawFiles[idx].Additions++
 				case '-':
 					noNL := h.OrigNoNewlineAt > 0 && int32(lineByteEnd) == h.OrigNoNewlineAt
 					hunk.Lines = append(hunk.Lines, Line{
 						Type: "delete", Content: line[1:], OldNum: oldNum, NoNewline: noNL,
 					})
 					oldNum++
-					rawFiles[i].Deletions++
+					rawFiles[idx].Deletions++
 				}
 				byteOffset = lineByteEnd
 			}
-			rawFiles[i].Hunks = append(rawFiles[i].Hunks, hunk)
+			rawFiles[idx].Hunks = append(rawFiles[idx].Hunks, hunk)
 		}
 	}
 

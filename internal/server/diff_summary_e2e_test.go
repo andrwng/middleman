@@ -171,24 +171,13 @@ func TestAPIFilesSummary_PRWhitespaceHide(t *testing.T) {
 	require.Equal(http.StatusOK, filesResp.StatusCode())
 	require.NotNil(filesResp.JSON200.Files)
 
-	// Compare the file SET and statuses only, not per-file line counts:
-	// gitclone.Diff's ParsePatch matches raw entries to patch sections by
-	// positional index, which misaligns when --raw -w still lists a
-	// whitespace-only file (a documented git 2.43 quirk) but the patch
-	// pass omits its now-empty hunk. DiffSummary (task 1) is immune since
-	// it joins raw and numstat by path, not position, so the two
-	// endpoints' per-file counts are not directly comparable in hide
-	// mode today. That /diff ordering quirk is pre-existing and out of
-	// this task's scope; see the task report.
-	diffPaths := map[string]string{}
-	for _, f := range *diffResp.JSON200.Files {
-		diffPaths[f.Path] = f.Status
-	}
-	summaryPaths := map[string]string{}
-	for _, f := range *filesResp.JSON200.Files {
-		summaryPaths[f.Path] = f.Status
-	}
-	assert.Equal(diffPaths, summaryPaths)
+	// Task 2b fixed gitclone.Diff's ParsePatch to match raw entries to
+	// patch sections by path instead of positional index, so /diff's
+	// per-file counts are no longer misaligned when --raw -w still lists a
+	// whitespace-only file (a documented git 2.43 quirk) while the patch
+	// pass omits its now-empty hunk. The two endpoints' per-file counts are
+	// directly comparable again in hide mode.
+	assertFilesSummaryMatchesDiff(t, *diffResp.JSON200.Files, *filesResp.JSON200.Files)
 	// README.md is whitespace-only and must be hidden from both.
 	for _, f := range *filesResp.JSON200.Files {
 		assert.NotEqual("README.md", f.Path)
