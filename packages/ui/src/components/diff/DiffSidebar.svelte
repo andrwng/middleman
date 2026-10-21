@@ -5,6 +5,7 @@
     isReviewNavCollapsed,
     toggleReviewNavCollapsed,
   } from "../../lib/uiState.svelte.js";
+  import CollapseGlobsSection from "./CollapseGlobsSection.svelte";
   import CommitListSection from "./CommitListSection.svelte";
   import QuestionsSection from "./QuestionsSection.svelte";
   import PendingCommentsSection from "./PendingCommentsSection.svelte";
@@ -91,6 +92,44 @@
     }
   }
 
+  // --- collapse controls ---
+
+  // Every file in the current diff under dir, at any depth: the path
+  // must start with `dir + "/"`, so "src/pkg1" takes "src/pkg1/a.go" and
+  // "src/pkg1/sub/b.go" but not "src/pkg10/c.go". Uses the whole file
+  // list, not the filtered view, so a filter never narrows what a
+  // directory action touches.
+  function pathsUnderDir(dir: string): string[] {
+    const prefix = dir + "/";
+    const files = diff.getFileList()?.files ?? [];
+    return files.filter((f) => f.path.startsWith(prefix)).map((f) => f.path);
+  }
+
+  function setDirCollapsed(dir: string, collapsed: boolean): void {
+    diff.setFilesCollapsed(pathsUnderDir(dir), collapsed);
+  }
+
+  let dirGlobError = $state<string | null>(null);
+
+  async function alwaysCollapseDir(dir: string): Promise<void> {
+    const glob = `${dir}/**`;
+    const globs = diff.getCollapseGlobs();
+    dirGlobError = null;
+    if (globs.includes(glob)) return;
+    try {
+      await diff.saveCollapseGlobs([...globs, glob]);
+    } catch (err) {
+      dirGlobError = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  // Badge text for a collapsed file. A file the reader collapsed by hand
+  // ("user") is dimmed but carries no badge.
+  function badgeFor(path: string): string | null {
+    const reason = diff.getCollapseReason(path);
+    return reason === null || reason === "user" ? null : reason;
+  }
+
   // Per-diff file filter input (shown when 10+ files in diff).
   let fileFilterText = $state("");
   // Reset filter whenever selected PR changes so stale filter text
@@ -172,6 +211,9 @@
   <ReviewCommentsSection />
   <ReviewThreadsSection />
   <QuestionsSection />
+  {#if diff.getFileList()}
+    <CollapseGlobsSection />
+  {/if}
   <div class="diff-files">
     {#if diff.isFileListLoading() && !diff.getFileList()}
       <div class="diff-files-state diff-files-state--loading">Loading files</div>
@@ -193,14 +235,58 @@
           <span class="diff-files-progress__label">viewed</span>
         </div>
       {/if}
+      {#if dirGlobError !== null}
+        <p class="diff-files-state diff-files-state--error" role="alert">{dirGlobError}</p>
+      {/if}
       {@const grouped = groupByDir(filteredDiffFiles)}
       {#each grouped as group, gi (gi)}
         {#if group.dir}
-          <div class="diff-dir-header">{group.dir}/</div>
+          <div class="diff-dir-header">
+            <span class="diff-dir-header__name" title="{group.dir}/">{group.dir}/</span>
+            <span class="diff-dir-header__actions">
+              <button
+                type="button"
+                class="diff-dir-action"
+                aria-label="Collapse files in {group.dir}"
+                title="Collapse files in {group.dir}"
+                onclick={() => setDirCollapsed(group.dir, true)}
+              >
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+                  <polyline points="2.5,1.5 5,4 7.5,1.5" stroke-linecap="round" stroke-linejoin="round" />
+                  <polyline points="2.5,8.5 5,6 7.5,8.5" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                class="diff-dir-action"
+                aria-label="Expand files in {group.dir}"
+                title="Expand files in {group.dir}"
+                onclick={() => setDirCollapsed(group.dir, false)}
+              >
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+                  <polyline points="2.5,4 5,1.5 7.5,4" stroke-linecap="round" stroke-linejoin="round" />
+                  <polyline points="2.5,6 5,8.5 7.5,6" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                class="diff-dir-action"
+                aria-label="Always collapse {group.dir}/** in this repo"
+                title="Always collapse {group.dir}/** in this repo"
+                onclick={() => void alwaysCollapseDir(group.dir)}
+              >
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+                  <path d="M3 1.5h4M3.5 1.5v3L2 6.5h6L6.5 4.5v-3M5 6.5V9" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </button>
+            </span>
+          </div>
         {/if}
         {#each group.files as f (f.path)}
+          {@const badge = badgeFor(f.path)}
           <button
             class="diff-file-row"
+            class:file-row--collapsed={diff.getCollapseReason(f.path) !== null}
             class:diff-file-row--active={diff.getActiveFile() === f.path}
             class:diff-file-row--nested={!!group.dir}
             class:diff-file-row--viewed={diff.isFileReviewed(f.path)}
@@ -209,6 +295,9 @@
           >
             <span class="diff-file-status" style="color: {statusColor(f.status)}">{statusLetter(f.status)}</span>
             <span class="diff-file-name" class:diff-file-name--deleted={f.status === "deleted"}>{filename(f.path)}</span>
+            {#if badge}
+              <span class="diff-file-collapse-badge" title="Collapsed by default ({badge})">{badge}</span>
+            {/if}
             {#if f.is_binary}
               <span class="diff-file-churn diff-file-churn--binary" title="Binary file">bin</span>
             {:else}
@@ -278,14 +367,76 @@
     50% { opacity: 1; }
   }
 
+  .diff-files-state--error {
+    margin: 0;
+    color: var(--accent-red);
+  }
+
   .diff-dir-header {
-    padding: 5px 12px 2px 24px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px 0 24px;
     font-family: var(--font-mono);
     font-size: 10px;
     color: var(--text-muted);
+  }
+
+  .diff-dir-header__name {
+    flex: 1;
+    min-width: 0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  /* Hidden at rest so the tree stays quiet; revealed on hover and
+     whenever one of the buttons has keyboard focus. */
+  .diff-dir-header__actions {
+    display: inline-flex;
+    flex-shrink: 0;
+    gap: 1px;
+    opacity: 0;
+    transition: opacity 0.1s ease;
+  }
+
+  .diff-dir-header:hover .diff-dir-header__actions,
+  .diff-dir-header:focus-within .diff-dir-header__actions {
+    opacity: 1;
+  }
+
+  .diff-dir-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 16px;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+
+  .diff-dir-action:hover,
+  .diff-dir-action:focus-visible {
+    background: var(--bg-surface-hover);
+    color: var(--text-primary);
+  }
+
+  .file-row--collapsed {
+    opacity: 0.6;
+  }
+
+  .diff-file-collapse-badge {
+    flex-shrink: 0;
+    font-family: var(--font-sans);
+    font-size: 9px;
+    line-height: 1;
+    color: var(--text-muted);
+    border: 1px solid var(--border-default);
+    border-radius: 999px;
+    padding: 2px 5px;
   }
 
   .diff-file-row {

@@ -528,6 +528,16 @@
 </script>
 
 <div class="diff-view">
+  {#if diffStore.isWorktreeChanged()}
+    <div class="worktree-banner" role="status">
+      <span>The worktree changed since this diff loaded.</span>
+      <button
+        type="button"
+        class="worktree-banner__reload"
+        onclick={() => void diffStore.loadDiff(owner, name, number)}
+      >Reload</button>
+    </div>
+  {/if}
   {#if diff?.stale}
     <div class="stale-banner">
       Diff may be outdated -- showing changes as of an earlier version of this PR.
@@ -686,6 +696,33 @@
     border-bottom: 1px solid var(--diff-stale-border);
     font-size: 12px;
     flex-shrink: 0;
+  }
+
+  .worktree-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 16px;
+    background: var(--diff-stale-bg);
+    color: var(--diff-stale-text);
+    border-bottom: 1px solid var(--diff-stale-border);
+    font-size: 12px;
+    flex-shrink: 0;
+  }
+
+  .worktree-banner__reload {
+    padding: 2px 10px;
+    border: 1px solid var(--diff-stale-border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    font-size: 12px;
+    cursor: pointer;
+  }
+
+  .worktree-banner__reload:hover,
+  .worktree-banner__reload:focus-visible {
+    background: var(--bg-surface-hover);
   }
 
   .interdiff-banner {

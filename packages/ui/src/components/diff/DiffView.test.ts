@@ -205,9 +205,13 @@ function fakeCodeBrowserStore() {
   };
 }
 
-function renderDiffView(detailStore = fakeDetailStore()) {
+function renderDiffView(
+  detailStore = fakeDetailStore(),
+  prepare?: (diffStore: ReturnType<typeof createDiffStore>) => void,
+) {
   const client = symbolRefsClient();
   const diffStore = createDiffStore({ client });
+  prepare?.(diffStore);
   const symbolRefsStore = createSymbolRefsStore({ client });
   const codeBrowserStore = fakeCodeBrowserStore();
   const reviewThreadsStore = fakeReviewThreadsStore();
@@ -712,5 +716,25 @@ describe("DiffView: jumps wait for load and mount", () => {
 
     await waitFor(() => expect(diffStore.getScrollTarget()).toBeNull());
     expect(diffStore.isFileCollapsed("acme", "widget", 7, "gone.go")).toBe(false);
+  });
+});
+
+describe("DiffView worktree-changed banner", () => {
+  const message = "The worktree changed since this diff loaded.";
+
+  it("is hidden while the loaded diff is current", async () => {
+    renderDiffView();
+    await tick();
+    expect(screen.queryByText(message)).toBeNull();
+  });
+
+  it("shows when the worktree changed and Reload reloads the diff", async () => {
+    const { diffStore } = renderDiffView(undefined, (s) => {
+      vi.spyOn(s, "isWorktreeChanged").mockReturnValue(true);
+    });
+    expect(await screen.findByText(message)).toBeTruthy();
+    const load = vi.spyOn(diffStore, "loadDiff").mockResolvedValue();
+    await fireEvent.click(screen.getByRole("button", { name: "Reload" }));
+    expect(load).toHaveBeenCalledWith("acme", "widget", 7);
   });
 });

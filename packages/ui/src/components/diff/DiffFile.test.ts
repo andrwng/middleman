@@ -616,3 +616,35 @@ describe("DiffFile published review comment placement", () => {
     expect(container.querySelector(".rc__anchor")?.textContent).toBe("+2");
   });
 });
+
+describe("DiffFile collapse reason badge", () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it.each(["pattern", "deleted", "large"] as const)(
+    "shows the %s badge on a collapsed file's header",
+    async (reason) => {
+      const { container, owner, diffStore } = renderDiffFile(makeFile());
+      vi.spyOn(diffStore, "getCollapseReason").mockReturnValue(reason);
+      diffStore.toggleFileCollapsed(owner, "n", 1, "src/foo.ts");
+      await tick();
+      expect(container.querySelector(".file-collapse-badge")?.textContent).toBe(reason);
+    },
+  );
+
+  it("shows no badge for a file the user collapsed", async () => {
+    const { container, owner, diffStore } = renderDiffFile(makeFile());
+    vi.spyOn(diffStore, "getCollapseReason").mockReturnValue("user");
+    diffStore.toggleFileCollapsed(owner, "n", 1, "src/foo.ts");
+    await tick();
+    expect(container.querySelector(".file-collapse-badge")).toBeNull();
+  });
+
+  it("shows no badge on an expanded file", () => {
+    const { container, diffStore } = renderDiffFile(makeFile());
+    vi.spyOn(diffStore, "getCollapseReason").mockReturnValue("large");
+    expect(container.querySelector(".file-collapse-badge")).toBeNull();
+  });
+});

@@ -4,22 +4,35 @@ import { STORES_KEY } from "../../context.js";
 import { setReviewNavCollapsed } from "../../lib/uiState.svelte.js";
 import DiffSidebar from "./DiffSidebar.svelte";
 
-function diffStub() {
+function makeFile(path: string, status = "modified") {
   return {
-    getFileList: () => ({
-      stale: false,
-      files: [
-        {
-          path: "a.go",
-          status: "modified",
-          is_binary: false,
-          is_whitespace_only: false,
-          additions: 1,
-          deletions: 0,
-          hunks: [],
-        },
-      ],
-    }),
+    path,
+    old_path: path,
+    status,
+    is_binary: false,
+    is_whitespace_only: false,
+    additions: 1,
+    deletions: 0,
+    hunks: [],
+  };
+}
+
+function diffStub(
+  opts: {
+    files?: ReturnType<typeof makeFile>[];
+    reasons?: Record<string, "user" | "pattern" | "deleted" | "large">;
+    globs?: string[];
+  } = {},
+) {
+  const files = opts.files ?? [makeFile("a.go")];
+  const reasons = opts.reasons ?? {};
+  const globs = opts.globs ?? [];
+  return {
+    getFileList: () => ({ stale: false, files }),
+    getCollapseReason: (path: string) => reasons[path] ?? null,
+    setFilesCollapsed: vi.fn(),
+    getCollapseGlobs: () => globs,
+    saveCollapseGlobs: vi.fn(async (_globs: string[]) => {}),
     isFileListLoading: () => false,
     getActiveFile: () => null,
     requestScrollToFile: vi.fn(),
@@ -180,5 +193,98 @@ describe("DiffSidebar file click", () => {
 
     expect(diff.requestScrollToFile).toHaveBeenCalledWith("a.go");
     expect(codeBrowser.navigateTo).toHaveBeenCalledWith("a.go");
+  });
+});
+
+describe("DiffSidebar collapse controls", () => {
+  beforeEach(() => {
+    setReviewNavCollapsed(false);
+  });
+
+  const nestedFiles = [
+    makeFile("src/pkg1/a.go"),
+    makeFile("src/pkg1/sub/b.go"),
+    makeFile("src/pkg10/c.go"),
+    makeFile("top.go"),
+  ];
+
+  it("collapses every file under a directory, including nested dirs but not sibling prefixes", async () => {
+    const { diff } = renderSidebar({ diff: diffStub({ files: nestedFiles }) });
+    await fireEvent.click(screen.getByRole("button", { name: "Collapse files in src/pkg1" }));
+    expect(diff.setFilesCollapsed).toHaveBeenCalledWith(
+      ["src/pkg1/a.go", "src/pkg1/sub/b.go"],
+      true,
+    );
+  });
+
+  it("expands every file under a directory", async () => {
+    const { diff } = renderSidebar({ diff: diffStub({ files: nestedFiles }) });
+    await fireEvent.click(screen.getByRole("button", { name: "Expand files in src/pkg10" }));
+    expect(diff.setFilesCollapsed).toHaveBeenCalledWith(["src/pkg10/c.go"], false);
+  });
+
+  it("always-collapse appends dir/** to the repo globs and saves", async () => {
+    const { diff } = renderSidebar({
+      diff: diffStub({ files: nestedFiles, globs: ["*.pb.go"] }),
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Always collapse src/pkg1/** in this repo" }),
+    );
+    expect(diff.saveCollapseGlobs).toHaveBeenCalledWith(["*.pb.go", "src/pkg1/**"]);
+  });
+
+  it("always-collapse does not save a glob that is already present", async () => {
+    const { diff } = renderSidebar({
+      diff: diffStub({ files: nestedFiles, globs: ["src/pkg1/**"] }),
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Always collapse src/pkg1/** in this repo" }),
+    );
+    expect(diff.saveCollapseGlobs).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a save failure from always-collapse", async () => {
+    const diff = diffStub({ files: nestedFiles });
+    diff.saveCollapseGlobs.mockRejectedValueOnce(new Error("too many globs"));
+    renderSidebar({ diff });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Always collapse src/pkg1/** in this repo" }),
+    );
+    expect(await screen.findByText("too many globs")).toBeTruthy();
+  });
+
+  it("dims collapsed rows and badges the reason, with no badge for user", () => {
+    const files = [
+      makeFile("gen.pb.go"),
+      makeFile("gone.go", "deleted"),
+      makeFile("huge.go"),
+      makeFile("mine.go"),
+      makeFile("open.go"),
+    ];
+    const { container } = renderSidebar({
+      diff: diffStub({
+        files,
+        reasons: {
+          "gen.pb.go": "pattern",
+          "gone.go": "deleted",
+          "huge.go": "large",
+          "mine.go": "user",
+        },
+      }),
+    });
+    const row = (name: string) =>
+      [...container.querySelectorAll<HTMLElement>(".diff-file-row")].find(
+        (r) => r.title === name,
+      )!;
+    const badge = (name: string) =>
+      row(name).querySelector(".diff-file-collapse-badge")?.textContent ?? null;
+    expect(badge("gen.pb.go")).toBe("pattern");
+    expect(badge("gone.go")).toBe("deleted");
+    expect(badge("huge.go")).toBe("large");
+    expect(badge("mine.go")).toBeNull();
+    expect(badge("open.go")).toBeNull();
+    expect(row("mine.go").classList.contains("file-row--collapsed")).toBe(true);
+    expect(row("huge.go").classList.contains("file-row--collapsed")).toBe(true);
+    expect(row("open.go").classList.contains("file-row--collapsed")).toBe(false);
   });
 });

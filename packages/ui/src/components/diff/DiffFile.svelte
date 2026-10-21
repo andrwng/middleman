@@ -49,6 +49,13 @@
   const { file, owner, name, number, diffWindow }: Props = $props();
 
   const collapsed = $derived(diffStore.isFileCollapsed(owner, name, number, file.path));
+  // Why a collapsed file started collapsed; a hand-collapsed file
+  // ("user") gets no badge.
+  const collapseBadge = $derived.by(() => {
+    if (!collapsed) return null;
+    const reason = diffStore.getCollapseReason(file.path);
+    return reason === null || reason === "user" ? null : reason;
+  });
   // Lazy diffs: hunks arrive per file. Always "loaded" for full diffs.
   const hunkState = $derived(diffStore.getFileHunkState(file.path));
   const zone = $derived<Zone>(diffWindow ? diffWindow.zone(file.path) : "mount");
@@ -898,6 +905,9 @@
           <span class="file-provenance">{provenanceLabel(file)}</span>
         {/if}
       </span>
+      {#if collapseBadge}
+        <span class="file-collapse-badge" title="Collapsed by default ({collapseBadge})">{collapseBadge}</span>
+      {/if}
       <span class="file-stats">
         <span class="stat" class:stat--add={file.additions > 0} class:stat--dim={file.additions === 0}>+{file.additions}</span>
         <span class="stat" class:stat--del={file.deletions > 0} class:stat--dim={file.deletions === 0}>-{file.deletions}</span>
@@ -1467,6 +1477,16 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     user-select: text;
+  }
+
+  .file-collapse-badge {
+    flex-shrink: 0;
+    font-size: 10px;
+    line-height: 1;
+    color: var(--text-muted);
+    border: 1px solid var(--diff-border);
+    border-radius: 999px;
+    padding: 2px 6px;
   }
 
   .file-stats {
