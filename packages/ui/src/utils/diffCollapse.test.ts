@@ -58,6 +58,42 @@ describe("compileGlob", () => {
     expect(re.test("yarn.lock.bak")).toBe(false);
     expect(re.test("xyarn.lock")).toBe(true);
   });
+
+  describe("interior ** keeps exactly one separator between literals", () => {
+    const re = compileGlob("a/**/b");
+    it.each([
+      ["a/b", true],
+      ["a/x/b", true],
+      ["a/x/y/b", true],
+      ["ab", false],
+      ["a/b/c", false],
+      ["xa/b", false],
+    ] as const)("a/**/b against %s -> %s", (path, expected) => {
+      expect(re.test(path)).toBe(expected);
+    });
+  });
+
+  describe("multiple interior ** segments each keep one separator", () => {
+    const re = compileGlob("a/**/b/**/c");
+    it.each([
+      ["a/b/c", true],
+      ["a/x/b/y/c", true],
+      ["abc", false],
+    ] as const)("a/**/b/**/c against %s -> %s", (path, expected) => {
+      expect(re.test(path)).toBe(expected);
+    });
+  });
+
+  describe("trailing ** requires the preceding separator and does not match the bare prefix", () => {
+    const re = compileGlob("x/**");
+    it.each([
+      ["x/y", true],
+      ["x/y/z", true],
+      ["x", false],
+    ] as const)("x/** against %s -> %s", (path, expected) => {
+      expect(re.test(path)).toBe(expected);
+    });
+  });
 });
 
 describe("matchesAnyGlob", () => {

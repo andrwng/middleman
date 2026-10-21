@@ -31,15 +31,19 @@ export function compileGlob(glob: string): RegExp {
     if (ch === "*") {
       if (glob[i + 1] === "*") {
         // "**" consumes any number of path segments, including zero.
-        // Also swallow an adjacent "/" on either side so that
-        // "proto/gen/**" matches "proto/gen/x.go" (zero extra segments)
-        // and "**/*.pb.go" matches "a.pb.go" (zero leading segments).
+        // When followed by "/" (leading, e.g. "**/*.pb.go", or interior,
+        // e.g. "a/**/b"), swallow that "/" into an optional "zero or more
+        // segments" group so the single separator already emitted for the
+        // preceding literal (if any) is preserved exactly once: "a/**/b"
+        // compiles to "a/(?:.*/)?b", matching "a/b" and "a/x/b" but not
+        // "ab" or "a/b/c". A trailing "**" with nothing after it (e.g.
+        // "proto/gen/**" or "x/**") falls through to the plain ".*" branch,
+        // which requires the preceding literal "/" to be present, so it
+        // does not match the bare prefix itself (e.g. "x/**" matches "x/y"
+        // but not bare "x").
         let j = i + 2;
         if (glob[j] === "/") {
           j++;
-          if (pattern.endsWith("/")) {
-            pattern = pattern.slice(0, -1);
-          }
           pattern += "(?:.*/)?";
         } else {
           pattern += ".*";
