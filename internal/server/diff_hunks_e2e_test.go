@@ -412,3 +412,205 @@ func TestAPIDiffHunks_PathsWithSpacesAndBrackets(t *testing.T) {
 	assert.Equal(oddName, got[0].Path)
 	assert.Equal("added", got[0].Status)
 }
+
+// --- Rename / copy (Review Focus item 1, jointly owned by Task 3) ---
+
+// TestAPIDiffHunks_PRRenameAndCopy pins that /diff/hunks reports a renamed
+// (with edits) and a copied file as rename/copy -- not as an add plus a
+// delete -- when the client sends [new_path, old_path] exactly as it will
+// in production, and that the per-file result deep-equals the same file's
+// entry from the full /diff.
+func TestAPIDiffHunks_PRRenameAndCopy(t *testing.T) {
+	// Named req (not require) so the nested t.Run subtests below can
+	// still bind their own require/Assert helpers to their own
+	// *testing.T without the outer var shadowing those packages.
+	req := require.New(t)
+
+	dir := t.TempDir()
+	database, err := db.Open(filepath.Join(dir, "test.db"))
+	req.NoError(err)
+	t.Cleanup(func() { database.Close() })
+
+	bareDir := filepath.Join(dir, "clones")
+	req.NoError(os.MkdirAll(bareDir, 0o755))
+	bare := filepath.Join(bareDir, "github.com", "acme", "renamecopy.git")
+
+	tmpWork := filepath.Join(dir, "work")
+	runGit(t, dir, "init", "--bare", "--initial-branch=main", bare)
+	runGit(t, dir, "clone", bare, tmpWork)
+	runGit(t, tmpWork, "config", "user.email", "test@test.com")
+	runGit(t, tmpWork, "config", "user.name", "Test")
+
+	req.NoError(os.WriteFile(filepath.Join(tmpWork, "rename_src.go"),
+		[]byte("package main\n\nfunc Old() {}\n"), 0o644))
+	req.NoError(os.WriteFile(filepath.Join(tmpWork, "copy_src.go"),
+		[]byte("line1\nline2\nline3\nline4\nline5\n"), 0o644))
+	runGit(t, tmpWork, "add", ".")
+	runGit(t, tmpWork, "commit", "-m", "base commit")
+	runGit(t, tmpWork, "push", "origin", "main")
+	mergeBase := testGitSHA(t, tmpWork, "HEAD")
+
+	runGit(t, tmpWork, "checkout", "-b", "pr")
+	runGit(t, tmpWork, "mv", "rename_src.go", "rename_dst.go")
+	req.NoError(os.WriteFile(filepath.Join(tmpWork, "rename_dst.go"),
+		[]byte("package main\n\nfunc Old() {}\n\nfunc New() {}\n"), 0o644))
+	// Pure copy: copy_src.go is untouched; copy_dst.go is byte-identical,
+	// so -C --find-copies-harder reports a copy rather than two adds.
+	srcData, err := os.ReadFile(filepath.Join(tmpWork, "copy_src.go"))
+	req.NoError(err)
+	req.NoError(os.WriteFile(filepath.Join(tmpWork, "copy_dst.go"), srcData, 0o644))
+	runGit(t, tmpWork, "add", "-A")
+	runGit(t, tmpWork, "commit", "-m", "rename and copy")
+	runGit(t, tmpWork, "push", "origin", "pr")
+	headSHA := testGitSHA(t, tmpWork, "HEAD")
+
+	clones := gitclone.New(bareDir, nil)
+	mock := &mockGH{}
+	repos := []ghclient.RepoRef{{Owner: "acme", Name: "renamecopy", PlatformHost: "github.com"}}
+	syncer := ghclient.NewSyncer(map[string]ghclient.Client{"github.com": mock}, database, nil, repos, time.Minute, nil, nil)
+	t.Cleanup(syncer.Stop)
+	srv := New(database, syncer, nil, "/", nil, ServerOptions{Clones: clones})
+
+	seedPR(t, database, "acme", "renamecopy", 1)
+	ctx := context.Background()
+	repoID, err := database.UpsertRepo(ctx, "github.com", "acme", "renamecopy")
+	req.NoError(err)
+	req.NoError(database.UpdateDiffSHAs(ctx, repoID, 1, headSHA, mergeBase, mergeBase))
+
+	client := setupTestClient(t, srv)
+
+	diffResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberDiffWithResponse(
+		ctx, "acme", "renamecopy", 1, nil,
+	)
+	req.NoError(err)
+	req.Equal(http.StatusOK, diffResp.StatusCode())
+	req.NotNil(diffResp.JSON200.Files)
+	diffByPath := make(map[string]generated.DiffFile, len(*diffResp.JSON200.Files))
+	for _, f := range *diffResp.JSON200.Files {
+		diffByPath[f.Path] = f
+	}
+	renameDiff, ok := diffByPath["rename_dst.go"]
+	req.True(ok, "rename_dst.go missing from full diff")
+	req.Equal("renamed", renameDiff.Status)
+	copyDiff, ok := diffByPath["copy_dst.go"]
+	req.True(ok, "copy_dst.go missing from full diff")
+	req.Equal("copied", copyDiff.Status)
+
+	cases := []struct {
+		name       string
+		newPath    string
+		oldPath    string
+		wantStatus string
+		want       generated.DiffFile
+	}{
+		{"rename", "rename_dst.go", "rename_src.go", "renamed", renameDiff},
+		{"copy", "copy_dst.go", "copy_src.go", "copied", copyDiff},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := Assert.New(t)
+			paths := []string{c.newPath, c.oldPath}
+			body := generated.PostReposByOwnerByNamePullsByNumberDiffHunksJSONRequestBody{
+				ExpectFrom: mergeBase,
+				ExpectTo:   headSHA,
+				Paths:      &paths,
+			}
+			resp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberDiffHunksWithResponse(
+				ctx, "acme", "renamecopy", 1, body,
+			)
+			require.NoError(err)
+			require.Equal(http.StatusOK, resp.StatusCode())
+			require.NotNil(resp.JSON200.Files)
+			got := *resp.JSON200.Files
+			require.Len(got, 1, "expected exactly one result for %s", c.name)
+			assert.Equal(c.wantStatus, got[0].Status)
+			assert.Equal(c.oldPath, got[0].OldPath)
+			assert.Equal(c.want, got[0])
+		})
+	}
+}
+
+// TestAPIDiffHunks_LocalRename pins the same rename behavior for a local
+// worktree scope: the client sends [new_path, old_path], and the server
+// must report it as a rename (not add+delete) with hunks matching /diff.
+func TestAPIDiffHunks_LocalRename(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on PATH")
+	}
+	require := require.New(t)
+	assert := Assert.New(t)
+	srv, database := setupTestServer(t)
+	client := setupTestClient(t, srv)
+	ctx := context.Background()
+
+	dir := t.TempDir()
+	runGitWT(t, "", "init", "--initial-branch=main", dir)
+	runGitWT(t, dir, "config", "user.email", "test@example.com")
+	runGitWT(t, dir, "config", "user.name", "Test")
+	require.NoError(os.WriteFile(filepath.Join(dir, "rename_src.go"),
+		[]byte("package main\n\nfunc Old() {}\n"), 0o644))
+	runGitWT(t, dir, "add", "rename_src.go")
+	runGitWT(t, dir, "commit", "-m", "base")
+	originDir := dir + "-origin.git"
+	runGitWT(t, "", "init", "--bare", originDir)
+	runGitWT(t, dir, "remote", "add", "origin", originDir)
+	runGitWT(t, dir, "push", "origin", "main")
+	runGitWT(t, dir, "fetch", "origin")
+
+	runGitWT(t, dir, "checkout", "-b", "feat/rename")
+	runGitWT(t, dir, "mv", "rename_src.go", "rename_dst.go")
+	require.NoError(os.WriteFile(filepath.Join(dir, "rename_dst.go"),
+		[]byte("package main\n\nfunc Old() {}\n\nfunc New() {}\n"), 0o644))
+	runGitWT(t, dir, "add", "-A")
+	runGitWT(t, dir, "commit", "-m", "rename and edit")
+
+	repoID, err := database.UpsertLocalRepo(ctx, "demo")
+	require.NoError(err)
+	canonDir, err := filepath.EvalSymlinks(dir)
+	require.NoError(err)
+	w, err := database.UpsertWorktree(ctx, repoID, db.ScannedWorktree{
+		Path:   canonDir,
+		Branch: "feat/rename",
+	})
+	require.NoError(err)
+
+	diffResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberDiffWithResponse(
+		ctx, "local", "demo", w.ID, nil,
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, diffResp.StatusCode())
+	require.NotNil(diffResp.JSON200.Files)
+	var renameDiff *generated.DiffFile
+	for i, f := range *diffResp.JSON200.Files {
+		if f.Path == "rename_dst.go" {
+			renameDiff = &(*diffResp.JSON200.Files)[i]
+		}
+	}
+	require.NotNil(renameDiff, "rename_dst.go missing from full diff")
+	require.Equal("renamed", renameDiff.Status)
+
+	filesResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberFilesWithResponse(
+		ctx, "local", "demo", w.ID, nil,
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, filesResp.StatusCode())
+
+	paths := []string{"rename_dst.go", "rename_src.go"}
+	body := generated.PostReposByOwnerByNamePullsByNumberDiffHunksJSONRequestBody{
+		ExpectFrom: filesResp.JSON200.DiffFrom,
+		ExpectTo:   filesResp.JSON200.DiffTo,
+		Paths:      &paths,
+	}
+	hunksResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberDiffHunksWithResponse(
+		ctx, "local", "demo", w.ID, body,
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, hunksResp.StatusCode())
+	require.NotNil(hunksResp.JSON200.Files)
+	got := *hunksResp.JSON200.Files
+	require.Len(got, 1)
+	assert.Equal("renamed", got[0].Status)
+	assert.Equal("rename_src.go", got[0].OldPath)
+	assert.Equal(*renameDiff, got[0])
+}

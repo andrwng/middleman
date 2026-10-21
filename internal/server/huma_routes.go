@@ -3302,7 +3302,11 @@ type diffHunksRequest struct {
 	Whitespace string   `json:"whitespace,omitempty"`
 	ExpectFrom string   `json:"expect_from"`
 	ExpectTo   string   `json:"expect_to"`
-	Paths      []string `json:"paths" minItems:"1"`
+	// minItems stays a schema tag (huma rejects an empty/absent array with
+	// a 422 before the handler runs); the upper bound of 100 is enforced
+	// manually in getDiffHunks instead, since the brief requires a 400
+	// there and huma's own maxItems validation would answer with 422.
+	Paths []string `json:"paths" minItems:"1"`
 }
 
 type diffHunksInput struct {
