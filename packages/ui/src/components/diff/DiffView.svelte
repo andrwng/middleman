@@ -18,6 +18,11 @@
   import ReviewPanel from "./ReviewPanel.svelte";
   import SymbolRefsGutter from "./SymbolRefsGutter.svelte";
   import CodeBrowserPanel from "./CodeBrowserPanel.svelte";
+  import {
+    createDiffWindow,
+    setDiffWindowContext,
+    type DiffWindow,
+  } from "./diffWindow.svelte.js";
 
   interface Props {
     owner: string;
@@ -29,6 +34,22 @@
 
   let diffArea: HTMLDivElement | undefined = $state();
   let diffAreaRow: HTMLDivElement | undefined = $state();
+
+  // One viewport window per scroll root: decides which file bodies are
+  // mounted (see diffWindow.svelte.ts). Files render only once it exists
+  // so none of them mounts its body before the window has measured.
+  let diffWindow: DiffWindow | undefined = $state();
+  setDiffWindowContext(() => diffWindow);
+  $effect(() => {
+    const root = diffArea;
+    if (!root) return;
+    const w = createDiffWindow(root);
+    diffWindow = w;
+    return () => {
+      w.destroy();
+      if (untrack(() => diffWindow) === w) diffWindow = undefined;
+    };
+  });
   let scrollRaf = 0;
   let reviewPanelOpen = $state(false);
   let codeBrowserOpen = $state(false);
@@ -169,9 +190,10 @@
   // Watch for scroll requests from the sidebar file list (via the store).
   // Only consume the target once diffArea is mounted and diff data is available,
   // so the request is not lost if the user clicks a file before diff renders.
+  // Files render only once the viewport window exists, so wait for it too.
   $effect(() => {
     const target = diffStore.getScrollTarget();
-    if (target && diffArea && diff) {
+    if (target && diffArea && diffWindow && diff) {
       diffStore.consumeScrollTarget();
       scrollToFile(target);
     }
@@ -512,14 +534,17 @@
               onscroll={onDiffScroll}
               style:tab-size={tabWidth}
             >
-              {#each diff.files as file (file.path)}
-                <DiffFileComponent
-                  {file}
-                  {owner}
-                  {name}
-                  {number}
-                />
-              {/each}
+              {#if diffWindow}
+                {#each diff.files as file (file.path)}
+                  <DiffFileComponent
+                    {file}
+                    {owner}
+                    {name}
+                    {number}
+                    {diffWindow}
+                  />
+                {/each}
+              {/if}
             </div>
           {/if}
           {#if symbolRefsStore.isActive()}
@@ -619,6 +644,9 @@
        when the row above also holds a fixed-width gutter. */
     min-width: 0;
     overflow: auto;
+    /* Scroll anchoring keeps the reader's place when file bodies above
+       the viewport mount or unmount and change height. */
+    overflow-anchor: auto;
   }
 
   .symref-gutter-resize {

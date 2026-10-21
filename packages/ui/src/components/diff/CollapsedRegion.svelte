@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { getStores } from "../../context.js";
   import DiffLineComponent from "./DiffLine.svelte";
   import { tokenizeLineDual, type DualToken } from "../../utils/highlight.js";
@@ -37,6 +38,10 @@
     // called for a target outside this region's window, and never
     // called again for a target that already fired it.
     onrevealed?: () => void;
+    // Called when the region first reveals any lines; the returned
+    // function is called when it no longer has any (or unmounts).
+    // DiffFile uses this to pin its body while context is expanded.
+    onexpanded?: () => () => void;
   }
 
   const {
@@ -50,6 +55,7 @@
     lang,
     revealNewLine = null,
     onrevealed,
+    onexpanded,
   }: Props = $props();
 
   const STEP = 10;                    // lines per row click
@@ -95,6 +101,12 @@
   let flushing = $state(false);
 
   const { diff: diffStore } = getStores();
+
+  const hasRevealed = $derived(topCount + bottomCount > 0);
+  $effect(() => {
+    if (!hasRevealed || !onexpanded) return;
+    return untrack(onexpanded);
+  });
 
   // `remaining` is the distance between the two revealed edges in
   // the known-size cases. For a "bottom" region it's unknown, so

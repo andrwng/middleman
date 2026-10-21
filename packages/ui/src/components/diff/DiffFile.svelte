@@ -4,6 +4,13 @@
   import { getStores } from "../../context.js";
   import { isSymbolQuery } from "../../stores/symbolRefs.svelte.js";
   import { findDiffLineEl, flashDiffLine } from "./scrollToDiffLine.js";
+  import {
+    estimateBodyHeight,
+    measureRowHeight,
+    rowHeightPx,
+    type DiffWindow,
+    type Zone,
+  } from "./diffWindow.svelte.js";
 
   const {
     diff: diffStore,
@@ -31,13 +38,17 @@
     owner: string;
     name: string;
     number: number;
+    // DiffView's viewport window (see diffWindow.svelte.ts). Without one
+    // (standalone use) the file behaves as if always near the viewport.
+    diffWindow?: DiffWindow | undefined;
   }
 
-  const { file, owner, name, number }: Props = $props();
+  const { file, owner, name, number, diffWindow }: Props = $props();
 
   const collapsed = $derived(diffStore.isFileCollapsed(owner, name, number, file.path));
   // Lazy diffs: hunks arrive per file. Always "loaded" for full diffs.
   const hunkState = $derived(diffStore.getFileHunkState(file.path));
+  const zone = $derived<Zone>(diffWindow ? diffWindow.zone(file.path) : "mount");
   const lang = $derived(langFromPath(file.path));
   const layout = $derived(diffStore.getLayout());
 
@@ -207,10 +218,23 @@
     const handler = (): void => {
       liveSelection = computeSelectionRange();
       liveSymbolSelectionInfo = computeSymbolSelection();
+      selectionInFile = computeSelectionInFile();
     };
     document.addEventListener("selectionchange", handler);
     return () => document.removeEventListener("selectionchange", handler);
   });
+
+  // Any non-empty selection touching this file, line-based or not. Pins
+  // the body so a selection is not destroyed by an unmount.
+  let selectionInFile = $state(false);
+
+  function computeSelectionInFile(): boolean {
+    if (typeof window === "undefined" || !fileEl) return false;
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0) return false;
+    return (sel.anchorNode != null && fileEl.contains(sel.anchorNode))
+      || (sel.focusNode != null && fileEl.contains(sel.focusNode));
+  }
 
   function computeSelectionRange(): { startLine: number; endLine: number; side: "LEFT" | "RIGHT" } | null {
     if (typeof window === "undefined") return null;
@@ -561,40 +585,29 @@
     return null;
   }
 
-  // Auto-mark viewed when the file has been scrolled past (its bottom
-  // edge has moved above the viewport). Only fires AFTER the file has
-  // been in view at least once, so files that never enter the viewport
-  // do not auto-check. Never un-marks — removal is user-initiated.
-  let hasBeenSeen = $state(false);
-  $effect(() => {
-    if (inViewport) hasBeenSeen = true;
-  });
-  $effect(() => {
-    if (hasBeenSeen && !inViewport && !viewed) {
-      const rect = fileEl?.getBoundingClientRect();
-      if (rect && rect.bottom < 0) {
-        diffStore.markFileReviewed(file.path, true);
-      }
-    }
-  });
-
-  // Track viewport visibility so off-screen files skip expensive tokenization
-  // on whitespace toggles and theme switches. Starts false so the initial
-  // render on large diffs doesn't eagerly tokenize every file before the
-  // IntersectionObserver reports visibility — the first observer callback
-  // fires synchronously for on-screen files.
+  // Viewport window wiring. `zone` comes from DiffView's shared window
+  // (one set of observers for all files); "mount" means near the
+  // viewport, or pinned.
   let fileEl: HTMLDivElement | undefined = $state();
-  let inViewport = $state(false);
+  let bodyEl: HTMLDivElement | undefined = $state();
+  // Off-screen files skip tokenization and prop syncing.
+  const inViewport = $derived(zone === "mount");
 
-  // Local copy of file data, only synced when expanded AND visible. Collapsed
-  // or off-screen files keep stale content so whitespace toggles and theme
-  // switches don't trigger expensive re-renders and re-tokenization for
-  // content no one can see.
+  $effect(() => {
+    if (!diffWindow || !fileEl) return;
+    return diffWindow.observe(file.path, fileEl);
+  });
+
+  // Local copy of file data, only synced when expanded, near the viewport
+  // and its hunks are loaded. Other files keep stale content so whitespace
+  // toggles and theme switches don't re-render or re-tokenize content no
+  // one can see, and so a lazy reload keeps showing the previous body
+  // until the replacement hunks arrive.
   // svelte-ignore state_referenced_locally — synced from file prop via $effect
   let renderedFile = $state(file);
 
   $effect(() => {
-    if (!collapsed && inViewport) {
+    if (!collapsed && inViewport && hunkState === "loaded") {
       const prev = renderedFile;
       renderedFile = file;
       // Clear stale tokens synchronously so any render before the
@@ -606,32 +619,68 @@
     }
   });
 
-  // Interim lazy-diff wiring: request this file's hunks once it is
-  // expanded and near the viewport.
+  // Lazy diffs: request hunks from the prefetch zone inward.
   $effect(() => {
-    if (diffStore.isLazy() && !collapsed && inViewport && hunkState === "idle") {
+    if (diffStore.isLazy() && !collapsed && zone !== "far" && hunkState === "idle") {
       diffStore.requestHunks(file.path);
     }
   });
 
-  onMount(() => {
-    let observer: IntersectionObserver | undefined;
-    // Guard for jsdom / SSR-ish test environments where IntersectionObserver
-    // is not provided — treat the file as visible so tokenization still runs.
-    if (typeof IntersectionObserver === "undefined") {
-      inViewport = true;
-      return;
-    }
-    if (fileEl) {
-      observer = new IntersectionObserver(
-        (entries) => { inViewport = entries[0]!.isIntersecting; },
-        { rootMargin: "200px 0px" },
-      );
-      observer.observe(fileEl);
-    }
+  // The body mounts near the viewport once there is something to show:
+  // loaded hunks, or (during a reload) the previous body.
+  const hasRenderedContent = $derived(renderedFile.hunks.length > 0 || renderedFile.is_binary);
+  const showBody = $derived(
+    !collapsed && inViewport
+      && (hunkState === "loaded" || (hunkState !== "error" && hasRenderedContent)),
+  );
 
-    return () => { observer?.disconnect(); };
+  // Pins: keep the body mounted while the reviewer is working in it.
+  $effect(() => {
+    if (!diffWindow) return;
+    if (openComposer === null && openAsk === null && !selectionInFile) return;
+    return diffWindow.pin(file.path, "interaction");
   });
+
+  function pinExpandedRegion(): () => void {
+    return diffWindow?.pin(file.path, "region") ?? (() => {});
+  }
+
+  // Remember the body's height before it unmounts ($effect.pre runs
+  // before the DOM update that removes it), so its placeholder keeps
+  // the same size and the scroll position does not jump.
+  $effect.pre(() => {
+    if (!showBody && bodyEl && diffWindow) {
+      diffWindow.rememberHeight(file.path, bodyEl.offsetHeight);
+    }
+  });
+
+  $effect(() => {
+    if (showBody && bodyEl) measureRowHeight(bodyEl);
+    diffWindow?.setBodyMounted(file.path, showBody);
+  });
+
+  // A plain function, not $derived: remembered heights are not reactive,
+  // and the placeholder block re-evaluates this each time it is created.
+  function placeholderHeight(): number {
+    return diffWindow?.height(file.path) ?? estimateBodyHeight(file, rowHeightPx());
+  }
+
+  // Auto-mark viewed once the file has been scrolled past (left the
+  // visible area upward), but only if its body was mounted while it was
+  // visible: a placeholder scrolled past was never read. Never un-marks
+  // -- removal is user-initiated.
+  let hasBeenSeen = $state(false);
+  const visibility = $derived(diffWindow?.visibility(file.path) ?? "unknown");
+  $effect(() => {
+    if (showBody && visibility === "visible") hasBeenSeen = true;
+  });
+  $effect(() => {
+    if (hasBeenSeen && visibility === "above" && !viewed) {
+      diffStore.markFileReviewed(file.path, true);
+    }
+  });
+
+  onMount(() => () => diffWindow?.setBodyMounted(file.path, false));
 
   // Dual-theme token cache — each span carries both colors as CSS custom
   // properties, so theme switch is pure CSS (zero DOM updates, zero
@@ -803,6 +852,7 @@
   class:diff-file--viewed={viewed}
   class:diff-file--selecting={liveSelection != null}
   data-file-path={file.path}
+  data-body-mounted={showBody ? "true" : "false"}
   bind:this={fileEl}
 >
   <div class="file-header">
@@ -854,19 +904,27 @@
       <span>Viewed</span>
     </label>
   </div>
-  {#if !collapsed && hunkState !== "loaded"}
-    <div class="file-content">
+  {#if collapsed}
+    <!-- header only -->
+  {:else if !showBody}
+    <div class="diff-file__placeholder" style:height="{placeholderHeight()}px">
       {#if hunkState === "error"}
         <div class="hunk-status hunk-status--error">
           Failed to load diff.
           <button class="hunk-status__retry" onclick={() => diffStore.requestHunks(file.path)}>Retry</button>
         </div>
-      {:else}
-        <div class="hunk-status">Loading diff…</div>
+      {:else if hunkState !== "loaded"}
+        <div class="hunk-status" role="status">
+          <svg class="diff-file__spinner" width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <circle cx="10" cy="10" r="8" stroke="currentColor" stroke-opacity="0.2" stroke-width="2" />
+            <path d="M18 10a8 8 0 0 0-8-8" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+          </svg>
+          Loading diff…
+        </div>
       {/if}
     </div>
-  {:else if !collapsed && isMarkdown && viewMode === "rendered"}
-    <div class="file-content">
+  {:else if isMarkdown && viewMode === "rendered"}
+    <div class="file-content" bind:this={bodyEl}>
       <RenderedMarkdownView
         {owner}
         {name}
@@ -879,8 +937,8 @@
         }))}
       />
     </div>
-  {:else if !collapsed}
-    <div class="file-content">
+  {:else}
+    <div class="file-content" bind:this={bodyEl}>
       {#if outdatedReviewCount > 0}
         <div class="outdated-banner" title="These comments were made against an older version of this file; their line numbers don't resolve in the current diff.">
           {outdatedReviewCount} outdated review comment{outdatedReviewCount === 1 ? "" : "s"} on this file — view on GitHub to see them
@@ -906,6 +964,7 @@
               gapNewStart={1}
               revealNewLine={revealForThisFile}
               onrevealed={onRegionRevealed}
+              onexpanded={pinExpandedRegion}
             />
           {/if}
           {#each renderedFile.hunks as hunk, hunkIdx}
@@ -926,6 +985,7 @@
                   gapNewStart={prev.new_start + prev.new_count}
                   revealNewLine={revealForThisFile}
                   onrevealed={onRegionRevealed}
+                  onexpanded={pinExpandedRegion}
                 />
               {/if}
             {/if}
@@ -1255,6 +1315,7 @@
               gapNewStart={lastHunk.new_start + lastHunk.new_count}
               revealNewLine={revealForThisFile}
               onrevealed={onRegionRevealed}
+              onexpanded={pinExpandedRegion}
             />
           {/if}
         </div>
@@ -1480,6 +1541,23 @@
     padding: 12px 20px;
     color: var(--diff-line-num);
     font-size: 13px;
+  }
+
+  /* Stand-in for an unmounted body, sized to its last measured (or
+     estimated) height. Never a scroll anchor: it may be replaced by a
+     differently sized body at any time. */
+  .diff-file__placeholder {
+    overflow-anchor: none;
+  }
+
+  .diff-file__spinner {
+    vertical-align: -2px;
+    margin-right: 6px;
+    animation: diff-file-spin 0.8s linear infinite;
+  }
+
+  @keyframes diff-file-spin {
+    to { transform: rotate(360deg); }
   }
 
   .hunk-status--error {

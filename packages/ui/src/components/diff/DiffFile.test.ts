@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { tick } from "svelte";
 
 // Mock highlight utils to avoid loading Shiki in tests.
@@ -8,54 +8,8 @@ vi.mock("../../utils/highlight.js", () => ({
   langFromPath: () => "text",
 }));
 
-// jsdom does not ship IntersectionObserver; install a stub that reports the
-// observed element as visible immediately so the tokenization effect actually
-// runs under test. The original global (if any) is saved and restored after
-// the suite so it does not leak into sibling test files.
-type GlobalWithIO = { IntersectionObserver?: unknown };
-let originalIntersectionObserver: unknown;
-let originalIntersectionObserverExisted = false;
-
-beforeAll(() => {
-  originalIntersectionObserverExisted = "IntersectionObserver" in globalThis;
-  originalIntersectionObserver = (globalThis as GlobalWithIO).IntersectionObserver;
-  class IntersectionObserverStub {
-    private readonly callback: IntersectionObserverCallback;
-    root: Element | null = null;
-    rootMargin = "";
-    thresholds: readonly number[] = [];
-    constructor(callback: IntersectionObserverCallback) {
-      this.callback = callback;
-    }
-    observe(target: Element): void {
-      // Report the element as visible immediately so viewport-gated work
-      // (like tokenization in DiffFile) actually executes under test.
-      const entry = {
-        isIntersecting: true,
-        intersectionRatio: 1,
-        target,
-        boundingClientRect: {} as DOMRectReadOnly,
-        intersectionRect: {} as DOMRectReadOnly,
-        rootBounds: null,
-        time: 0,
-      } as IntersectionObserverEntry;
-      this.callback([entry], this as unknown as IntersectionObserver);
-    }
-    unobserve(): void {}
-    disconnect(): void {}
-    takeRecords(): IntersectionObserverEntry[] { return []; }
-  }
-  (globalThis as GlobalWithIO).IntersectionObserver = IntersectionObserverStub;
-});
-
-afterAll(() => {
-  if (originalIntersectionObserverExisted) {
-    (globalThis as GlobalWithIO).IntersectionObserver = originalIntersectionObserver;
-  } else {
-    delete (globalThis as GlobalWithIO).IntersectionObserver;
-  }
-});
-
+// Rendered without a viewport window, DiffFile behaves as if always near
+// the viewport (see DiffFile.window.test.ts for the windowed states).
 import DiffFile from "./DiffFile.svelte";
 import type { DiffFile as DiffFileType } from "../../api/types.js";
 import type { MiddlemanClient } from "../../types.js";
