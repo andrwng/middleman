@@ -489,3 +489,80 @@ describe("resolveAt", () => {
     expect(get.mock.calls.length).toBe(before);
   });
 });
+
+// getThreadsAtAnchor is backed by a Map rebuilt when the threads change.
+// `reference` is the linear filter it replaced; every lookup must return
+// exactly what that filter returned, in the same order.
+describe("anchor lookup map", () => {
+  const base = {
+    commit_sha: "abc", status: "open", writes_allowed: false, hidden: false,
+    created_at: "", updated_at: "", comments: [],
+  };
+  const threads = [
+    { ...base, id: 1, path: "a.go", side: "RIGHT", line: 5 },
+    { ...base, id: 2, path: "a.go", side: "LEFT", line: 5 },
+    { ...base, id: 3, path: "a.go", side: "RIGHT", line: 5 },
+    { ...base, id: 4, path: "b.go", side: "RIGHT", line: 5 },
+    // Edited anchors: moved within the file, renamed into another file,
+    // "current" echoing a different line, and list-only states.
+    { ...base, id: 5, path: "a.go", side: "RIGHT", line: 7, resolved: { state: "moved", path: "a.go", line: 9 } },
+    { ...base, id: 6, path: "a.go", side: "LEFT", line: 3, resolved: { state: "moved", path: "c.go", line: 4 } },
+    { ...base, id: 7, path: "b.go", side: "RIGHT", line: 2, resolved: { state: "current", path: "b.go", line: 2 } },
+    { ...base, id: 8, path: "b.go", side: "RIGHT", line: 6, resolved: { state: "removed" } },
+    { ...base, id: 9, path: "b.go", side: "LEFT", line: 6, resolved: { state: "unmappable" } },
+    { ...base, id: 10, path: "a.go", side: "RIGHT", line: 11, resolved: { state: "moved", line: 12 } },
+  ] as ReviewThread[];
+
+  function reference(
+    store: Awaited<ReturnType<typeof storeWith>>,
+    all: ReviewThread[], path: string, line: number, side: "LEFT" | "RIGHT",
+  ): ReviewThread[] {
+    return all.filter((t) => {
+      if (t.side !== side) return false;
+      if (!store.isPlaceable(t)) return false;
+      const at = store.placementFor(t);
+      return at.path === path && at.line === line;
+    });
+  }
+
+  function expectEquivalent(store: Awaited<ReturnType<typeof storeWith>>, all: ReviewThread[]): void {
+    for (const path of ["a.go", "b.go", "c.go", "d.go"]) {
+      for (let line = 0; line <= 13; line++) {
+        for (const side of ["LEFT", "RIGHT"] as const) {
+          expect(store.getThreadsAtAnchor(path, line, side).map((t) => t.id))
+            .toEqual(reference(store, all, path, line, side).map((t) => t.id));
+        }
+      }
+    }
+  }
+
+  it("matches the linear filter for every anchor across files, sides and edited anchors", async () => {
+    const store = await storeWith(threads);
+    expectEquivalent(store, threads);
+    expect(store.getThreadsAtAnchor("a.go", 5, "RIGHT").map((t) => t.id)).toEqual([1, 3]);
+  });
+
+  it("returns the same array for repeated lookups instead of filtering again", async () => {
+    const store = await storeWith(threads);
+    expect(store.getThreadsAtAnchor("a.go", 5, "RIGHT"))
+      .toBe(store.getThreadsAtAnchor("a.go", 5, "RIGHT"));
+    expect(store.getThreadsAtAnchor("z.go", 1, "LEFT"))
+      .toBe(store.getThreadsAtAnchor("y.go", 2, "RIGHT"));
+  });
+
+  it("rebuilds when the threads change", async () => {
+    const moved = { ...threads[0]!, resolved: { state: "moved", path: "a.go", line: 13 } } as ReviewThread;
+    const post = vi.fn(async () => ({ data: moved, error: undefined }));
+    const client = stubClient({
+      GET: vi.fn(async () => ({ data: { threads }, error: undefined })),
+      POST: post,
+    });
+    const store = createReviewThreadsStore({ client });
+    await store.load("local", "demo", 1);
+    expect(store.getThreadsAtAnchor("a.go", 5, "RIGHT").map((t) => t.id)).toEqual([1, 3]);
+    await store.hide(1);
+    expect(store.getThreadsAtAnchor("a.go", 5, "RIGHT").map((t) => t.id)).toEqual([3]);
+    expect(store.getThreadsAtAnchor("a.go", 13, "RIGHT").map((t) => t.id)).toEqual([1]);
+    expectEquivalent(store, store.getThreads());
+  });
+});

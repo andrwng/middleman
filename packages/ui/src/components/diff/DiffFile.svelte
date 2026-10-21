@@ -12,6 +12,8 @@
     type DiffWindow,
     type Zone,
   } from "./diffWindow.svelte.js";
+  import { subscribeSelection } from "./selectionHub.js";
+  import { createTokenCache } from "./tokenCache.svelte.js";
 
   const {
     diff: diffStore,
@@ -176,7 +178,8 @@
   }
 
   // liveSelection continuously tracks the reviewer's text selection
-  // inside this file. Updated on every selectionchange event so we
+  // inside this file. Updated on every selectionchange event that
+  // involves this file (see selectionHub.ts) so we
   // never depend on a snapshot taken at click/mousedown time — which
   // could be racing with the browser's own focus-driven selection
   // clearing. Stays non-null as long as a multi-line same-side
@@ -214,15 +217,23 @@
   // to. snapshotRangeFor copies liveSelection into it at click time.
   let rangeSnapshot = $state<{ startLine: number; endLine: number; side: "LEFT" | "RIGHT" } | null>(null);
 
+  // Subscribed to the shared selectionchange listener only while the
+  // body is mounted: without lines there is no selection to track. On
+  // unmount the derived selection state is cleared, which is what the
+  // selectionchange fired by the body's removal used to compute.
   $effect(() => {
-    if (typeof document === "undefined") return;
-    const handler = (): void => {
+    if (!showBody || !fileEl) return;
+    const unsubscribe = subscribeSelection(() => fileEl, () => {
       liveSelection = computeSelectionRange();
       liveSymbolSelectionInfo = computeSymbolSelection();
       selectionInFile = computeSelectionInFile();
+    });
+    return () => {
+      unsubscribe();
+      liveSelection = null;
+      liveSymbolSelectionInfo = null;
+      selectionInFile = false;
     };
-    document.addEventListener("selectionchange", handler);
-    return () => document.removeEventListener("selectionchange", handler);
   });
 
   // Any non-empty selection touching this file, line-based or not. Pins
@@ -615,7 +626,7 @@
       // tokenization effect runs falls through to raw content
       // instead of showing cached tokens from the old file.
       if (file !== prev) {
-        tokens = new Map();
+        tokenCache.reset();
       }
     }
   });
@@ -707,7 +718,9 @@
   // properties, so theme switch is pure CSS (zero DOM updates, zero
   // re-renders). Tokenization happens once per line using Shiki's native
   // dual-theme API, which guarantees aligned token boundaries across themes.
-  let tokens = $state<Map<string, DualToken[]>>(new Map());
+  // Batches accumulate in place (see tokenCache.svelte.ts), so each batch
+  // costs O(batch) rather than a copy of the whole file's tokens.
+  const tokenCache = createTokenCache<DualToken[]>();
   let tokenVersion = 0;
 
   // Plain (non-reactive) tracking of the last tokenized source and whether
@@ -744,8 +757,7 @@
     // About to (re)start tokenization for this source — clear any stale or
     // partial entries so the first batch doesn't render a mix of old and
     // new keys while the async tokenization walks the hunks.
-    tokens = new Map();
-    const next = new Map<string, DualToken[]>();
+    tokenCache.reset();
 
     void (async () => {
       const items: Array<{ key: string; content: string }> = [];
@@ -766,11 +778,8 @@
           })),
         );
         if (version !== tokenVersion) return;
-        for (const r of results) {
-          next.set(r.key, r.spans);
-        }
         // Update reactively after each batch so lines get highlighted progressively.
-        tokens = new Map(next);
+        tokenCache.addBatch(results.map((r) => [r.key, r.spans] as const));
         // Yield to the browser between batches.
         if (i + BATCH_SIZE < items.length) {
           await new Promise((r) => requestAnimationFrame(r));
@@ -784,7 +793,7 @@
 
   function getTokens(hunkIdx: number, lineIdx: number): DualToken[] {
     const key = `${hunkIdx}:${lineIdx}`;
-    const cached = tokens.get(key);
+    const cached = tokenCache.get(key);
     if (cached) return cached;
     return [{ content: renderedFile.hunks[hunkIdx]!.lines[lineIdx]!.content }];
   }

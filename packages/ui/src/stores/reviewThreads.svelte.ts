@@ -32,6 +32,12 @@ export interface ReviewThreadsStoreOptions {
 // re-reads silently and is polled by the Provider while an agent turn
 // runs, so the agent's async replies and discussed/applied status land
 // live.
+const NO_THREADS: ReviewThread[] = [];
+
+function anchorKey(path: string, side: string, line: number): string {
+  return `${path}|${side}|${line}`;
+}
+
 export function createReviewThreadsStore(opts: ReviewThreadsStoreOptions) {
   const client = opts.client;
   let owner = $state("");
@@ -87,15 +93,28 @@ export function createReviewThreadsStore(opts: ReviewThreadsStoreOptions) {
     return state === undefined || state === "current" || state === "moved";
   }
 
+  // Placeable threads grouped by where they are drawn (placementFor, so
+  // moved and renamed anchors land under their current position),
+  // rebuilt when `threads` changes. Each rendered diff line's lookup is
+  // O(1) instead of a scan of every thread. Keyed by `path|side|line`:
+  // side and line never contain "|", so the key is unambiguous.
+  const threadsByAnchor = $derived.by(() => {
+    const map = new Map<string, ReviewThread[]>();
+    for (const t of threads) {
+      if (!isPlaceable(t)) continue;
+      const at = placementFor(t);
+      const key = anchorKey(at.path, t.side, at.line);
+      const list = map.get(key);
+      if (list) list.push(t);
+      else map.set(key, [t]);
+    }
+    return map;
+  });
+
   function getThreadsAtAnchor(
     path: string, line: number, side: "LEFT" | "RIGHT",
   ): ReviewThread[] {
-    return threads.filter((t) => {
-      if (t.side !== side) return false;
-      if (!isPlaceable(t)) return false;
-      const at = placementFor(t);
-      return at.path === path && at.line === line;
-    });
+    return threadsByAnchor.get(anchorKey(path, side, line)) ?? NO_THREADS;
   }
 
   function detail(err: unknown, fallback: string): string {

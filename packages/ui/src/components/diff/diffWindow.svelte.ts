@@ -13,12 +13,21 @@
 //                                                      unmounts only once
 //                                                      it leaves this
 //   visible observer   0                           -> auto-mark-viewed
+//   active observer    a line 60px below the top   -> active file
 //
 // The mount -> unmount gap (2 vs 6 viewports) is the hysteresis: once a
 // body mounts it stays mounted until it is more than ~6 viewports from
 // the visible area, so scrolling back and forth near a boundary never
 // thrashes mount/unmount. Margins are recomputed (and the observers
 // recreated) whenever the root's height changes.
+//
+// The active observer's root rect runs from far above the root down to
+// the active line, so a file intersects it exactly when its top is at or
+// above that line, and every crossing of the line in either direction --
+// however far one scroll moves -- changes that and is reported. (A rect
+// that is only the line itself would miss a file jumping from below the
+// line to entirely above it in one frame.) DiffView derives the active
+// file from these crossings instead of measuring every file per scroll.
 
 import { getContext, setContext, untrack } from "svelte";
 
@@ -28,6 +37,12 @@ export type Zone = "far" | "prefetch" | "mount";
 // observer. "unknown" until the first report (or without
 // IntersectionObserver).
 export type Visibility = "unknown" | "visible" | "above" | "below";
+
+export interface Crossing {
+  path: string;
+  // True when the file's top is now at or above the active line.
+  crossed: boolean;
+}
 
 export interface DiffWindow {
   observe(path: string, el: HTMLElement): () => void;
@@ -48,6 +63,11 @@ export interface DiffWindow {
   // Resolves true once the file's body is mounted (immediately if it
   // already is), or false if the window is destroyed first.
   whenBodyMounted(path: string): Promise<boolean>;
+  // Paths whose top is at or above the active line. Not reactive.
+  crossedPaths(): ReadonlySet<string>;
+  // Called with the changes from each observer batch that changed any
+  // file's crossing. Returns an unsubscribe.
+  onCrossingsChange(cb: (changes: readonly Crossing[]) => void): () => void;
   destroy(): void;
 }
 
@@ -55,11 +75,17 @@ export interface DiffWindowOptions {
   prefetchViewports?: number;
   mountViewports?: number;
   unmountViewports?: number;
+  // Distance of the active-file line below the root's top.
+  activeLinePx?: number;
 }
 
 export const DEFAULT_MOUNT_VIEWPORTS = 2;
 export const DEFAULT_PREFETCH_VIEWPORTS = 4;
 export const DEFAULT_UNMOUNT_VIEWPORTS = 6;
+export const DEFAULT_ACTIVE_LINE_PX = 60;
+// How far above the root the active observer's rect reaches. Larger than
+// any diff's scroll height, and well inside browsers' layout-unit range.
+export const ACTIVE_REACH_PX = 10_000_000;
 
 // Fallback viewport height when the root has not been laid out yet.
 const FALLBACK_VIEWPORT_PX = 800;
@@ -80,6 +106,7 @@ export function createDiffWindow(
   const mountVp = opts.mountViewports ?? DEFAULT_MOUNT_VIEWPORTS;
   const prefetchVp = opts.prefetchViewports ?? DEFAULT_PREFETCH_VIEWPORTS;
   const unmountVp = opts.unmountViewports ?? DEFAULT_UNMOUNT_VIEWPORTS;
+  const activeLinePx = opts.activeLinePx ?? DEFAULT_ACTIVE_LINE_PX;
 
   // Reactive per-path state. Proxied records give per-key fine-grained
   // reactivity: a DiffFile reading zones[path] re-renders only when its
@@ -94,6 +121,8 @@ export function createDiffWindow(
   const elByPath = new Map<string, HTMLElement>();
   const heights = new Map<string, number>();
   const waiters = new Map<string, Array<(ok: boolean) => void>>();
+  const crossed = new Set<string>();
+  const crossingListeners = new Set<(changes: readonly Crossing[]) => void>();
   const hasIO = typeof IntersectionObserver !== "undefined";
   let destroyed = false;
 
@@ -142,6 +171,31 @@ export function createDiffWindow(
     }
   };
 
+  function emitCrossings(changes: Crossing[]): void {
+    if (changes.length === 0) return;
+    for (const cb of [...crossingListeners]) cb(changes);
+  }
+
+  const activeHandler: IntersectionObserverCallback = (entries) => {
+    const changes: Crossing[] = [];
+    for (const e of entries) {
+      const path = pathByEl.get(e.target);
+      if (path === undefined) continue;
+      // Entirely above even the far-reaching rect still counts as crossed.
+      const above = e.rootBounds !== null && e.boundingClientRect.bottom <= e.rootBounds.top;
+      const now = e.isIntersecting || above;
+      if (now === crossed.has(path)) continue;
+      if (now) crossed.add(path);
+      else crossed.delete(path);
+      changes.push({ path, crossed: now });
+    }
+    emitCrossings(changes);
+  };
+
+  function activeMargin(): string {
+    return `${ACTIVE_REACH_PX}px 0px ${Math.round(activeLinePx - viewportPx)}px 0px`;
+  }
+
   function margin(viewports: number): string {
     return `${Math.round(viewports * viewportPx)}px 0px`;
   }
@@ -156,6 +210,7 @@ export function createDiffWindow(
       new IntersectionObserver(handler("inPrefetch"), { root, rootMargin: margin(prefetchVp) }),
       new IntersectionObserver(handler("inKeep"), { root, rootMargin: margin(unmountVp) }),
       new IntersectionObserver(visibleHandler, { root, rootMargin: margin(0) }),
+      new IntersectionObserver(activeHandler, { root, rootMargin: activeMargin() }),
     ];
     for (const el of elByPath.values()) {
       for (const o of observers) o.observe(el);
@@ -207,6 +262,7 @@ export function createDiffWindow(
         resolveWaiters(path, false);
         delete zones[path];
         delete visibilities[path];
+        if (crossed.delete(path)) emitCrossings([{ path, crossed: false }]);
       };
     },
 
@@ -264,8 +320,21 @@ export function createDiffWindow(
       });
     },
 
+    crossedPaths() {
+      return crossed;
+    },
+
+    onCrossingsChange(cb) {
+      crossingListeners.add(cb);
+      return () => {
+        crossingListeners.delete(cb);
+      };
+    },
+
     destroy() {
       destroyed = true;
+      crossingListeners.clear();
+      crossed.clear();
       for (const o of observers) o.disconnect();
       observers = [];
       resizeObserver?.disconnect();

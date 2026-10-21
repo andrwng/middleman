@@ -722,6 +722,39 @@ test.describe("diff view performance", () => {
     await expect(page.locator(".diff-file-row")).toHaveCount(50);
   });
 
+  test("scrolling tracks the active file in the sidebar", async ({ page }) => {
+    await mockDiffApi(page, largeDiff);
+    await navigateToDiff(page);
+    await waitForDiffLoaded(page);
+    await expect(page.locator(".diff-file .file-header")).toHaveCount(50, { timeout: 15_000 });
+
+    // Puts file `index`'s top `offset` px below the diff area's top.
+    async function scrollFileTo(index: number, offset: number): Promise<void> {
+      await page.evaluate(([i, off]) => {
+        const area = document.querySelector<HTMLElement>(".diff-area")!;
+        const el = document.querySelectorAll<HTMLElement>(".diff-file")[i!]!;
+        area.scrollTop += el.getBoundingClientRect().top - area.getBoundingClientRect().top - off!;
+      }, [index, offset]);
+    }
+    const active = page.locator(".diff-file-row--active");
+
+    // The active file is the last one whose top is within 60px of the top.
+    await scrollFileTo(30, 10);
+    await expect(active).toContainText("file_30.go");
+    await scrollFileTo(30, 100);
+    await expect(active).toContainText("file_29.go");
+
+    // One big jump back to the top and one to the bottom.
+    await page.evaluate(() => { document.querySelector<HTMLElement>(".diff-area")!.scrollTop = 0; });
+    await expect(active).toContainText("file_0.go");
+    await scrollFileTo(45, 0);
+    await expect(active).toContainText("file_45.go");
+
+    // j/k continue from the scroll-tracked file.
+    await page.keyboard.press("j");
+    await expect(active).toContainText("file_46.go");
+  });
+
   test("collapsing a file removes its content from the DOM", async ({ page }) => {
     await mockDiffApi(page, largeDiff);
     await navigateToDiff(page);

@@ -8,6 +8,12 @@ export interface AIStoreOptions {
   getBasePath?: () => string;
 }
 
+const NO_THREADS: AIThread[] = [];
+
+function anchorKey(path: string, side: string, line: number): string {
+  return `${path}|${side}|${line}`;
+}
+
 export function createAIStore(opts?: AIStoreOptions) {
   const getBasePath = opts?.getBasePath ?? (() => "/");
 
@@ -39,10 +45,23 @@ export function createAIStore(opts?: AIStoreOptions) {
     return threads.filter((t) => t.path === path);
   }
 
+  // Threads grouped by anchor, rebuilt when `threads` changes, so each
+  // rendered diff line's lookup is O(1) instead of a scan of every thread.
+  // Keyed by `path|side|line`: side and line never contain "|", so the
+  // key is unambiguous even for paths that do.
+  const threadsByAnchor = $derived.by(() => {
+    const map = new Map<string, AIThread[]>();
+    for (const t of threads) {
+      const key = anchorKey(t.path, t.anchor_side, t.anchor_line);
+      const list = map.get(key);
+      if (list) list.push(t);
+      else map.set(key, [t]);
+    }
+    return map;
+  });
+
   function getThreadsAtAnchor(path: string, line: number, side: "LEFT" | "RIGHT"): AIThread[] {
-    return threads.filter(
-      (t) => t.path === path && t.anchor_line === line && t.anchor_side === side,
-    );
+    return threadsByAnchor.get(anchorKey(path, side, line)) ?? NO_THREADS;
   }
 
   function getQuestionsForThread(threadID: number): AIQuestion[] {

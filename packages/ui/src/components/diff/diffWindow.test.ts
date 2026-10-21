@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createDiffWindow, estimateBodyHeight } from "./diffWindow.svelte.js";
+import { ACTIVE_REACH_PX, createDiffWindow, estimateBodyHeight } from "./diffWindow.svelte.js";
 
 // Controllable IntersectionObserver / ResizeObserver mocks. Each test
 // drives intersection changes by hand and identifies observers by the
@@ -75,6 +75,9 @@ const MOUNT = "2000px 0px";
 const PREFETCH = "4000px 0px";
 const UNMOUNT = "6000px 0px";
 const VISIBLE = "0px 0px";
+// Active-file line 60px below the root's top: the root rect reaches far
+// above it, so "intersecting" means "top at or above the line".
+const ACTIVE = `${ACTIVE_REACH_PX}px 0px -940px 0px`;
 
 beforeEach(() => {
   MockIO.instances = [];
@@ -266,6 +269,74 @@ describe("createDiffWindow", () => {
     const pending = w.whenBodyMounted("a.ts");
     w.destroy();
     await expect(pending).resolves.toBe(false);
+  });
+
+  describe("active-line crossings", () => {
+    it("observes every file against a line 60px below the root's top", () => {
+      const root = makeRoot();
+      const w = createDiffWindow(root);
+      const el = document.createElement("div");
+      w.observe("a.ts", el);
+      expect(live(ACTIVE).root).toBe(root);
+      expect(live(ACTIVE).targets.has(el)).toBe(true);
+    });
+
+    it("reports files crossing the line, batched per observer callback", () => {
+      const w = createDiffWindow(makeRoot());
+      const a = document.createElement("div");
+      const b = document.createElement("div");
+      w.observe("a.ts", a);
+      w.observe("b.ts", b);
+      const seen: Array<Array<[string, boolean]>> = [];
+      const off = w.onCrossingsChange((changes) => {
+        seen.push(changes.map((c) => [c.path, c.crossed]));
+      });
+
+      live(ACTIVE).fire(a, true, { top: 0, bottom: 500 });
+      expect([...w.crossedPaths()]).toEqual(["a.ts"]);
+      live(ACTIVE).fire(a, true, { top: -10, bottom: 490 }); // no change
+      live(ACTIVE).fire(b, true, { top: 40, bottom: 900 });
+      live(ACTIVE).fire(b, false, { top: 80, bottom: 940 });
+      expect(seen).toEqual([[["a.ts", true]], [["b.ts", true]], [["b.ts", false]]]);
+      expect([...w.crossedPaths()]).toEqual(["a.ts"]);
+
+      off();
+      live(ACTIVE).fire(a, false, { top: 100, bottom: 600 });
+      expect(seen).toHaveLength(3);
+      expect(w.crossedPaths().size).toBe(0);
+    });
+
+    it("counts a file entirely above the observer's reach as crossed", () => {
+      const w = createDiffWindow(makeRoot());
+      const a = document.createElement("div");
+      w.observe("a.ts", a);
+      live(ACTIVE).fire(a, false, { top: -900, bottom: -100 });
+      expect(w.crossedPaths().has("a.ts")).toBe(true);
+    });
+
+    it("drops a file's crossing when it stops being observed", () => {
+      const w = createDiffWindow(makeRoot());
+      const a = document.createElement("div");
+      const stop = w.observe("a.ts", a);
+      live(ACTIVE).fire(a, true, { top: 0, bottom: 10 });
+      const seen: Array<[string, boolean]> = [];
+      w.onCrossingsChange((changes) => {
+        for (const c of changes) seen.push([c.path, c.crossed]);
+      });
+      stop();
+      expect(seen).toEqual([["a.ts", false]]);
+      expect(w.crossedPaths().size).toBe(0);
+    });
+
+    it("moves the line with the root's height", () => {
+      const root = makeRoot(1000);
+      const w = createDiffWindow(root);
+      const el = document.createElement("div");
+      w.observe("a.ts", el);
+      Object.defineProperty(root, "clientHeight", { configurable: true, value: 500 });
+      MockRO.instances[0]!.fire();
+      expect(live(`${ACTIVE_REACH_PX}px 0px -440px 0px`).targets.has(el)).toBe(true);
+    });
   });
 });
 

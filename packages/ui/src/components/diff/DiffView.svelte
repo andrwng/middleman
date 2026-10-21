@@ -24,6 +24,7 @@
     type DiffWindow,
   } from "./diffWindow.svelte.js";
   import { createFileReadiness } from "./fileReadiness.js";
+  import { SortedIndexSet } from "./activeFile.js";
   import { escapeForSelector } from "./scrollToDiffLine.js";
 
   interface Props {
@@ -255,26 +256,60 @@
     }
   });
 
-  // Scroll-based active file tracking.
-  // Skipped for one frame after programmatic scroll to avoid re-setting activeFile.
-  function onDiffScroll(): void {
-    if (!diffArea || !diff) return;
-    if (diffStore.isScrolling()) return;
-    const rect = diffArea.getBoundingClientRect();
-    const threshold = rect.top + 60;
+  // Scroll-based active file tracking: the active file is the last file,
+  // in list order, whose top is at or above a line 60px below the diff
+  // area's top. The viewport window reports files crossing that line
+  // (see diffWindow.svelte.ts); `crossedIndices` mirrors them as list
+  // indices, so a scroll event costs O(1) and never measures the DOM.
+  const crossedIndices = new SortedIndexSet();
+  let indexByPath = new Map<string, number>();
+  // A user scroll whose crossings have not been applied yet. Crossings
+  // arrive in an observer callback after the scroll event of the same
+  // frame, so a scroll applies what is known and leaves this set for that
+  // callback to finish. Crossings from layout changes alone (no scroll)
+  // leave the active file alone, as they always have.
+  let scrollPending = false;
 
-    let current: string | null = null;
-    for (const file of diff.files) {
-      const el = diffArea.querySelector(`[data-file-path="${CSS.escape(file.path)}"]`);
-      if (!el) continue;
-      const elRect = el.getBoundingClientRect();
-      if (elRect.top <= threshold) {
-        current = file.path;
+  $effect(() => {
+    const w = diffWindow;
+    const files = diff?.files;
+    if (!w || !files) return;
+    indexByPath = new Map(files.map((f, i) => [f.path, i]));
+    crossedIndices.clear();
+    for (const path of w.crossedPaths()) {
+      const i = indexByPath.get(path);
+      if (i !== undefined) crossedIndices.add(i);
+    }
+    return w.onCrossingsChange((changes) => {
+      for (const { path, crossed } of changes) {
+        const i = indexByPath.get(path);
+        if (i === undefined) continue;
+        if (crossed) crossedIndices.add(i);
+        else crossedIndices.delete(i);
       }
+      if (scrollPending) {
+        scrollPending = false;
+        applyActiveFile();
+      }
+    });
+  });
+
+  function applyActiveFile(): void {
+    const i = crossedIndices.last();
+    const path = i === undefined ? undefined : diff?.files[i]?.path;
+    if (path !== undefined) diffStore.setActiveFile(path);
+  }
+
+  // Skipped for one frame after programmatic scroll to avoid re-setting
+  // activeFile; that scroll's crossings are skipped with it.
+  function onDiffScroll(): void {
+    if (!diff) return;
+    if (diffStore.isScrolling()) {
+      scrollPending = false;
+      return;
     }
-    if (current !== null) {
-      diffStore.setActiveFile(current);
-    }
+    scrollPending = true;
+    applyActiveFile();
   }
 
   // j/k keyboard navigation between files.
