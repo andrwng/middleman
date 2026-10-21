@@ -23,6 +23,38 @@ export interface DiffJumpDeps {
   // later fire against a different file that happens to reuse the
   // same line number.
   clearRevealTarget: () => void;
+  // Expands the file, loads its hunks, scrolls its header into view and
+  // pins it as the jump target, resolving true once its body is mounted
+  // (false on a hunk error, a timeout, or a file not in the diff). See
+  // fileReadiness.ts; the store's ensureFileReady routes to DiffView's.
+  ensureFileReady: (path: string) => Promise<boolean>;
+}
+
+// The diff store surface diffJumpDeps needs. Structural so component
+// test stubs satisfy it.
+export interface DiffJumpStore {
+  getCurrentPR: () => { owner: string; name: string; number: number } | null;
+  isFileCollapsed: (owner: string, name: string, number: number, path: string) => boolean;
+  toggleFileCollapsed: (owner: string, name: string, number: number, path: string) => void;
+  requestRevealLine: (path: string, line: number) => void;
+  consumeRevealTarget: () => void;
+  ensureFileReady: (path: string) => Promise<boolean>;
+}
+
+// diffJumpDeps builds the jump deps from the diff store for its current
+// PR. Without a PR there is nothing to collapse against.
+export function diffJumpDeps(store: DiffJumpStore): DiffJumpDeps {
+  const pr = store.getCurrentPR();
+  return {
+    isFileCollapsed: (path) =>
+      pr ? store.isFileCollapsed(pr.owner, pr.name, pr.number, path) : false,
+    toggleFileCollapsed: (path) => {
+      if (pr) store.toggleFileCollapsed(pr.owner, pr.name, pr.number, path);
+    },
+    requestRevealLine: (path, line) => store.requestRevealLine(path, line),
+    clearRevealTarget: () => store.consumeRevealTarget(),
+    ensureFileReady: (path) => store.ensureFileReady(path),
+  };
 }
 
 // "line" landed on the line; "pending" asked a collapsed region to
@@ -51,7 +83,7 @@ let highlightedEl: HTMLElement | null = null;
 // opposed to a literal `"` or `\`) don't need escaping to sit safely
 // inside a quoted attribute-selector value, so the unescaped fallback
 // is correct, not just a test-only workaround.
-function escapeForSelector(value: string): string {
+export function escapeForSelector(value: string): string {
   return typeof CSS !== "undefined" && CSS.escape ? CSS.escape(value) : value;
 }
 
@@ -105,15 +137,19 @@ function scrollToFileHeader(path: string): boolean {
   return true;
 }
 
-// scrollToDiffLine jumps to a line in the rendered diff, expanding a
-// collapsed file first. When the line is not rendered it sits in an
-// unexpanded context gap: request a reveal and move to the file header
-// in the meantime, so the view goes somewhere immediately and the
-// precise landing follows once the region mounts its lines.
+// scrollToDiffLine jumps to a line in the rendered diff. It first makes
+// the file ready (expanded, hunks loaded, body mounted); a file that
+// cannot be made ready is "missing". When the line is still not rendered
+// it sits in an unexpanded context gap: request a reveal and move to the
+// file header in the meantime, so the view goes somewhere immediately and
+// the precise landing follows once the region mounts its lines.
 export async function scrollToDiffLine(
   target: DiffJumpTarget,
   deps: DiffJumpDeps,
 ): Promise<DiffJumpOutcome> {
+  if (!(await deps.ensureFileReady(target.path))) return "missing";
+  // Fallback for a store without a DiffView window (see
+  // ensureFileReady), which leaves expanding to this step.
   if (deps.isFileCollapsed(target.path)) {
     deps.toggleFileCollapsed(target.path);
     await tick();

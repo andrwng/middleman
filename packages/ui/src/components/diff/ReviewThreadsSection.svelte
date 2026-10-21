@@ -27,6 +27,8 @@
   let expanded = $state(false);
   let userCollapsed = $state(false);
   let activeId = $state<number | null>(null);
+  // Bumped per row click; see selectThread.
+  let selectSeq = 0;
   // The thread whose conversation is expanded in place because the diff
   // could not host it, and why. Null when nothing is expanded.
   let fallbackId = $state<number | null>(null);
@@ -75,6 +77,7 @@
       },
       requestRevealLine: (path, line) => diff.requestRevealLine(path, line),
       clearRevealTarget: () => diff.consumeRevealTarget(),
+      ensureFileReady: (path) => diff.ensureFileReady(path),
     };
   }
 
@@ -158,7 +161,11 @@
     }
     activeId = t.id;
     fallbackId = null;
+    const seq = ++selectSeq;
     if (await placeInDiff(t)) return;
+    // A later click took over while this jump waited for its file to
+    // load and mount; its own outcome decides what shows.
+    if (seq !== selectSeq) return;
     // The floor: the conversation is readable here, whatever the diff says.
     // Report on the freshest copy -- placeInDiff may have re-resolved.
     fallbackReason = placementReason(latest(t));

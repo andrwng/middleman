@@ -31,6 +31,9 @@ function renderSection(comments: PublishedReviewComment[], anchors: ReviewCommen
     getCurrentPR: () => ({ owner: "acme", name: "widget", number: 1 }),
     isFileCollapsed: () => false,
     toggleFileCollapsed: vi.fn(),
+    requestRevealLine: vi.fn(),
+    consumeRevealTarget: vi.fn(),
+    ensureFileReady: vi.fn(async (_path: string) => true),
     resetToHead: vi.fn(async () => {}),
     selectCommit: vi.fn(async () => {}),
   };
@@ -69,6 +72,8 @@ describe("ReviewCommentsSection", () => {
 
     expect(diff.selectCommit).not.toHaveBeenCalled();
     expect(diff.resetToHead).not.toHaveBeenCalled();
+    // The target file is made ready (expanded, loaded, mounted) first.
+    expect(diff.ensureFileReady).toHaveBeenCalledWith("a.go");
   });
 
   it("badges a removed comment and jumps to the commit it was made on", async () => {

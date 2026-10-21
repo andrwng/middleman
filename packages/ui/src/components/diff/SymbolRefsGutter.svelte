@@ -327,10 +327,17 @@
       toggleFileCollapsed: (path) => diffStore.toggleFileCollapsed(owner, name, number, path),
       requestRevealLine: (path, line) => diffStore.requestRevealLine(path, line),
       clearRevealTarget: () => diffStore.consumeRevealTarget(),
+      ensureFileReady: (path) => diffStore.ensureFileReady(path),
     };
   }
 
+  // Bumped per jump. A jump can wait for its file to load and mount, and
+  // a newer one cancels it; the cancelled jump's "missing" must not
+  // overwrite the newer jump's state.
+  let jumpSeq = 0;
+
   async function jumpTo(hit: SymbolHit): Promise<void> {
+    const seq = ++jumpSeq;
     missingJump = null;
     backNote = null;
     // Record where we are leaving from, so Back can return here. The
@@ -363,6 +370,7 @@
       from.line === hit.line &&
       (from.side ?? "RIGHT") === "RIGHT";
     const outcome = await scrollToDiffLine({ path: hit.path, line: hit.line }, jumpDeps());
+    if (seq !== jumpSeq) return;
     if (outcome === "missing") {
       missingJump = { path: hit.path, line: hit.line };
       return;
@@ -384,7 +392,9 @@
     backNote = null;
     const target = symbolRefsStore.popPosition();
     if (target === null) return;
+    const seq = ++jumpSeq;
     const outcome = await scrollToDiffLine(target, jumpDeps());
+    if (seq !== jumpSeq) return;
     // "pending" normally means "a collapsed region was asked to reveal the
     // line, and the landing follows once it mounts" -- but that reveal is
     // side-blind (requestRevealLine takes only a path and a line) and

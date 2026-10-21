@@ -648,6 +648,27 @@ export function createDiffStore(opts: DiffStoreOptions) {
     scrolling = true;
   }
 
+  // Jump readiness (see components/diff/fileReadiness.ts). DiffView
+  // registers its helper here so jumpers outside it (the sidebar
+  // sections) reach the same viewport window through the store they
+  // already hold. Without a registered helper (no DiffView mounted)
+  // a jump proceeds exactly as before: scrollToDiffLine expands the
+  // file itself and looks the line up in whatever is rendered.
+  let fileReadiness: ((path: string) => Promise<boolean>) | null = null;
+
+  // Returns an unregister that only clears its own registration, so a
+  // DiffView torn down after its replacement mounted cannot unhook it.
+  function registerFileReadiness(fn: (path: string) => Promise<boolean>): () => void {
+    fileReadiness = fn;
+    return () => {
+      if (fileReadiness === fn) fileReadiness = null;
+    };
+  }
+
+  function ensureFileReady(path: string): Promise<boolean> {
+    return fileReadiness ? fileReadiness(path) : Promise.resolve(true);
+  }
+
   function getScrollTarget(): string | null {
     return scrollTarget;
   }
@@ -1711,6 +1732,8 @@ export function createDiffStore(opts: DiffStoreOptions) {
     requestScrollToFile,
     getScrollTarget,
     consumeScrollTarget,
+    registerFileReadiness,
+    ensureFileReady,
     requestRevealLine,
     getRevealTarget,
     consumeRevealTarget,

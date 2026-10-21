@@ -23,6 +23,8 @@
     setDiffWindowContext,
     type DiffWindow,
   } from "./diffWindow.svelte.js";
+  import { createFileReadiness } from "./fileReadiness.js";
+  import { escapeForSelector } from "./scrollToDiffLine.js";
 
   interface Props {
     owner: string;
@@ -50,6 +52,54 @@
       if (untrack(() => diffWindow) === w) diffWindow = undefined;
     };
   });
+
+  // Jump readiness: every line jump (sidebar sections, symbol refs,
+  // drafts) awaits this before looking the line up, so a far, collapsed
+  // or not-yet-loaded file is expanded, loaded and mounted first (see
+  // fileReadiness.ts). Registered on the store because several jumpers
+  // live in the sidebar, outside this component's context.
+  const fileReadiness = createFileReadiness({
+    getWindow: () => diffWindow,
+    hasFile: (path) => {
+      const d = diffStore.getDiff();
+      return d ? d.files.some((f) => f.path === path) : undefined;
+    },
+    isFileCollapsed: (path) => diffStore.isFileCollapsed(owner, name, number, path),
+    expandForJump: (path) => diffStore.expandForJump(path),
+    requestHunks: (path) => diffStore.requestHunks(path),
+    getFileHunkState: (path) => diffStore.getFileHunkState(path),
+    findFileEl: (path) =>
+      diffArea?.querySelector<HTMLElement>(
+        `.diff-file[data-file-path="${escapeForSelector(path)}"]`,
+      ) ?? null,
+  });
+  onMount(() => {
+    const unregister = diffStore.registerFileReadiness(fileReadiness.ensureFileReady);
+    return () => {
+      unregister();
+      fileReadiness.releaseJumpPin();
+    };
+  });
+
+  // The jump-target pin lasts until the reader scrolls by hand. Only
+  // input events count: the jump's own programmatic scrolls also fire
+  // `scroll`, so that event cannot tell the two apart.
+  function onUserScrollIntent(): void {
+    fileReadiness.releaseJumpPin();
+  }
+  const SCROLL_KEYS = new Set(["PageUp", "PageDown", "Home", "End", "ArrowUp", "ArrowDown", " "]);
+  const SCROLL_INTENT_EVENTS = ["wheel", "touchmove", "pointerdown"] as const;
+  $effect(() => {
+    const el = diffArea;
+    if (!el) return;
+    for (const ev of SCROLL_INTENT_EVENTS) {
+      el.addEventListener(ev, onUserScrollIntent, { passive: true });
+    }
+    return () => {
+      for (const ev of SCROLL_INTENT_EVENTS) el.removeEventListener(ev, onUserScrollIntent);
+    };
+  });
+
   let scrollRaf = 0;
   let reviewPanelOpen = $state(false);
   let codeBrowserOpen = $state(false);
@@ -176,9 +226,15 @@
   // needs its own signal, distinct from a genuine scope change.
   const currentSha = $derived(diffStore.getCurrentCommitSha());
 
+  // Sidebar file clicks and j/k: expand a collapsed target and put its
+  // header at the top. The body mounts on its own once the header is
+  // in view, so this does not wait for it. A new jump drops the previous
+  // jump-target pin.
   function scrollToFile(path: string): void {
     if (!diffArea) return;
-    const el = diffArea.querySelector(`[data-file-path="${CSS.escape(path)}"]`);
+    fileReadiness.releaseJumpPin();
+    diffStore.expandForJump(path);
+    const el = diffArea.querySelector(`[data-file-path="${escapeForSelector(path)}"]`);
     if (el) {
       el.scrollIntoView({ behavior: "instant", block: "start" });
     }
@@ -226,6 +282,7 @@
     const tag = (e.target as HTMLElement).tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
     if ((e.target as HTMLElement).isContentEditable) return;
+    if (SCROLL_KEYS.has(e.key)) onUserScrollIntent();
     // Unmodified single-letter shortcuts only — don't swallow
     // Cmd/Ctrl-F, Cmd-J (downloads), etc.
     if (e.metaKey || e.ctrlKey || e.altKey) return;

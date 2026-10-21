@@ -61,6 +61,7 @@ vi.mock("../../context.js", () => ({
       toggleFileCollapsed,
       requestRevealLine: vi.fn(),
       consumeRevealTarget: vi.fn(),
+      ensureFileReady: async () => true,
     },
   }),
 }));
@@ -272,6 +273,14 @@ describe("ReviewThreadsSection — click-to-navigate", () => {
   });
 });
 
+// A row click awaits the jump (scrollToDiffLine, which awaits the
+// store's ensureFileReady) before deciding to expand in place, so let
+// that chain settle before asserting.
+async function clickAndSettle(el: Element): Promise<void> {
+  await fireEvent.click(el);
+  await new Promise((r) => setTimeout(r, 0));
+}
+
 describe("ReviewThreadsSection reachability", () => {
   it("expands the thread in place when the diff cannot host it", async () => {
     // No .diff-file elements exist in this test DOM, so the jump cannot
@@ -280,7 +289,7 @@ describe("ReviewThreadsSection reachability", () => {
     const { getByTitle, container } = render(ReviewThreadsSection);
 
     expect(container.querySelector(".thread-item__fallback")).toBeNull();
-    await fireEvent.click(getByTitle("gone.go"));
+    await clickAndSettle(getByTitle("gone.go"));
 
     const card = container.querySelector(".thread-item__fallback");
     expect(card).not.toBeNull();
@@ -291,7 +300,7 @@ describe("ReviewThreadsSection reachability", () => {
   it("says why the thread could not be placed", async () => {
     threadsRef.value = [thread({ path: "gone.go", line: 65 })];
     const { getByTitle, container } = render(ReviewThreadsSection);
-    await fireEvent.click(getByTitle("gone.go"));
+    await clickAndSettle(getByTitle("gone.go"));
     expect(container.querySelector(".thread-item__reason")!.textContent)
       .toContain("unchanged here");
   });
@@ -304,7 +313,7 @@ describe("ReviewThreadsSection reachability", () => {
     // is what actually reaches the "rebased away" branch.
     commitsRef.value = [{ sha: "headsha", subject: "x", parents: [], author: "x", date: "" }];
     const { getByTitle, container } = render(ReviewThreadsSection);
-    await fireEvent.click(getByTitle("rebased.go"));
+    await clickAndSettle(getByTitle("rebased.go"));
     expect(container.querySelector(".thread-item__reason")!.textContent)
       .toContain("commit rebased away");
   });
@@ -327,7 +336,7 @@ describe("ReviewThreadsSection reachability", () => {
       });
       threadsRef.value = [t];
       const { getByTitle, container } = render(ReviewThreadsSection);
-      await fireEvent.click(getByTitle("a.go"));
+      await clickAndSettle(getByTitle("a.go"));
       expect(container.querySelector(".thread-item__reason")!.textContent)
         .toContain("file unchanged here");
     } finally {
@@ -338,9 +347,9 @@ describe("ReviewThreadsSection reachability", () => {
   it("collapses the in-place card when the row is clicked again", async () => {
     threadsRef.value = [thread({ path: "gone.go", line: 65 })];
     const { getByTitle, container } = render(ReviewThreadsSection);
-    await fireEvent.click(getByTitle("gone.go"));
+    await clickAndSettle(getByTitle("gone.go"));
     expect(container.querySelector(".thread-item__fallback")).not.toBeNull();
-    await fireEvent.click(getByTitle("gone.go"));
+    await clickAndSettle(getByTitle("gone.go"));
     expect(container.querySelector(".thread-item__fallback")).toBeNull();
   });
 
@@ -362,7 +371,7 @@ describe("ReviewThreadsSection reachability", () => {
     try {
       threadsRef.value = [thread({ path: "a.go", line: 12, side: "RIGHT" })];
       const { getByTitle, container } = render(ReviewThreadsSection);
-      await fireEvent.click(getByTitle("a.go"));
+      await clickAndSettle(getByTitle("a.go"));
       expect(container.querySelector(".thread-item__fallback")).toBeNull();
     } finally {
       document.body.innerHTML = "";
@@ -389,7 +398,7 @@ describe("ReviewThreadsSection reachability", () => {
     try {
       threadsRef.value = [thread({ path: "a.go", line: 200, side: "RIGHT" })];
       const { getByTitle, container } = render(ReviewThreadsSection);
-      await fireEvent.click(getByTitle("a.go"));
+      await clickAndSettle(getByTitle("a.go"));
 
       const card = container.querySelector(".thread-item__fallback");
       expect(card).not.toBeNull();
@@ -420,7 +429,7 @@ describe("ReviewThreadsSection reachability", () => {
         thread({ path: "a.go", line: 12, side: "RIGHT", resolved: { state: "removed" } }),
       ];
       const { getByTitle, container } = render(ReviewThreadsSection);
-      await fireEvent.click(getByTitle("a.go"));
+      await clickAndSettle(getByTitle("a.go"));
       expect(container.querySelector(".thread-item__fallback")).not.toBeNull();
       expect(container.querySelector(".thread-item__reason")!.textContent)
         .toContain("line removed");
@@ -436,7 +445,7 @@ describe("ReviewThreadsSection reachability", () => {
     threadsRef.value = [thread({ path: "gone.go", line: 65 })];
     scopeRef.value = { kind: "commit", sha: "midsha" };
     const { getByTitle } = render(ReviewThreadsSection);
-    await fireEvent.click(getByTitle("gone.go"));
+    await clickAndSettle(getByTitle("gone.go"));
     expect(resetToHead).toHaveBeenCalledOnce();
     expect(resolveAt).toHaveBeenCalledWith("headsha");
   });
@@ -451,12 +460,12 @@ describe("ReviewThreadsSection reachability", () => {
     ];
     const { container, getByTitle } = render(ReviewThreadsSection);
     for (const path of ["gone.go", "moved.go", "rebased.go"]) {
-      await fireEvent.click(getByTitle(path));
+      await clickAndSettle(getByTitle(path));
       expect(
         container.querySelector(".thread-item__fallback"),
         `${path} must be readable`,
       ).not.toBeNull();
-      await fireEvent.click(getByTitle(path)); // collapse before the next
+      await clickAndSettle(getByTitle(path)); // collapse before the next
     }
   });
 });
@@ -497,7 +506,7 @@ describe("ReviewThreadsSection — resolved placement labels", () => {
     const t = thread({ path: "a.go", line: 5, resolved: { state: "removed" } });
     threadsRef.value = [t];
     const { getByTitle, container } = render(ReviewThreadsSection);
-    await fireEvent.click(getByTitle("a.go"));
+    await clickAndSettle(getByTitle("a.go"));
     expect(container.querySelector(".thread-item__reason")!.textContent)
       .toContain("line removed");
   });
@@ -506,7 +515,7 @@ describe("ReviewThreadsSection — resolved placement labels", () => {
     const t = thread({ path: "a.go", line: 5, resolved: { state: "unmappable" } });
     threadsRef.value = [t];
     const { getByTitle, container } = render(ReviewThreadsSection);
-    await fireEvent.click(getByTitle("a.go"));
+    await clickAndSettle(getByTitle("a.go"));
     expect(container.querySelector(".thread-item__reason")!.textContent)
       .toContain("position unknown");
   });

@@ -1,16 +1,14 @@
 import { tick } from "svelte";
 import type { DiffScope, DraftComment } from "../../stores/diff.svelte.js";
+import { diffJumpDeps, scrollToDiffLine, type DiffJumpStore } from "./scrollToDiffLine.js";
 
 // The bits of diff state the jump needs. Structural so both the real
 // store and component-test stubs satisfy it.
-export interface DraftJumpStore {
+export interface DraftJumpStore extends DiffJumpStore {
   getScope: () => DiffScope;
   getCommits: () => { sha: string }[] | null;
   resetToHead: () => Promise<void>;
   selectCommit: (sha: string) => Promise<void>;
-  getCurrentPR: () => { owner: string; name: string; number: number } | null;
-  isFileCollapsed: (owner: string, name: string, number: number, path: string) => boolean;
-  toggleFileCollapsed: (owner: string, name: string, number: number, path: string) => void;
 }
 
 // jumpToDraft brings a draft's anchor into view: switch scope to the
@@ -40,25 +38,8 @@ export async function jumpToDraft(c: DraftComment, store: DraftJumpStore): Promi
       await tick();
     }
   }
-  const pr = store.getCurrentPR();
-  if (pr && store.isFileCollapsed(pr.owner, pr.name, pr.number, c.path)) {
-    store.toggleFileCollapsed(pr.owner, pr.name, pr.number, c.path);
-    await tick();
-  }
-  const path = CSS.escape(c.path);
-  const el = document.querySelector<HTMLElement>(
-    `.diff-file[data-file-path="${path}"] ` +
-      `.line-wrap[data-anchor-line="${c.line}"]` +
-      `[data-anchor-side="${c.side}"]`,
+  await scrollToDiffLine(
+    { path: c.path, line: c.line, side: c.side },
+    diffJumpDeps(store),
   );
-  if (el) {
-    el.scrollIntoView({ block: "center", behavior: "smooth" });
-    el.classList.add("line-wrap--flash");
-    window.setTimeout(() => el.classList.remove("line-wrap--flash"), 1500);
-    return;
-  }
-  const fileEl = document.querySelector<HTMLElement>(`.diff-file[data-file-path="${path}"]`);
-  if (fileEl) {
-    fileEl.scrollIntoView({ block: "start", behavior: "smooth" });
-  }
 }

@@ -4,6 +4,7 @@
   import type { AIThread, AIQuestion } from "../../stores/ai.svelte.js";
   import SectionResizeHandle from "./SectionResizeHandle.svelte";
   import { getSectionHeight } from "./sectionHeights.svelte.js";
+  import { diffJumpDeps, scrollToDiffLine } from "./scrollToDiffLine.js";
 
   const { ai: aiStore, diff: diffStore } = getStores();
   let bodyEl: HTMLDivElement | undefined = $state();
@@ -92,44 +93,16 @@
       }
     }
 
-    // If the file is collapsed, the .line-wrap nodes aren't in the
-    // DOM and the selector would silently find nothing. Expand it
-    // first, then await a render tick so the lines mount before we
-    // try to locate the anchor.
-    const pr = diffStore.getCurrentPR();
-    if (
-      pr &&
-      diffStore.isFileCollapsed(pr.owner, pr.name, pr.number, thread.path)
-    ) {
-      diffStore.toggleFileCollapsed(pr.owner, pr.name, pr.number, thread.path);
-      await tick();
-    }
-
-    const selector =
-      `.diff-file[data-file-path="${CSS.escape(thread.path)}"] ` +
-      `.line-wrap[data-anchor-line="${thread.anchor_line}"]` +
-      `[data-anchor-side="${thread.anchor_side}"]`;
-    const el = document.querySelector<HTMLElement>(selector);
-    if (el) {
-      el.scrollIntoView({ block: "center", behavior: "smooth" });
-      // Brief highlight so the user's eye lands on the right line —
-      // when several threads sit close together a smooth scroll
-      // alone makes it ambiguous which one you jumped to.
-      el.classList.add("line-wrap--flash");
-      window.setTimeout(() => el.classList.remove("line-wrap--flash"), 1500);
-      return;
-    }
-
-    // Fall back to scrolling the file header into view — the
-    // anchored line might live inside an unexpanded context region
-    // (CollapsedRegion) or the diff scope might have changed since
-    // the thread was created (line numbers no longer resolve).
-    const fileEl = document.querySelector<HTMLElement>(
-      `.diff-file[data-file-path="${CSS.escape(thread.path)}"]`,
+    // Expands, loads and mounts the file first, then lands on the line
+    // (or, inside an unexpanded context region, reveals it).
+    await scrollToDiffLine(
+      {
+        path: thread.path,
+        line: thread.anchor_line,
+        side: thread.anchor_side === "LEFT" ? "LEFT" : "RIGHT",
+      },
+      diffJumpDeps(diffStore),
     );
-    if (fileEl) {
-      fileEl.scrollIntoView({ block: "start", behavior: "smooth" });
-    }
   }
 
   async function cancel(thread: AIThread, q: AIQuestion): Promise<void> {

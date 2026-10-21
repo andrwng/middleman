@@ -8,6 +8,8 @@ import {
   scrollToDiffLine,
   type DiffJumpDeps,
 } from "./scrollToDiffLine";
+import { createDiffWindow } from "./diffWindow.svelte.js";
+import { createFileReadiness, type FileHunkState } from "./fileReadiness.js";
 
 beforeEach(() => {
   // jsdom: scrollIntoView is not implemented (see CommentGutter.test.ts:22).
@@ -116,6 +118,7 @@ function makeDeps(overrides: Partial<DiffJumpDeps> = {}): DiffJumpDeps {
     toggleFileCollapsed: vi.fn(),
     requestRevealLine: vi.fn(),
     clearRevealTarget: vi.fn(),
+    ensureFileReady: vi.fn(async () => true),
     ...overrides,
   };
 }
@@ -218,6 +221,99 @@ describe("scrollToDiffLine", () => {
     expect(fileEl.scrollIntoView).toHaveBeenCalledWith({ block: "start", behavior: "smooth" });
     // The target this call just armed must survive — clearing it here
     // would immediately undo the requestRevealLine call above.
+    expect(deps.clearRevealTarget).not.toHaveBeenCalled();
+  });
+
+  it("makes the file ready before looking up the line (small diff: unchanged behaviour)", async () => {
+    const fileEl = makeDiffFile("a/b.go");
+    const wrap = appendLineWrap(fileEl, 10, "RIGHT");
+    const deps = makeDeps();
+
+    const outcome = await scrollToDiffLine({ path: "a/b.go", line: 10 }, deps);
+
+    expect(deps.ensureFileReady).toHaveBeenCalledWith("a/b.go");
+    expect(outcome).toBe("line");
+    // Only the line is scrolled to: no header scroll first. (The
+    // scrollIntoView stub is shared by every element, so check which
+    // element each call was made on.)
+    const scroll = vi.mocked(Element.prototype.scrollIntoView);
+    expect(scroll.mock.contexts).toEqual([wrap]);
+    expect(scroll).toHaveBeenCalledWith({ block: "center", behavior: "smooth" });
+    expect(fileEl.classList.contains("line-wrap--jump-highlight")).toBe(false);
+  });
+
+  it("lands on a line in a file that is collapsed, unloaded and unmounted", async () => {
+    const fileEl = makeDiffFile("big.go");
+    const win = createDiffWindow(document.createElement("div"));
+    const state: { collapsed: boolean; hunks: FileHunkState } = { collapsed: true, hunks: "idle" };
+    const calls: string[] = [];
+    let frame = 0;
+    const readiness = createFileReadiness({
+      getWindow: () => win,
+      hasFile: (p) => p === "big.go",
+      isFileCollapsed: () => state.collapsed,
+      expandForJump: () => {
+        calls.push("expand");
+        state.collapsed = false;
+      },
+      requestHunks: () => {
+        calls.push("requestHunks");
+        state.hunks = "loading";
+      },
+      getFileHunkState: () => state.hunks,
+      findFileEl: (p) => document.querySelector<HTMLElement>(`.diff-file[data-file-path="${p}"]`),
+      nextFrame: async () => {
+        frame++;
+        await Promise.resolve();
+        // The hunks arrive and DiffFile mounts the body a few frames later.
+        if (frame === 3) {
+          state.hunks = "loaded";
+          appendLineWrap(fileEl, 4000, "RIGHT");
+          win.setBodyMounted("big.go", true);
+        }
+      },
+    });
+    const deps = makeDeps({
+      isFileCollapsed: () => state.collapsed,
+      ensureFileReady: readiness.ensureFileReady,
+    });
+
+    const outcome = await scrollToDiffLine({ path: "big.go", line: 4000 }, deps);
+
+    expect(calls).toEqual(["expand", "requestHunks"]);
+    expect(outcome).toBe("line");
+    const line = findDiffLineEl({ path: "big.go", line: 4000 });
+    expect(line?.classList.contains("line-wrap--jump-highlight")).toBe(true);
+    expect(line?.scrollIntoView).toHaveBeenCalledWith({ block: "center", behavior: "smooth" });
+    expect(deps.requestRevealLine).not.toHaveBeenCalled();
+    expect(win.isPinned("big.go")).toBe(true);
+  });
+
+  it("reports missing when the file never becomes ready (hunk error)", async () => {
+    makeDiffFile("big.go");
+    const win = createDiffWindow(document.createElement("div"));
+    let hunks: FileHunkState = "idle";
+    const readiness = createFileReadiness({
+      getWindow: () => win,
+      hasFile: () => true,
+      isFileCollapsed: () => false,
+      expandForJump: () => {},
+      requestHunks: () => {
+        hunks = "loading";
+      },
+      getFileHunkState: () => hunks,
+      findFileEl: (p) => document.querySelector<HTMLElement>(`.diff-file[data-file-path="${p}"]`),
+      nextFrame: async () => {
+        await Promise.resolve();
+        hunks = "error";
+      },
+    });
+    const deps = makeDeps({ ensureFileReady: readiness.ensureFileReady });
+
+    const outcome = await scrollToDiffLine({ path: "big.go", line: 4000 }, deps);
+
+    expect(outcome).toBe("missing");
+    expect(deps.requestRevealLine).not.toHaveBeenCalled();
     expect(deps.clearRevealTarget).not.toHaveBeenCalled();
   });
 

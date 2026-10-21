@@ -671,3 +671,46 @@ describe("DiffView: re-anchoring published review comments", () => {
     expect(detailStore.resolveReviewCommentAnchors).not.toHaveBeenCalled();
   });
 });
+
+describe("DiffView: jumps wait for load and mount", () => {
+  it("routes the store's ensureFileReady through its window, and unhooks it on unmount", async () => {
+    installCommitsAndDiffFetch(() => "sha-head-1", [makeDiffFile()]);
+    const { diffStore } = renderDiffView();
+    await waitFor(() => expect(diffStore.getDiff()).not.toBeNull());
+
+    // Without DiffView the store's fallback answers true for anything;
+    // DiffView's helper knows the file is not in this diff.
+    expect(await diffStore.ensureFileReady("not-in-diff.go")).toBe(false);
+
+    cleanup();
+    expect(await diffStore.ensureFileReady("not-in-diff.go")).toBe(true);
+  });
+
+  it("a user scroll (wheel) cancels a jump still waiting for its file", async () => {
+    installCommitsAndDiffFetch(() => "sha-head-1", [makeDiffFile()]);
+    const { diffStore } = renderDiffView();
+    await waitFor(() => expect(diffStore.getDiff()).not.toBeNull());
+
+    // DiffFile is stubbed here, so a.go never renders and the jump waits.
+    const jump = diffStore.ensureFileReady("a.go");
+    await new Promise((r) => setTimeout(r, 20));
+    await fireEvent.wheel(document.querySelector(".diff-area")!);
+
+    expect(await jump).toBe(false);
+  });
+
+  it("expands a collapsed file when the sidebar asks to scroll to it", async () => {
+    installCommitsAndDiffFetch(() => "sha-head-1", [
+      makeDiffFile(),
+      makeDiffFile({ path: "gone.go", old_path: "gone.go", status: "deleted" }),
+    ]);
+    const { diffStore } = renderDiffView();
+    await waitFor(() => expect(diffStore.getDiff()).not.toBeNull());
+    expect(diffStore.isFileCollapsed("acme", "widget", 7, "gone.go")).toBe(true);
+
+    diffStore.requestScrollToFile("gone.go");
+
+    await waitFor(() => expect(diffStore.getScrollTarget()).toBeNull());
+    expect(diffStore.isFileCollapsed("acme", "widget", 7, "gone.go")).toBe(false);
+  });
+});

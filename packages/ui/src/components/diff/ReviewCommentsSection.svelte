@@ -4,6 +4,7 @@
   import type { PublishedReviewComment, ReviewCommentPlacement } from "../../stores/detail.svelte.js";
   import SectionResizeHandle from "./SectionResizeHandle.svelte";
   import { getSectionHeight } from "./sectionHeights.svelte.js";
+  import { diffJumpDeps, scrollToDiffLine } from "./scrollToDiffLine.js";
 
   // Lists published top-of-thread review comments on this PR with
   // click-to-jump. "Top of thread" means `in_reply_to === 0` —
@@ -104,28 +105,10 @@
     // only one without falls back to the commit it was made on, where
     // its recorded line is valid.
     if (here === null) await routeToCommentCommit(c);
-    const pr = diffStore.getCurrentPR();
-    if (pr && diffStore.isFileCollapsed(pr.owner, pr.name, pr.number, at.path)) {
-      diffStore.toggleFileCollapsed(pr.owner, pr.name, pr.number, at.path);
-      await tick();
-    }
-    const selector =
-      `.diff-file[data-file-path="${CSS.escape(at.path)}"] ` +
-      `.line-wrap[data-anchor-line="${at.line}"]` +
-      `[data-anchor-side="${c.side}"]`;
-    const el = document.querySelector<HTMLElement>(selector);
-    if (el) {
-      el.scrollIntoView({ block: "center", behavior: "smooth" });
-      el.classList.add("line-wrap--flash");
-      window.setTimeout(() => el.classList.remove("line-wrap--flash"), 1500);
-      return;
-    }
-    const fileEl = document.querySelector<HTMLElement>(
-      `.diff-file[data-file-path="${CSS.escape(at.path)}"]`,
+    await scrollToDiffLine(
+      { path: at.path, line: at.line, side: c.side },
+      diffJumpDeps(diffStore),
     );
-    if (fileEl) {
-      fileEl.scrollIntoView({ block: "start", behavior: "smooth" });
-    }
   }
 
   async function routeToCommentCommit(c: PublishedReviewComment): Promise<void> {

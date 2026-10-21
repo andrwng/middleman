@@ -129,6 +129,7 @@ function fakeDiffStore(files: string[], sha = "abc123") {
     toggleFileCollapsed: vi.fn(),
     requestRevealLine: vi.fn(),
     consumeRevealTarget: vi.fn(),
+    ensureFileReady: vi.fn(async (_path: string) => true),
     getDiff: vi.fn(() => ({ files: files.map((path) => ({ path })) })),
     getCurrentCommitSha: () => sha,
   };
@@ -340,6 +341,30 @@ describe("SymbolRefsGutter", () => {
 
     deps.clearRevealTarget();
     expect(diffStore.consumeRevealTarget).toHaveBeenCalledTimes(1);
+
+    await deps.ensureFileReady("other/path.go");
+    expect(diffStore.ensureFileReady).toHaveBeenCalledWith("other/path.go");
+  });
+
+  it("a jump cancelled by a newer one (still waiting for its file) leaves no missing note", async () => {
+    const hits = [
+      hit({ path: "far.go", line: 4000, text: "far ref" }),
+      hit({ path: "near.go", line: 2, text: "near ref" }),
+    ];
+    renderGutter({ hits, inPrTotal: 2 });
+    let resolveFirst: (o: DiffJumpOutcome) => void = () => {};
+    scrollToDiffLineMock.mockImplementationOnce(
+      () => new Promise<DiffJumpOutcome>((r) => { resolveFirst = r; }),
+    );
+
+    await fireEvent.click(screen.getByText("far ref"));
+    await fireEvent.click(screen.getByText("near ref"));
+    // The first jump's wait is cancelled by the second and reports missing.
+    resolveFirst("missing");
+    await new Promise((r) => setTimeout(r, 0));
+    await tick();
+
+    expect(screen.queryByText(/nothing to jump to/)).toBeNull();
   });
 
   it("opens the code browser panel at the hit's path when its browse action is clicked, without also jumping in the diff", async () => {

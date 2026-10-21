@@ -260,3 +260,25 @@ describe("extending a span with shift-click", () => {
     expect(store.getSpanAnchorSha()).toBeNull();
   });
 });
+
+describe("ensureFileReady registration", () => {
+  it("resolves true with nothing registered, routes to the registered helper, and only its own unregister clears it", async () => {
+    const store = createDiffStore({ client: stubClient() });
+    expect(await store.ensureFileReady("a.go")).toBe(true);
+
+    const first = vi.fn(async () => false);
+    const unregisterFirst = store.registerFileReadiness(first);
+    expect(await store.ensureFileReady("a.go")).toBe(false);
+    expect(first).toHaveBeenCalledWith("a.go");
+
+    // A replacement DiffView registers before the old one tears down.
+    const second = vi.fn(async () => false);
+    const unregisterSecond = store.registerFileReadiness(second);
+    unregisterFirst();
+    await store.ensureFileReady("b.go");
+    expect(second).toHaveBeenCalledWith("b.go");
+
+    unregisterSecond();
+    expect(await store.ensureFileReady("a.go")).toBe(true);
+  });
+});
