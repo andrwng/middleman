@@ -301,18 +301,26 @@ func (s *Server) localRevspec(
 // localDiffTo returns the diff_to side of a local scope's resolved range,
 // mirroring the cases localRevspec switches on. It is a plain function
 // (not folded into localRevspec) because localRevspec's single baseSHA
-// return only ever carries the diff_from side.
-func localDiffTo(commit, from, to string) string {
+// return only ever carries the diff_from side. A commit or span `to` given
+// as a ref name is resolved to its SHA, so a hunk request pinned to it
+// sees a 409 once the ref moves (e.g. an amend, which keeps diff_from).
+func localDiffTo(ctx context.Context, w db.Worktree, commit, from, to string) (string, error) {
+	var ref string
 	switch {
 	case commit == worktrees.WorkingTreeSentinel:
-		return ""
+		return "", nil
 	case commit != "":
-		return commit
+		ref = commit
 	case from != "" && to != "":
-		return to
+		ref = to
 	default:
-		return ""
+		return "", nil
 	}
+	sha, err := worktrees.ResolveCommitSHA(ctx, w.Path, ref)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s: %w", ref, err)
+	}
+	return sha, nil
 }
 
 // localScopeError passes a huma.StatusError (e.g. the 400 localRevspec
@@ -549,13 +557,17 @@ func (s *Server) getFilesLocal(
 	if err != nil {
 		return nil, huma.Error500InternalServerError("worktree files failed: " + err.Error())
 	}
+	diffTo, err := localDiffTo(ctx, *w, input.Commit, input.From, input.To)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("worktree files failed: " + err.Error())
+	}
 
 	return &getFilesOutput{Body: filesResponse{
 		Stale:               false,
 		WhitespaceOnlyCount: 0,
 		Files:               files,
 		DiffFrom:            diffFrom,
-		DiffTo:              localDiffTo(input.Commit, input.From, input.To),
+		DiffTo:              diffTo,
 	}}, nil
 }
 
@@ -576,7 +588,10 @@ func (s *Server) getDiffHunksLocal(
 	if err != nil {
 		return nil, localScopeError(err, "worktree diff hunks failed")
 	}
-	diffTo := localDiffTo(input.Body.Commit, input.Body.From, input.Body.To)
+	diffTo, err := localDiffTo(ctx, *w, input.Body.Commit, input.Body.From, input.Body.To)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("worktree diff hunks failed: " + err.Error())
+	}
 
 	if diffFrom != input.Body.ExpectFrom || diffTo != input.Body.ExpectTo {
 		return nil, huma.Error409Conflict("diff revisions changed")

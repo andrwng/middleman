@@ -614,3 +614,85 @@ func TestAPIDiffHunks_LocalRename(t *testing.T) {
 	assert.Equal("rename_src.go", got[0].OldPath)
 	assert.Equal(*renameDiff, got[0])
 }
+
+// TestAPIDiffHunks_LocalRefScopeResolvesToSHA covers a local commit or
+// span scope given a branch name instead of a SHA: diff_to must be the
+// resolved SHA, so a hunk request pinned to it 409s once the branch moves
+// (here an amend, which keeps the same parent and so the same diff_from).
+func TestAPIDiffHunks_LocalRefScopeResolvesToSHA(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on PATH")
+	}
+	require := require.New(t)
+	assert := Assert.New(t)
+	srv, database := setupTestServer(t)
+	client := setupTestClient(t, srv)
+	ctx := context.Background()
+
+	dir := t.TempDir()
+	runGitWT(t, "", "init", "--initial-branch=main", dir)
+	runGitWT(t, dir, "config", "user.email", "test@example.com")
+	runGitWT(t, dir, "config", "user.name", "Test")
+	require.NoError(os.WriteFile(filepath.Join(dir, "base.txt"), []byte("base\n"), 0o644))
+	runGitWT(t, dir, "add", "base.txt")
+	runGitWT(t, dir, "commit", "-m", "base")
+	baseSHA := testGitSHA(t, dir, "HEAD")
+	runGitWT(t, dir, "checkout", "-b", "feat/x")
+	require.NoError(os.WriteFile(filepath.Join(dir, "feature.txt"), []byte("feat\n"), 0o644))
+	runGitWT(t, dir, "add", "feature.txt")
+	runGitWT(t, dir, "commit", "-m", "add feature")
+	commitSHA := testGitSHA(t, dir, "HEAD")
+
+	repoID, err := database.UpsertLocalRepo(ctx, "demo")
+	require.NoError(err)
+	canonDir, err := filepath.EvalSymlinks(dir)
+	require.NoError(err)
+	w, err := database.UpsertWorktree(ctx, repoID, db.ScannedWorktree{
+		Path:   canonDir,
+		Branch: "feat/x",
+	})
+	require.NoError(err)
+
+	ref := "feat/x"
+	commitScope := &generated.GetReposByOwnerByNamePullsByNumberFilesParams{Commit: &ref}
+	spanScope := &generated.GetReposByOwnerByNamePullsByNumberFilesParams{From: &commitSHA, To: &ref}
+	commitResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberFilesWithResponse(
+		ctx, "local", "demo", w.ID, commitScope,
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, commitResp.StatusCode())
+	assert.Equal(baseSHA, commitResp.JSON200.DiffFrom)
+	assert.Equal(commitSHA, commitResp.JSON200.DiffTo)
+
+	spanResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberFilesWithResponse(
+		ctx, "local", "demo", w.ID, spanScope,
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, spanResp.StatusCode())
+	assert.Equal(commitSHA, spanResp.JSON200.DiffTo)
+
+	paths := []string{"feature.txt"}
+	body := generated.PostReposByOwnerByNamePullsByNumberDiffHunksJSONRequestBody{
+		Commit:     &ref,
+		ExpectFrom: commitResp.JSON200.DiffFrom,
+		ExpectTo:   commitResp.JSON200.DiffTo,
+		Paths:      &paths,
+	}
+	okResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberDiffHunksWithResponse(
+		ctx, "local", "demo", w.ID, body,
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, okResp.StatusCode())
+
+	// Amend: same parent, new commit. The branch name is unchanged but
+	// now resolves to a different SHA.
+	require.NoError(os.WriteFile(filepath.Join(dir, "feature.txt"), []byte("feat v2\n"), 0o644))
+	runGitWT(t, dir, "add", "feature.txt")
+	runGitWT(t, dir, "commit", "--amend", "-m", "add feature v2")
+
+	staleResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberDiffHunksWithResponse(
+		ctx, "local", "demo", w.ID, body,
+	)
+	require.NoError(err)
+	assert.Equal(http.StatusConflict, staleResp.StatusCode())
+}
