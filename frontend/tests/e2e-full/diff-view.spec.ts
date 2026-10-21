@@ -728,27 +728,45 @@ test.describe("diff view performance", () => {
     await waitForDiffLoaded(page);
     await expect(page.locator(".diff-file .file-header")).toHaveCount(50, { timeout: 15_000 });
 
-    // Puts file `index`'s top `offset` px below the diff area's top.
+    // Puts file `index`'s top `offset` px below the diff area's top and
+    // waits until it stays there across two frames. At the bottom the file
+    // may sit below `offset` with no room to go further; that is as close
+    // as the scroll can get for now.
     async function scrollFileTo(index: number, offset: number): Promise<void> {
-      await page.evaluate(([i, off]) => {
+      await expect.poll(() => page.evaluate(async ([i, off]) => {
         const area = document.querySelector<HTMLElement>(".diff-area")!;
         const el = document.querySelectorAll<HTMLElement>(".diff-file")[i!]!;
-        area.scrollTop += el.getBoundingClientRect().top - area.getBoundingClientRect().top - off!;
-      }, [index, offset]);
+        const delta = () =>
+          el.getBoundingClientRect().top - area.getBoundingClientRect().top - off!;
+        const atMax = () => area.scrollTop >= area.scrollHeight - area.clientHeight - 1;
+        if (Math.abs(delta()) >= 1) area.scrollTop += delta();
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+        return Math.abs(delta()) < 1 || (delta() > 0 && atMax());
+      }, [index, offset]), { timeout: 10_000 }).toBe(true);
     }
     const active = page.locator(".diff-file-row--active");
 
+    // Bodies mount around the viewport after each scroll and replace their
+    // estimated heights with real ones, so the layout keeps settling for a
+    // while: content below can grow or shrink and clamp the scroll offset,
+    // which legitimately moves the active file. Rather than race that,
+    // re-establish the position and check the active file until both
+    // agree; a tracker that does not follow the scroll never passes.
+    async function expectActiveAt(index: number, offset: number, name: string): Promise<void> {
+      await expect(async () => {
+        await scrollFileTo(index, offset);
+        await expect(active).toContainText(name, { timeout: 1_000 });
+      }).toPass({ timeout: 20_000 });
+    }
+
     // The active file is the last one whose top is within 60px of the top.
-    await scrollFileTo(30, 10);
-    await expect(active).toContainText("file_30.go");
-    await scrollFileTo(30, 100);
-    await expect(active).toContainText("file_29.go");
+    await expectActiveAt(30, 10, "file_30.go");
+    await expectActiveAt(30, 100, "file_29.go");
 
     // One big jump back to the top and one to the bottom.
     await page.evaluate(() => { document.querySelector<HTMLElement>(".diff-area")!.scrollTop = 0; });
     await expect(active).toContainText("file_0.go");
-    await scrollFileTo(45, 0);
-    await expect(active).toContainText("file_45.go");
+    await expectActiveAt(45, 0, "file_45.go");
 
     // j/k continue from the scroll-tracked file.
     await page.keyboard.press("j");

@@ -109,6 +109,11 @@ func run(ctx context.Context, port int, roborevEndpoint, serverInfoFile string) 
 	if err != nil {
 		return fmt.Errorf("setup diff repo: %w", err)
 	}
+	largeDiff, err := testutil.SetupLargeDiffRepo(
+		ctx, tmpDir, database, diffRepo.BaseSHA)
+	if err != nil {
+		return fmt.Errorf("setup large diff repo: %w", err)
+	}
 
 	cfg := &config.Config{
 		BasePath: "/",
@@ -165,6 +170,8 @@ func run(ctx context.Context, port int, roborevEndpoint, serverInfoFile string) 
 		return repos, nil
 	}
 	patchFixturePRSHAs(fc, "acme", "widgets", 1, diffRepo.HeadSHA, diffRepo.BaseSHA)
+	patchFixturePRSHAs(fc, "acme", "widgets", testutil.LargeDiffPRNumber,
+		largeDiff.HeadSHA, largeDiff.BaseSHA)
 
 	startupResolved := ghclient.ResolveConfiguredRepos(
 		ctx,

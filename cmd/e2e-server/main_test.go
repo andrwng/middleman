@@ -194,3 +194,59 @@ func waitForServerInfoBaseURL(
 	r.FailNow("timed out waiting for server-info file")
 	return ""
 }
+
+// TestRunServesLargeDiffSummary checks the generated large diff is wired
+// to its PR through run(): the /files summary reports every generated file
+// with the expected line totals.
+func TestRunServesLargeDiffSummary(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	serverInfoFile := filepath.Join(t.TempDir(), "server-info.json")
+	done := make(chan error, 1)
+	go func() {
+		done <- run(ctx, 0, defaultRoborevEndpoint, serverInfoFile)
+	}()
+	baseURL := waitForServerInfoBaseURL(t, serverInfoFile, done)
+
+	resp, err := http.Get(baseURL + "/api/v1/repos/acme/widgets/pulls/" +
+		strconv.Itoa(testutil.LargeDiffPRNumber) + "/files")
+	require.NoError(err)
+	defer resp.Body.Close()
+	require.Equal(http.StatusOK, resp.StatusCode)
+
+	var payload struct {
+		Files []struct {
+			Path      string `json:"path"`
+			Status    string `json:"status"`
+			Additions int    `json:"additions"`
+			Deletions int    `json:"deletions"`
+		} `json:"files"`
+	}
+	require.NoError(json.NewDecoder(resp.Body).Decode(&payload))
+
+	wantFiles, wantAdd, wantDel := testutil.LargeDiffTotals()
+	assert.Len(payload.Files, wantFiles)
+	add, del := 0, 0
+	statuses := map[string]string{}
+	for _, f := range payload.Files {
+		add += f.Additions
+		del += f.Deletions
+		statuses[f.Path] = f.Status
+	}
+	assert.Equal(wantAdd, add)
+	assert.Equal(wantDel, del)
+	assert.Equal("deleted", statuses[testutil.LargeDiffDeletedPath])
+	assert.Equal("modified", statuses[testutil.LargeDiffModifiedPath])
+
+	cancel()
+	select {
+	case runErr := <-done:
+		require.NoError(runErr)
+	case <-time.After(10 * time.Second):
+		require.Fail("run() did not exit within 10s of cancellation")
+	}
+}
