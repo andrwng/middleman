@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { tick } from "svelte";
   import { getClient, getStores } from "../../context.js";
-  import type { ReviewEvent, DraftComment } from "../../stores/diff.svelte.js";
+  import type { ReviewEvent } from "../../stores/diff.svelte.js";
+  import { jumpToDraft } from "./jumpToDraft.js";
 
   interface Props {
     owner: string;
@@ -202,56 +202,6 @@
     }
   }
 
-  // Clicking a draft in the preview list jumps the diff to the
-  // comment's anchor. Same shape as QuestionsSection.scrollToThread:
-  // switch scope to the commit the draft was anchored on (so line
-  // numbers resolve), expand the file if it's collapsed, then
-  // scroll to the line. Panel is left open by design — the
-  // reviewer often wants to step through several drafts in a row.
-  async function jumpToDraft(c: DraftComment): Promise<void> {
-    // Same scope-routing dance as QuestionsSection: if the draft's
-    // commit is the current PR head, switch to head scope rather
-    // than commit scope (commit scope at the head SHA would show
-    // head^..head, with different line numbers than the base..head
-    // diff the draft was anchored against).
-    if (c.commitSha) {
-      const scope = diffStore.getScope();
-      const commits = diffStore.getCommits();
-      const isCurrentHead = commits && commits.length > 0 && commits[0]!.sha === c.commitSha;
-      const alreadyHeadHere = isCurrentHead && scope.kind === "head";
-      const alreadyCommitHere = scope.kind === "commit" && scope.sha === c.commitSha;
-      if (!alreadyHeadHere && !alreadyCommitHere) {
-        if (isCurrentHead) {
-          await diffStore.resetToHead();
-        } else {
-          await diffStore.selectCommit(c.commitSha);
-        }
-        await tick();
-      }
-    }
-    if (diffStore.isFileCollapsed(owner, name, number, c.path)) {
-      diffStore.toggleFileCollapsed(owner, name, number, c.path);
-      await tick();
-    }
-    const selector =
-      `.diff-file[data-file-path="${CSS.escape(c.path)}"] ` +
-      `.line-wrap[data-anchor-line="${c.line}"]` +
-      `[data-anchor-side="${c.side}"]`;
-    const el = document.querySelector<HTMLElement>(selector);
-    if (el) {
-      el.scrollIntoView({ block: "center", behavior: "smooth" });
-      el.classList.add("line-wrap--flash");
-      window.setTimeout(() => el.classList.remove("line-wrap--flash"), 1500);
-      return;
-    }
-    const fileEl = document.querySelector<HTMLElement>(
-      `.diff-file[data-file-path="${CSS.escape(c.path)}"]`,
-    );
-    if (fileEl) {
-      fileEl.scrollIntoView({ block: "start", behavior: "smooth" });
-    }
-  }
-
   // Group pending comments by file for a compact preview list.
   const commentsByPath = $derived.by(() => {
     const map = new Map<string, typeof draft.comments>();
@@ -346,7 +296,7 @@
             <button
               type="button"
               class="preview-comment preview-comment--clickable"
-              onclick={() => void jumpToDraft(c)}
+              onclick={() => void jumpToDraft(c, diffStore)}
               title="Jump to this comment's anchor"
             >
               <span class="preview-comment__anchor">

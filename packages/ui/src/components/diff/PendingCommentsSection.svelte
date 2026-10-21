@@ -1,6 +1,7 @@
 <script lang="ts">
   import { getStores } from "../../context.js";
   import type { DraftComment } from "../../stores/diff.svelte.js";
+  import { jumpToDraft } from "./jumpToDraft.js";
   import SectionResizeHandle from "./SectionResizeHandle.svelte";
   import { getSectionHeight } from "./sectionHeights.svelte.js";
 
@@ -65,22 +66,10 @@
     return `${sign}${c.line}`;
   }
 
-  function scrollToDraft(c: DraftComment): void {
-    // Multi-line drafts anchor to the end line (GitHub convention);
-    // the pending card is rendered right after the anchor line-wrap
-    // in DiffFile, so scrolling to the anchor puts the card in view.
-    const selector =
-      `.diff-file[data-file-path="${CSS.escape(c.path)}"] ` +
-      `.line-wrap[data-anchor-line="${c.line}"]` +
-      `[data-anchor-side="${c.side}"]`;
-    const el = document.querySelector<HTMLElement>(selector);
-    if (el) {
-      el.scrollIntoView({ block: "center", behavior: "smooth" });
-    }
-  }
-
-  function editDraft(c: DraftComment): void {
-    scrollToDraft(c);
+  // Switches to the draft's commit first when it isn't the one on
+  // screen, so the anchor line exists to scroll to.
+  async function editDraft(c: DraftComment): Promise<void> {
+    await jumpToDraft(c, diffStore);
     diffStore.requestEditDraft(c.id);
   }
 
@@ -118,7 +107,7 @@
             <button
               type="button"
               class="draft-item__main"
-              onclick={() => scrollToDraft(c)}
+              onclick={() => void jumpToDraft(c, diffStore)}
               title="Scroll to this draft in the diff"
             >
               <span class="draft-item__anchor">{anchorLabel(c)}</span>
@@ -138,7 +127,7 @@
               type="button"
               class="draft-item__action"
               title="Edit this draft"
-              onclick={() => editDraft(c)}
+              onclick={() => void editDraft(c)}
               aria-label="Edit draft"
             >
               <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4">
