@@ -104,6 +104,131 @@ func spanRepo(t *testing.T) (string, [3]string) {
 	return dir, shas
 }
 
+// setupDiffVarietyWorktree builds a worktree with one commit exercising
+// every status SummaryRevspec and DiffRevspecPaths need to agree with
+// diffRevspec on: a modification, an addition, a deletion, a rename with
+// edits, a pure copy, a binary file, a whitespace-only change, and a path
+// containing a space and "[x]". Returns the worktree path and the commit's
+// SHA (diffed via RevspecSingleCommit against its parent).
+func setupDiffVarietyWorktree(t *testing.T) (worktreePath, sha string) {
+	t.Helper()
+	dir := t.TempDir()
+	setupRepoWithRemote(t, dir, "main")
+
+	write := func(name, content string) {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644))
+	}
+
+	write("mod.txt", "alpha\nbeta\n")
+	write("del.txt", "deleteme\nlorem\n")
+	write("rename_src.txt", "line one\nline two\n")
+	write("copy_src.txt", "copyline1\ncopyline2\ncopyline3\ncopyline4\n")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "bin.dat"), []byte{0x00, 0x01, 0x02, 0x03}, 0o644))
+	write("ws.txt", "line one\n\tindented\nline three\n")
+	write("weird [x] path.txt", "alpha\nbeta\n")
+	runGitT(t, dir, "add", ".")
+	runGitT(t, dir, "commit", "-m", "before")
+
+	write("mod.txt", "alpha\nbeta\nchanged\n")
+	write("new.txt", "export const greeting = \"hello world\";\n")
+	require.NoError(t, os.Remove(filepath.Join(dir, "del.txt")))
+	runGitT(t, dir, "mv", "rename_src.txt", "rename_dst.txt")
+	write("rename_dst.txt", "line one\nline two\nline three\n")
+	srcData, err := os.ReadFile(filepath.Join(dir, "copy_src.txt"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "copy_dst.txt"), srcData, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "bin.dat"), []byte{0x00, 0x01, 0x02, 0x03, 0x04}, 0o644))
+	write("ws.txt", "line one\n        indented\nline three\n") // re-indent only
+	write("weird [x] path.txt", "alpha\nbeta\ngamma\n")
+	runGitT(t, dir, "add", "-A")
+	runGitT(t, dir, "commit", "-m", "changes")
+
+	return dir, revSHA(t, dir, "HEAD")
+}
+
+func TestSummaryRevspecMatchesDiffRevspecCounts(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on PATH")
+	}
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+
+	dir, sha := setupDiffVarietyWorktree(t)
+	r := RevspecSingleCommit(sha)
+
+	full, err := diffRevspec(ctx, dir, r)
+	require.NoError(err)
+	require.Len(full, 8)
+
+	summary, err := SummaryRevspec(ctx, dir, r)
+	require.NoError(err)
+	require.Len(summary, len(full))
+
+	fullByPath := make(map[string]gitclone.DiffFile, len(full))
+	for _, f := range full {
+		fullByPath[f.Path] = f
+	}
+
+	for _, sf := range summary {
+		ff, ok := fullByPath[sf.Path]
+		require.True(ok, "summary file %q not present in full diff", sf.Path)
+		assert.Equalf(ff.Status, sf.Status, "status for %q", sf.Path)
+		assert.Equalf(ff.OldPath, sf.OldPath, "old_path for %q", sf.Path)
+		assert.Equalf(ff.IsBinary, sf.IsBinary, "is_binary for %q", sf.Path)
+		assert.Equalf(ff.Additions, sf.Additions, "additions for %q", sf.Path)
+		assert.Equalf(ff.Deletions, sf.Deletions, "deletions for %q", sf.Path)
+		assert.Emptyf(sf.Hunks, "summary should carry no hunks for %q", sf.Path)
+	}
+}
+
+func TestDiffRevspecPathsMatchesDiffRevspecPerFile(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on PATH")
+	}
+	ctx := context.Background()
+
+	dir, sha := setupDiffVarietyWorktree(t)
+	r := RevspecSingleCommit(sha)
+
+	full, err := diffRevspec(ctx, dir, r)
+	require.NoError(t, err)
+	require.NotEmpty(t, full)
+
+	for _, ff := range full {
+		ff := ff
+		t.Run(ff.Path, func(t *testing.T) {
+			result, err := DiffRevspecPaths(ctx, dir, r, []string{ff.Path, ff.OldPath})
+			require.NoError(t, err)
+			require.Len(t, result, 1, "expected exactly the requested file")
+			assert.Equal(t, ff, result[0])
+		})
+	}
+}
+
+// TestDiffRevspecPathsRenameWithoutOldPath pins current behavior when the
+// caller omits the rename's old path: --literal-pathspecs only pairs a
+// rename when both sides match the pathspec, so the new path comes back as
+// an addition instead. The client always sends both paths for
+// renames/copies; this documents the fallback rather than prescribing it.
+func TestDiffRevspecPathsRenameWithoutOldPath(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on PATH")
+	}
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+
+	dir, sha := setupDiffVarietyWorktree(t)
+	r := RevspecSingleCommit(sha)
+
+	result, err := DiffRevspecPaths(ctx, dir, r, []string{"rename_dst.txt"})
+	require.NoError(err)
+	require.Len(result, 1)
+	assert.Equal("rename_dst.txt", result[0].Path)
+	assert.Equal("added", result[0].Status)
+}
+
 func paths(files []gitclone.DiffFile) []string {
 	out := make([]string, 0, len(files))
 	for _, f := range files {

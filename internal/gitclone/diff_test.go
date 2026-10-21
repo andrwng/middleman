@@ -319,6 +319,168 @@ func TestDiffFilesEmpty(t *testing.T) {
 	assert.Empty(result.Files)
 }
 
+// setupDiffVarietyRepo builds a repo exercising every status DiffSummary and
+// DiffPaths need to agree with Diff on: a modification, an addition, a
+// deletion, a rename with edits, a pure copy, a binary file, a
+// whitespace-only change, and a path containing a space and "[x]" (to probe
+// pathspec literalness). Returns the manager, merge base, and feature head
+// SHA.
+func setupDiffVarietyRepo(t *testing.T) (mgr *Manager, mb, headSHA string) {
+	t.Helper()
+	dir := t.TempDir()
+	remote := filepath.Join(dir, "remote.git")
+	work := filepath.Join(dir, "work")
+
+	run(t, dir, "git", "init", "--bare", "--initial-branch=main", remote)
+	run(t, dir, "git", "clone", remote, work)
+	run(t, work, "git", "config", "user.email", "test@test.com")
+	run(t, work, "git", "config", "user.name", "Test")
+
+	write := func(name, content string) {
+		require.NoError(t, os.WriteFile(filepath.Join(work, name), []byte(content), 0o644))
+	}
+
+	// Base commit on main.
+	write("mod.go", "package main\n\nvar x = 1\n")
+	write("del.go", "package deleteme\n\nvar lorem = 12345\n")
+	write("rename_src.go", "package main\n\nfunc Old() {}\n")
+	write("copy_src.go", "line1\nline2\nline3\nline4\nline5\n")
+	require.NoError(t, os.WriteFile(
+		filepath.Join(work, "bin.dat"), []byte{0x00, 0x01, 0x02, 0x03}, 0o644))
+	write("ws.go", "package main\n\nfunc main() {\n\treturn\n}\n")
+	write("weird [x] path.txt", "alpha\nbeta\n")
+	run(t, work, "git", "add", ".")
+	run(t, work, "git", "commit", "-m", "initial")
+	run(t, work, "git", "push", "origin", "main")
+
+	// Feature branch: one change of each kind.
+	run(t, work, "git", "checkout", "-b", "feature")
+	write("mod.go", "package main\n\nvar x = 2\n")
+	write("new.go", "export const greeting = \"hello world\";\n")
+	require.NoError(t, os.Remove(filepath.Join(work, "del.go")))
+	run(t, work, "git", "mv", "rename_src.go", "rename_dst.go")
+	write("rename_dst.go", "package main\n\nfunc Old() {}\n\nfunc New() {}\n")
+	// Pure copy: copy_src.go is untouched; copy_dst.go is identical, so
+	// -C --find-copies-harder reports a copy rather than two adds.
+	srcData, err := os.ReadFile(filepath.Join(work, "copy_src.go"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(work, "copy_dst.go"), srcData, 0o644))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(work, "bin.dat"), []byte{0x00, 0x01, 0x02, 0x03, 0x04}, 0o644))
+	write("ws.go", "package main\n\nfunc main() {\n        return\n}\n") // re-indent only
+	write("weird [x] path.txt", "alpha\nbeta\ngamma\n")
+	run(t, work, "git", "add", "-A")
+	run(t, work, "git", "commit", "-m", "feature changes")
+	run(t, work, "git", "push", "origin", "feature")
+
+	mainSHA := getSHA(t, work, "origin/main")
+	featureSHA := getSHA(t, work, "origin/feature")
+
+	clonesDir := t.TempDir()
+	mgr = New(clonesDir, nil)
+	require.NoError(t, mgr.EnsureClone(
+		context.Background(), "github.com", "test", "repo", remote))
+
+	mb, err = mgr.MergeBase(
+		context.Background(), "github.com", "test", "repo", mainSHA, featureSHA)
+	require.NoError(t, err)
+
+	return mgr, mb, featureSHA
+}
+
+func TestDiffSummaryMatchesDiffCounts(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+
+	mgr, mb, headSHA := setupDiffVarietyRepo(t)
+
+	full, err := mgr.Diff(ctx, "github.com", "test", "repo", mb, headSHA, false)
+	require.NoError(err)
+	summary, err := mgr.DiffSummary(ctx, "github.com", "test", "repo", mb, headSHA, false)
+	require.NoError(err)
+
+	assert.Equal(full.WhitespaceOnlyCount, summary.WhitespaceOnlyCount)
+	require.Len(summary.Files, len(full.Files))
+
+	fullByPath := make(map[string]DiffFile, len(full.Files))
+	for _, f := range full.Files {
+		fullByPath[f.Path] = f
+	}
+
+	for _, sf := range summary.Files {
+		ff, ok := fullByPath[sf.Path]
+		require.True(ok, "summary file %q not present in full diff", sf.Path)
+		assert.Equalf(ff.Status, sf.Status, "status for %q", sf.Path)
+		assert.Equalf(ff.OldPath, sf.OldPath, "old_path for %q", sf.Path)
+		assert.Equalf(ff.IsBinary, sf.IsBinary, "is_binary for %q", sf.Path)
+		assert.Equalf(ff.Additions, sf.Additions, "additions for %q", sf.Path)
+		assert.Equalf(ff.Deletions, sf.Deletions, "deletions for %q", sf.Path)
+		assert.Equalf(ff.IsWhitespaceOnly, sf.IsWhitespaceOnly, "is_whitespace_only for %q", sf.Path)
+		assert.Emptyf(sf.Hunks, "summary should carry no hunks for %q", sf.Path)
+	}
+}
+
+func TestDiffSummaryHideWhitespace(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+
+	mgr, mb, headSHA := setupDiffVarietyRepo(t)
+
+	summary, err := mgr.DiffSummary(ctx, "github.com", "test", "repo", mb, headSHA, true)
+	require.NoError(err)
+	assert.Equal(1, summary.WhitespaceOnlyCount)
+
+	for _, f := range summary.Files {
+		assert.NotEqualf("ws.go", f.Path, "whitespace-only file should be omitted in hide mode")
+	}
+}
+
+func TestDiffPathsMatchesDiffPerFile(t *testing.T) {
+	ctx := context.Background()
+
+	mgr, mb, headSHA := setupDiffVarietyRepo(t)
+
+	full, err := mgr.Diff(ctx, "github.com", "test", "repo", mb, headSHA, false)
+	require.NoError(t, err)
+	require.NotEmpty(t, full.Files)
+
+	for _, ff := range full.Files {
+		ff := ff
+		t.Run(ff.Path, func(t *testing.T) {
+			result, err := mgr.DiffPaths(
+				ctx, "github.com", "test", "repo", mb, headSHA, false,
+				[]string{ff.Path, ff.OldPath})
+			require.NoError(t, err)
+			require.Len(t, result.Files, 1, "expected exactly the requested file")
+			assert.Equal(t, ff, result.Files[0])
+		})
+	}
+}
+
+// TestDiffPathsRenameWithoutOldPath pins current behavior when the caller
+// omits the rename's old path from the requested set: --literal-pathspecs
+// only pairs a rename when both sides match the pathspec, so git (and thus
+// DiffPaths) reports the new path as an addition instead of a rename. The
+// client always sends both paths for renames/copies; this test documents
+// the fallback rather than prescribing it.
+func TestDiffPathsRenameWithoutOldPath(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+
+	mgr, mb, headSHA := setupDiffVarietyRepo(t)
+
+	result, err := mgr.DiffPaths(
+		ctx, "github.com", "test", "repo", mb, headSHA, false,
+		[]string{"rename_dst.go"})
+	require.NoError(err)
+	require.Len(result.Files, 1)
+	assert.Equal("rename_dst.go", result.Files[0].Path)
+	assert.Equal("added", result.Files[0].Status)
+}
+
 func getSHA(t *testing.T, dir, ref string) string {
 	t.Helper()
 	cmd := exec.Command("git", "-C", dir, "rev-parse", ref)

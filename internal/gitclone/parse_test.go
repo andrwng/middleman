@@ -86,6 +86,40 @@ index abc..def 100644
 	}, types)
 }
 
+func TestParseNumstatZ(t *testing.T) {
+	assert := assert.New(t)
+
+	// Normal records, a binary record, and the rename form: an empty path
+	// field followed by old\0new.
+	raw := "1\t1\tsrc/main.go\x00" +
+		"0\t3\tsrc/old.go\x00" +
+		"-\t-\tsrc/image.png\x00" +
+		"2\t0\t\x00src/before.go\x00src/after.go\x00"
+
+	entries := ParseNumstatZ([]byte(raw))
+	require.Len(t, entries, 4)
+
+	assert.Equal(NumstatEntry{Additions: 1, Deletions: 1}, entries["src/main.go"])
+	assert.Equal(NumstatEntry{Additions: 0, Deletions: 3}, entries["src/old.go"])
+	assert.Equal(NumstatEntry{Binary: true}, entries["src/image.png"])
+
+	// Keyed by new path for renames; old path does not appear as a key.
+	assert.Equal(NumstatEntry{Additions: 2, Deletions: 0}, entries["src/after.go"])
+	assert.NotContains(entries, "src/before.go")
+}
+
+func TestParseNumstatZBinaryRename(t *testing.T) {
+	assert := assert.New(t)
+
+	// A binary rename combines both forms: "-\t-\t" counts with the
+	// empty-path rename layout.
+	raw := "-\t-\t\x00old.dat\x00new.dat\x00"
+
+	entries := ParseNumstatZ([]byte(raw))
+	require.Len(t, entries, 1)
+	assert.Equal(NumstatEntry{Binary: true}, entries["new.dat"])
+}
+
 func TestParsePatchNoNewline(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

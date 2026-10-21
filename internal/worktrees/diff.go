@@ -42,25 +42,61 @@ func HasUncommittedChanges(ctx context.Context, worktreePath string) (bool, erro
 	return len(bytes.TrimSpace(out)) > 0, nil
 }
 
+// Revspec carries the git revision arguments for one of the review pane's
+// diff scopes. diffRevspec, SummaryRevspec, and DiffRevspecPaths all append
+// it to a shared flag prefix, so every scope goes through one implementation
+// of each operation instead of a copy per mode.
+type Revspec struct {
+	Args []string
+}
+
+// RevspecSingleCommit diffs one commit against its first parent. ^! is
+// shorthand for that.
+func RevspecSingleCommit(sha string) Revspec {
+	return Revspec{Args: []string{sha + "^!"}}
+}
+
+// RevspecCommitSpan diffs the net change of every commit from oldest through
+// newest, both included -- see DiffCommitSpan for why `^..` is inclusive of
+// oldest where a plain `oldest..newest` would not be.
+func RevspecCommitSpan(oldest, newest string) Revspec {
+	return Revspec{Args: []string{oldest + "^.." + newest}}
+}
+
+// RevspecWorkingTreeVsHEAD diffs the uncommitted state against HEAD.
+func RevspecWorkingTreeVsHEAD() Revspec {
+	return Revspec{Args: []string{"HEAD"}}
+}
+
+// RevspecAgainstBase diffs the working tree against the resolved base SHA.
+// Like RevspecWorkingTreeVsHEAD, this is a single revision arg (no `..`):
+// git diffs it against the working tree, not against another revision.
+func RevspecAgainstBase(baseSHA string) Revspec {
+	return Revspec{Args: []string{baseSHA}}
+}
+
 // diffRevspec runs the raw+patch pair of git diffs the review pane needs and
-// merges them into structured files. The three callers below differ only in
-// the revspec they hand it -- they used to be three copies of this body, which
-// is how DiffRange came to leave out a commit the others included.
+// merges them into structured files. The callers below differ only in the
+// Revspec they hand it -- they used to be separate copies of this body,
+// which is how DiffRange came to leave out a commit the others included.
 func diffRevspec(
-	ctx context.Context, worktreePath, revspec string,
+	ctx context.Context, worktreePath string, r Revspec,
 ) ([]gitclone.DiffFile, error) {
-	rawOut, err := gitCmd(ctx, worktreePath,
-		"diff", "--raw", "-z", "-M", "-C", "--find-copies-harder", revspec,
-	)
+	rawArgs := append([]string{
+		"diff", "--raw", "-z", "-M", "-C", "--find-copies-harder",
+	}, r.Args...)
+	rawOut, err := gitCmd(ctx, worktreePath, rawArgs...)
 	if err != nil {
-		return nil, fmt.Errorf("git diff --raw %s: %w", revspec, err)
+		return nil, fmt.Errorf("git diff --raw %v: %w", r.Args, err)
 	}
 	files := gitclone.ParseRawZ(rawOut)
-	patchOut, err := gitCmd(ctx, worktreePath,
-		"diff", "-M", "-C", "--find-copies-harder", revspec,
-	)
+
+	patchArgs := append([]string{
+		"diff", "-M", "-C", "--find-copies-harder",
+	}, r.Args...)
+	patchOut, err := gitCmd(ctx, worktreePath, patchArgs...)
 	if err != nil {
-		return nil, fmt.Errorf("git diff %s: %w", revspec, err)
+		return nil, fmt.Errorf("git diff %v: %w", r.Args, err)
 	}
 	files = gitclone.ParsePatch(patchOut, files)
 	for i := range files {
@@ -71,14 +107,97 @@ func diffRevspec(
 	return files, nil
 }
 
+// SummaryRevspec runs the raw+numstat pair for a Revspec scope -- no patch
+// content -- the primitive behind a /files-style summary response. Mirrors
+// gitclone.DiffSummary's shape: status, old_path, and per-file counts, with
+// Hunks always empty.
+func SummaryRevspec(
+	ctx context.Context, worktreePath string, r Revspec,
+) ([]gitclone.DiffFile, error) {
+	rawArgs := append([]string{
+		"diff", "--raw", "-z", "-M", "-C", "--find-copies-harder",
+	}, r.Args...)
+	rawOut, err := gitCmd(ctx, worktreePath, rawArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("git diff --raw %v: %w", r.Args, err)
+	}
+	files := gitclone.ParseRawZ(rawOut)
+
+	numstatArgs := append([]string{
+		"diff", "--numstat", "-z", "-M", "-C", "--find-copies-harder",
+	}, r.Args...)
+	numOut, err := gitCmd(ctx, worktreePath, numstatArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("git diff --numstat %v: %w", r.Args, err)
+	}
+	entries := gitclone.ParseNumstatZ(numOut)
+
+	for i := range files {
+		if e, ok := entries[files[i].Path]; ok {
+			files[i].Additions = e.Additions
+			files[i].Deletions = e.Deletions
+			files[i].IsBinary = e.Binary
+		}
+		if files[i].Hunks == nil {
+			files[i].Hunks = []gitclone.Hunk{}
+		}
+	}
+	return files, nil
+}
+
+// DiffRevspecPaths runs the raw+patch pair for a Revspec scope, limited to
+// the given new and old paths via --literal-pathspecs, and keeps only files
+// whose path or old_path is in the requested set (dropping a stray partner
+// the pathspec might otherwise introduce). The caller is expected to pass
+// both new and old paths for renames and copies.
+func DiffRevspecPaths(
+	ctx context.Context, worktreePath string, r Revspec, paths []string,
+) ([]gitclone.DiffFile, error) {
+	rawArgs := []string{"--literal-pathspecs", "diff", "--raw", "-z", "-M", "-C", "--find-copies-harder"}
+	rawArgs = append(rawArgs, r.Args...)
+	rawArgs = append(rawArgs, "--")
+	rawArgs = append(rawArgs, paths...)
+	rawOut, err := gitCmd(ctx, worktreePath, rawArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("git diff --raw %v: %w", r.Args, err)
+	}
+	files := gitclone.ParseRawZ(rawOut)
+
+	patchArgs := []string{"--literal-pathspecs", "diff", "-M", "-C", "--find-copies-harder"}
+	patchArgs = append(patchArgs, r.Args...)
+	patchArgs = append(patchArgs, "--")
+	patchArgs = append(patchArgs, paths...)
+	patchOut, err := gitCmd(ctx, worktreePath, patchArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("git diff %v: %w", r.Args, err)
+	}
+	files = gitclone.ParsePatch(patchOut, files)
+	for i := range files {
+		if files[i].Hunks == nil {
+			files[i].Hunks = []gitclone.Hunk{}
+		}
+	}
+
+	pathSet := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		pathSet[p] = true
+	}
+	kept := files[:0]
+	for _, f := range files {
+		if pathSet[f.Path] || pathSet[f.OldPath] {
+			kept = append(kept, f)
+		}
+	}
+	return kept, nil
+}
+
 // DiffSingleCommit returns the diff for a single commit (against
 // its first parent). Used when the user picks a specific commit
 // in the review pane's commits panel.
 func DiffSingleCommit(
 	ctx context.Context, worktreePath, sha string,
 ) ([]gitclone.DiffFile, error) {
-	// ^! is shorthand for the commit's diff vs its parent.
-	return diffRevspec(ctx, worktreePath, sha+"^!")
+	return diffRevspec(ctx, worktreePath, RevspecSingleCommit(sha))
 }
 
 // DiffCommitSpan returns the net change of every commit from `oldest` through
@@ -96,17 +215,20 @@ func DiffSingleCommit(
 func DiffCommitSpan(
 	ctx context.Context, worktreePath, oldest, newest string,
 ) ([]gitclone.DiffFile, error) {
-	return diffRevspec(ctx, worktreePath, oldest+"^.."+newest)
+	return diffRevspec(ctx, worktreePath, RevspecCommitSpan(oldest, newest))
 }
 
 // DiffRange returns the diff between two endpoints, EXCLUDING the changes
 // introduced by `from` itself. That is what DiffBaseToHEAD wants -- the merge
 // base's own commit belongs to the base branch, not to the branch under
 // review. For a reader-selected span of commits, use DiffCommitSpan.
+//
+// This is git's two-endpoint form, not one of the four named Revspec
+// constructors -- it is only ever reached through DiffBaseToHEAD.
 func DiffRange(
 	ctx context.Context, worktreePath, from, to string,
 ) ([]gitclone.DiffFile, error) {
-	return diffRevspec(ctx, worktreePath, from+".."+to)
+	return diffRevspec(ctx, worktreePath, Revspec{Args: []string{from + ".." + to}})
 }
 
 // DiffWorkingTreeVsHEAD returns the structured diff for the
@@ -116,26 +238,7 @@ func DiffRange(
 func DiffWorkingTreeVsHEAD(
 	ctx context.Context, worktreePath string,
 ) ([]gitclone.DiffFile, error) {
-	rawOut, err := gitCmd(ctx, worktreePath,
-		"diff", "HEAD", "--raw", "-z", "-M", "-C", "--find-copies-harder",
-	)
-	if err != nil {
-		return nil, fmt.Errorf("git diff --raw HEAD: %w", err)
-	}
-	files := gitclone.ParseRawZ(rawOut)
-	patchOut, err := gitCmd(ctx, worktreePath,
-		"diff", "HEAD", "-M", "-C", "--find-copies-harder",
-	)
-	if err != nil {
-		return nil, fmt.Errorf("git diff HEAD: %w", err)
-	}
-	files = gitclone.ParsePatch(patchOut, files)
-	for i := range files {
-		if files[i].Hunks == nil {
-			files[i].Hunks = []gitclone.Hunk{}
-		}
-	}
-	return files, nil
+	return diffRevspec(ctx, worktreePath, RevspecWorkingTreeVsHEAD())
 }
 
 // DiffBaseToHEAD returns the structured diff between the resolved
@@ -181,28 +284,9 @@ func DiffAgainstBase(
 		return DiffSet{}, fmt.Errorf("resolve base: %w", err)
 	}
 
-	rawOut, err := gitCmd(ctx, worktreePath,
-		"diff", base.SHA, "--raw", "-z", "-M", "-C", "--find-copies-harder",
-	)
+	files, err := diffRevspec(ctx, worktreePath, RevspecAgainstBase(base.SHA))
 	if err != nil {
-		return DiffSet{}, fmt.Errorf("git diff --raw: %w", err)
-	}
-	files := gitclone.ParseRawZ(rawOut)
-
-	patchOut, err := gitCmd(ctx, worktreePath,
-		"diff", base.SHA, "-M", "-C", "--find-copies-harder",
-	)
-	if err != nil {
-		return DiffSet{}, fmt.Errorf("git diff (patch): %w", err)
-	}
-	files = gitclone.ParsePatch(patchOut, files)
-
-	// Ensure Hunks is never nil so JSON serializes as [] not null,
-	// matching the PR-side endpoints' convention.
-	for i := range files {
-		if files[i].Hunks == nil {
-			files[i].Hunks = []gitclone.Hunk{}
-		}
+		return DiffSet{}, err
 	}
 
 	return DiffSet{Base: base, Files: files}, nil

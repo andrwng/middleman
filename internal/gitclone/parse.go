@@ -2,6 +2,7 @@ package gitclone
 
 import (
 	"bytes"
+	"strconv"
 	"strings"
 
 	godiff "github.com/sourcegraph/go-diff/diff"
@@ -61,6 +62,58 @@ func ParseRawZ(data []byte) []DiffFile {
 		i++
 	}
 	return files
+}
+
+// NumstatEntry holds the per-file line counts and binary flag from
+// `git diff --numstat -z` output.
+type NumstatEntry struct {
+	Additions int
+	Deletions int
+	Binary    bool
+}
+
+// ParseNumstatZ parses the output of `git diff --numstat -z`, keyed by new
+// path. Each record is normally "<added>\t<deleted>\t<path>\0". Binary files
+// report "-" for both counts. Renames use the three-part form
+// "<added>\t<deleted>\t\0<oldpath>\0<newpath>\0" -- an empty path field
+// followed by the old and new paths as their own NUL-terminated parts.
+func ParseNumstatZ(data []byte) map[string]NumstatEntry {
+	result := make(map[string]NumstatEntry)
+	parts := bytes.Split(data, []byte{0})
+
+	i := 0
+	for i < len(parts) {
+		rec := parts[i]
+		i++
+		if len(rec) == 0 {
+			continue
+		}
+		fields := bytes.SplitN(rec, []byte("\t"), 3)
+		if len(fields) < 3 {
+			continue
+		}
+		addStr, delStr, path := string(fields[0]), string(fields[1]), string(fields[2])
+
+		if path == "" {
+			// Rename/copy form: the next two NUL-delimited parts are the
+			// old and new paths. Key by new path, like the normal form.
+			if i+1 >= len(parts) {
+				break
+			}
+			path = string(parts[i+1])
+			i += 2
+		}
+
+		var entry NumstatEntry
+		if addStr == "-" && delStr == "-" {
+			entry.Binary = true
+		} else {
+			entry.Additions, _ = strconv.Atoi(addStr)
+			entry.Deletions, _ = strconv.Atoi(delStr)
+		}
+		result[path] = entry
+	}
+	return result
 }
 
 func rawStatusToString(s string) (status string, isRenameOrCopy bool) {

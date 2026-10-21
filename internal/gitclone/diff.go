@@ -119,6 +119,178 @@ func (m *Manager) Diff(
 	}, nil
 }
 
+// DiffSummary returns per-file numstat counts (additions, deletions,
+// binary) without patch content -- the primitive behind the /files
+// endpoint, sized to stay cheap on huge diffs. Status, old_path, and
+// whitespace-only handling match Diff exactly; only Hunks differs (always
+// empty).
+func (m *Manager) DiffSummary(
+	ctx context.Context,
+	host, owner, name, from, to string,
+	hideWhitespace bool,
+) (*DiffResult, error) {
+	clonePath := m.ClonePath(host, owner, name)
+
+	wsCount, err := m.computeWhitespaceOnlyCount(ctx, host, clonePath, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("whitespace count: %w", err)
+	}
+
+	rawArgs := withWhitespaceFlag([]string{
+		"diff", "--raw", "-z", "-M", "-C", "--find-copies-harder", from, to,
+	}, hideWhitespace)
+	rawOut, err := m.git(ctx, host, clonePath, rawArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("git diff --raw: %w", err)
+	}
+	files := ParseRawZ(rawOut)
+
+	numstatArgs := withWhitespaceFlag([]string{
+		"diff", "--numstat", "-z", "-M", "-C", "--find-copies-harder", from, to,
+	}, hideWhitespace)
+	numOut, err := m.git(ctx, host, clonePath, numstatArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("git diff --numstat: %w", err)
+	}
+	entries := ParseNumstatZ(numOut)
+
+	for i := range files {
+		if e, ok := entries[files[i].Path]; ok {
+			files[i].Additions = e.Additions
+			files[i].Deletions = e.Deletions
+			files[i].IsBinary = e.Binary
+		}
+		if files[i].Hunks == nil {
+			files[i].Hunks = []Hunk{}
+		}
+	}
+
+	files = applyWhitespaceOnly(
+		files, m.getWhitespaceOnlyFiles(ctx, host, clonePath, from, to), hideWhitespace)
+
+	if files == nil {
+		files = []DiffFile{}
+	}
+	return &DiffResult{
+		WhitespaceOnlyCount: wsCount,
+		Files:               files,
+	}, nil
+}
+
+// DiffPaths runs the same raw+patch diff as Diff, limited to the given new
+// and old paths via --literal-pathspecs, and keeps only files whose path or
+// old_path is in the requested set (dropping a stray partner the pathspec
+// might otherwise introduce). Output shape and whitespace handling match
+// Diff; the caller is expected to pass both new and old paths for renames
+// and copies.
+func (m *Manager) DiffPaths(
+	ctx context.Context,
+	host, owner, name, from, to string,
+	hideWhitespace bool,
+	paths []string,
+) (*DiffResult, error) {
+	clonePath := m.ClonePath(host, owner, name)
+
+	wsCount, err := m.computeWhitespaceOnlyCount(ctx, host, clonePath, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("whitespace count: %w", err)
+	}
+
+	rawArgs := withWhitespaceFlag([]string{
+		"diff", "--raw", "-z", "-M", "-C", "--find-copies-harder", from, to,
+	}, hideWhitespace)
+	rawArgs = pathLimitedArgs(rawArgs, paths)
+	rawOut, err := m.git(ctx, host, clonePath, rawArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("git diff --raw: %w", err)
+	}
+	files := ParseRawZ(rawOut)
+
+	patchArgs := withWhitespaceFlag([]string{
+		"diff", "-M", "-C", "--find-copies-harder", "-U3", from, to,
+	}, hideWhitespace)
+	patchArgs = pathLimitedArgs(patchArgs, paths)
+	patchOut, err := m.git(ctx, host, clonePath, patchArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("git diff patch: %w", err)
+	}
+	files = ParsePatch(patchOut, files)
+	for i := range files {
+		if files[i].Hunks == nil {
+			files[i].Hunks = []Hunk{}
+		}
+	}
+
+	files = applyWhitespaceOnly(
+		files, m.getWhitespaceOnlyFiles(ctx, host, clonePath, from, to), hideWhitespace)
+
+	// Keep only files the caller actually asked for; a pathspec can pull in
+	// a stray partner (e.g. matching only one side of a rename).
+	pathSet := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		pathSet[p] = true
+	}
+	kept := files[:0]
+	for _, f := range files {
+		if pathSet[f.Path] || pathSet[f.OldPath] {
+			kept = append(kept, f)
+		}
+	}
+	files = kept
+
+	if files == nil {
+		files = []DiffFile{}
+	}
+	return &DiffResult{
+		WhitespaceOnlyCount: wsCount,
+		Files:               files,
+	}, nil
+}
+
+// withWhitespaceFlag inserts -w right after the leading "diff" argument
+// when hide is true, leaving args untouched otherwise.
+func withWhitespaceFlag(args []string, hide bool) []string {
+	if !hide {
+		return args
+	}
+	out := make([]string, 0, len(args)+1)
+	out = append(out, args[0], "-w")
+	out = append(out, args[1:]...)
+	return out
+}
+
+// pathLimitedArgs appends --literal-pathspecs (as a leading global flag) and
+// a "-- <paths>" pathspec list to args, so paths containing characters like
+// "[" or spaces are matched literally rather than as globs.
+func pathLimitedArgs(args []string, paths []string) []string {
+	out := make([]string, 0, len(args)+len(paths)+2)
+	out = append(out, "--literal-pathspecs")
+	out = append(out, args...)
+	out = append(out, "--")
+	out = append(out, paths...)
+	return out
+}
+
+// applyWhitespaceOnly mirrors Diff's step 4: in hide mode it drops
+// whitespace-only files; otherwise it flags them for the frontend badge.
+func applyWhitespaceOnly(files []DiffFile, wsFiles map[string]bool, hide bool) []DiffFile {
+	if hide {
+		kept := files[:0]
+		for _, f := range files {
+			if !wsFiles[f.Path] {
+				kept = append(kept, f)
+			}
+		}
+		return kept
+	}
+	for i := range files {
+		if wsFiles[files[i].Path] {
+			files[i].IsWhitespaceOnly = true
+		}
+	}
+	return files
+}
+
 func (m *Manager) computeWhitespaceOnlyCount(
 	ctx context.Context, host, clonePath, mergeBase, headSHA string,
 ) (int, error) {
