@@ -6,6 +6,7 @@
   import { findDiffLineEl, flashDiffLine } from "./scrollToDiffLine.js";
   import {
     estimateBodyHeight,
+    hasActiveEditor,
     measureRowHeight,
     rowHeightPx,
     type DiffWindow,
@@ -634,10 +635,30 @@
       && (hunkState === "loaded" || (hunkState !== "error" && hasRenderedContent)),
   );
 
+  // Any editor in the file (draft edit, reply, AI follow-up) focused or
+  // holding text. Re-checked after the events that can change it; the
+  // timeout lets a click or Escape that closes an editor finish first.
+  let editorActive = $state(false);
+  $effect(() => {
+    const el = fileEl;
+    if (!diffWindow || !el) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const schedule = (): void => {
+      clearTimeout(timer);
+      timer = setTimeout(() => { editorActive = hasActiveEditor(el); }, 0);
+    };
+    const events = ["focusin", "focusout", "input", "click", "keydown"] as const;
+    for (const ev of events) el.addEventListener(ev, schedule);
+    return () => {
+      clearTimeout(timer);
+      for (const ev of events) el.removeEventListener(ev, schedule);
+    };
+  });
+
   // Pins: keep the body mounted while the reviewer is working in it.
   $effect(() => {
     if (!diffWindow) return;
-    if (openComposer === null && openAsk === null && !selectionInFile) return;
+    if (openComposer === null && openAsk === null && !selectionInFile && !editorActive) return;
     return diffWindow.pin(file.path, "interaction");
   });
 

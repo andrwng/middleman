@@ -202,6 +202,14 @@ describe("createDiffWindow", () => {
     expect(w.zone("a.ts")).toBe("far");
   });
 
+  it("resolves body-mounted waiters with false when the file is unobserved", async () => {
+    const w = createDiffWindow(makeRoot());
+    const unobserve = w.observe("a.ts", document.createElement("div"));
+    const pending = w.whenBodyMounted("a.ts");
+    unobserve();
+    await expect(pending).resolves.toBe(false);
+  });
+
   it("recreates observers with new margins when the root's height changes", () => {
     const root = makeRoot(1000);
     const w = createDiffWindow(root);

@@ -207,7 +207,9 @@ describe("DiffFile with a viewport window", () => {
 
   it("measures the body before unmounting it, so the placeholder keeps its height", async () => {
     vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
-      return this.classList.contains("file-content") ? 333 : 0;
+      // Only a still-attached body measures: proves the height is read
+      // before the DOM removal, not after.
+      return this.isConnected && this.classList.contains("file-content") ? 333 : 0;
     });
     renderWithWindow(makeFile());
     await toMount();
@@ -250,6 +252,67 @@ describe("DiffFile with a viewport window", () => {
     await tick();
     expect(win.isPinned("src/foo.ts")).toBe(false);
     expect(hunkHeader()).toBeNull();
+  });
+
+  it("pins the file while a pending draft is being edited, so the edit survives scrolling far away", async () => {
+    const { diffStore, owner } = renderWithWindow(makeFile());
+    diffStore.setActivePR(owner, "n", 1);
+    diffStore.addDraftComment({ path: "src/foo.ts", line: 2, side: "RIGHT", commitSha: "", body: "original" });
+    await toMount();
+
+    await fireEvent.click(document.querySelector<HTMLButtonElement>('[title="Edit pending comment"]')!);
+    const textarea = document.querySelector<HTMLTextAreaElement>(".pending textarea")!;
+    expect(textarea).toBeTruthy();
+    textarea.focus();
+    await fireEvent.input(textarea, { target: { value: "edited but unsaved" } });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(win.isPinned("src/foo.ts")).toBe(true);
+
+    await toFar();
+    const after = document.querySelector<HTMLTextAreaElement>(".pending textarea");
+    expect(after).toBe(textarea);
+    expect(after!.value).toBe("edited but unsaved");
+  });
+
+  it("releases the editor pin once the editor is blurred and empty", async () => {
+    const { diffStore, owner } = renderWithWindow(makeFile());
+    diffStore.setActivePR(owner, "n", 1);
+    diffStore.addDraftComment({ path: "src/foo.ts", line: 2, side: "RIGHT", commitSha: "", body: "original" });
+    await toMount();
+
+    await fireEvent.click(document.querySelector<HTMLButtonElement>('[title="Edit pending comment"]')!);
+    const textarea = document.querySelector<HTMLTextAreaElement>(".pending textarea")!;
+    textarea.focus();
+    await fireEvent.input(textarea, { target: { value: "" } });
+    await new Promise((r) => setTimeout(r, 0));
+    // Focused, though empty: still pinned.
+    expect(win.isPinned("src/foo.ts")).toBe(true);
+
+    textarea.blur();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(win.isPinned("src/foo.ts")).toBe(false);
+    await toFar();
+    expect(hunkHeader()).toBeNull();
+  });
+
+  it("releases the editor pin when the editor is closed", async () => {
+    const { diffStore, owner } = renderWithWindow(makeFile());
+    diffStore.setActivePR(owner, "n", 1);
+    diffStore.addDraftComment({ path: "src/foo.ts", line: 2, side: "RIGHT", commitSha: "", body: "original" });
+    await toMount();
+
+    await fireEvent.click(document.querySelector<HTMLButtonElement>('[title="Edit pending comment"]')!);
+    const textarea = document.querySelector<HTMLTextAreaElement>(".pending textarea")!;
+    await fireEvent.input(textarea, { target: { value: "typed" } });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(win.isPinned("src/foo.ts")).toBe(true);
+
+    const cancel = Array.from(document.querySelectorAll<HTMLButtonElement>(".pending button"))
+      .find((b) => b.textContent?.trim() === "Cancel")!;
+    await fireEvent.click(cancel);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(document.querySelector(".pending textarea")).toBeNull();
+    expect(win.isPinned("src/foo.ts")).toBe(false);
   });
 
   it("pins the file while the document selection is inside it", async () => {

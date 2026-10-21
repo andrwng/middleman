@@ -204,6 +204,7 @@ export function createDiffWindow(
         elByPath.delete(path);
         pathByEl.delete(el);
         flags.delete(path);
+        resolveWaiters(path, false);
         delete zones[path];
         delete visibilities[path];
       };
@@ -307,6 +308,26 @@ export function measureRowHeight(body: HTMLElement): void {
   const line = body.querySelector<HTMLElement>(".line-wrap");
   const h = line?.getBoundingClientRect().height ?? 0;
   if (h > 0) measuredRowHeight = h;
+}
+
+// True while any text editor inside `root` (textarea, text input or
+// contenteditable) is focused or holds text. DiffFile pins its body
+// while this holds, so component-local drafts (comment edits, replies,
+// follow-ups) are never destroyed by an unmount.
+export function hasActiveEditor(root: Element): boolean {
+  const active = root.ownerDocument.activeElement;
+  const editors = root.querySelectorAll<HTMLElement>(
+    'textarea, input:not([type]), input[type="text"], input[type="search"], [contenteditable]:not([contenteditable="false"])',
+  );
+  for (const el of editors) {
+    if (el === active) return true;
+    if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) {
+      if (el.value !== "") return true;
+    } else if ((el.textContent ?? "") !== "") {
+      return true;
+    }
+  }
+  return false;
 }
 
 // Context plumbing so components under DiffView (and Task 8's jump
