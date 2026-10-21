@@ -180,21 +180,26 @@ func (m *Manager) DiffSummary(
 // DiffPaths runs the same raw+patch diff as Diff, limited to the given new
 // and old paths via --literal-pathspecs, and keeps only files whose path or
 // old_path is in the requested set (dropping a stray partner the pathspec
-// might otherwise introduce). Output shape and whitespace handling match
-// Diff; the caller is expected to pass both new and old paths for renames
-// and copies.
+// might otherwise introduce). Output shape matches Diff, with one
+// deliberate difference: WhitespaceOnlyCount is always 0. This backs the
+// per-batch hunks endpoint, called many times per page, so its cost must
+// scale with the batch, not the whole from..to diff; the batch-wide count
+// isn't needed anyway since the /files summary already carries the total.
+// Per-file IsWhitespaceOnly is still computed correctly, scoped to the
+// requested paths rather than the full diff, and the caller is expected to
+// pass both new and old paths for renames and copies.
 func (m *Manager) DiffPaths(
 	ctx context.Context,
 	host, owner, name, from, to string,
 	hideWhitespace bool,
 	paths []string,
 ) (*DiffResult, error) {
-	clonePath := m.ClonePath(host, owner, name)
-
-	wsCount, err := m.computeWhitespaceOnlyCount(ctx, host, clonePath, from, to)
-	if err != nil {
-		return nil, fmt.Errorf("whitespace count: %w", err)
+	paths = cleanPaths(paths)
+	if len(paths) == 0 {
+		return &DiffResult{Files: []DiffFile{}}, nil
 	}
+
+	clonePath := m.ClonePath(host, owner, name)
 
 	rawArgs := withWhitespaceFlag([]string{
 		"diff", "--raw", "-z", "-M", "-C", "--find-copies-harder", from, to,
@@ -221,8 +226,11 @@ func (m *Manager) DiffPaths(
 		}
 	}
 
-	files = applyWhitespaceOnly(
-		files, m.getWhitespaceOnlyFiles(ctx, host, clonePath, from, to), hideWhitespace)
+	wsFiles, err := m.getWhitespaceOnlyFilesForPaths(ctx, host, clonePath, from, to, paths)
+	if err != nil {
+		return nil, fmt.Errorf("whitespace-only files: %w", err)
+	}
+	files = applyWhitespaceOnly(files, wsFiles, hideWhitespace)
 
 	// Keep only files the caller actually asked for; a pathspec can pull in
 	// a stray partner (e.g. matching only one side of a rename).
@@ -242,8 +250,7 @@ func (m *Manager) DiffPaths(
 		files = []DiffFile{}
 	}
 	return &DiffResult{
-		WhitespaceOnlyCount: wsCount,
-		Files:               files,
+		Files: files,
 	}, nil
 }
 
@@ -259,10 +266,29 @@ func withWhitespaceFlag(args []string, hide bool) []string {
 	return out
 }
 
+// cleanPaths drops empty and duplicate entries, preserving the order of
+// first occurrence. An empty string is not a valid git pathspec ("empty
+// string is not a valid pathspec; perhaps you forgot to add either ':/' or
+// '.' ?"), so a caller-supplied "" must never reach the pathspec list.
+func cleanPaths(paths []string) []string {
+	seen := make(map[string]bool, len(paths))
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	return out
+}
+
 // pathLimitedArgs appends --literal-pathspecs (as a leading global flag) and
 // a "-- <paths>" pathspec list to args, so paths containing characters like
-// "[" or spaces are matched literally rather than as globs.
+// "[" or spaces are matched literally rather than as globs. paths is
+// cleaned of empty and duplicate entries first.
 func pathLimitedArgs(args []string, paths []string) []string {
+	paths = cleanPaths(paths)
 	out := make([]string, 0, len(args)+len(paths)+2)
 	out = append(out, "--literal-pathspecs")
 	out = append(out, args...)
@@ -347,6 +373,42 @@ func (m *Manager) getWhitespaceOnlyFiles(
 		}
 	}
 	return result
+}
+
+// getWhitespaceOnlyFilesForPaths is the path-limited counterpart to
+// getWhitespaceOnlyFiles, used by DiffPaths so whitespace-only detection
+// costs scale with the requested batch, not the full from..to diff.
+// Whitespace-only status is a per-file property (comparing a file's own
+// with- and without-whitespace diff), so scoping the underlying commands to
+// paths does not change the answer for any file in that scope.
+func (m *Manager) getWhitespaceOnlyFilesForPaths(
+	ctx context.Context, host, clonePath, from, to string, paths []string,
+) (map[string]bool, error) {
+	rawArgs := pathLimitedArgs(
+		[]string{"diff", "--raw", "-z", "--no-renames", from, to}, paths)
+	out1, err := m.git(ctx, host, clonePath, rawArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("git diff --raw --no-renames: %w", err)
+	}
+	// See computeWhitespaceOnlyCount: --numstat -w omits whitespace-only
+	// files (git 2.43's --raw -w does not), so it is the correct primitive.
+	numstatArgs := pathLimitedArgs(
+		[]string{"diff", "--numstat", "-z", "--no-renames", "-w", from, to}, paths)
+	out2, err := m.git(ctx, host, clonePath, numstatArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("git diff --numstat --no-renames -w: %w", err)
+	}
+
+	allFiles := parseRawZPaths(out1)
+	wFiles := parseNumstatZPaths(out2)
+
+	result := make(map[string]bool)
+	for f := range allFiles {
+		if !wFiles[f] {
+			result[f] = true
+		}
+	}
+	return result, nil
 }
 
 // parseRawZPaths extracts just the file paths from --raw -z output.

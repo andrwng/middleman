@@ -145,14 +145,38 @@ func SummaryRevspec(
 	return files, nil
 }
 
+// cleanPaths drops empty and duplicate entries, preserving the order of
+// first occurrence. An empty string is not a valid git pathspec ("empty
+// string is not a valid pathspec; perhaps you forgot to add either ':/' or
+// '.' ?"), so a caller-supplied "" must never reach the pathspec list.
+func cleanPaths(paths []string) []string {
+	seen := make(map[string]bool, len(paths))
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	return out
+}
+
 // DiffRevspecPaths runs the raw+patch pair for a Revspec scope, limited to
 // the given new and old paths via --literal-pathspecs, and keeps only files
 // whose path or old_path is in the requested set (dropping a stray partner
-// the pathspec might otherwise introduce). The caller is expected to pass
-// both new and old paths for renames and copies.
+// the pathspec might otherwise introduce). paths is cleaned of empty and
+// duplicate entries first; if nothing remains, this returns no files
+// without running git. The caller is expected to pass both new and old
+// paths for renames and copies.
 func DiffRevspecPaths(
 	ctx context.Context, worktreePath string, r Revspec, paths []string,
 ) ([]gitclone.DiffFile, error) {
+	paths = cleanPaths(paths)
+	if len(paths) == 0 {
+		return []gitclone.DiffFile{}, nil
+	}
+
 	rawArgs := []string{"--literal-pathspecs", "diff", "--raw", "-z", "-M", "-C", "--find-copies-harder"}
 	rawArgs = append(rawArgs, r.Args...)
 	rawArgs = append(rawArgs, "--")

@@ -481,6 +481,70 @@ func TestDiffPathsRenameWithoutOldPath(t *testing.T) {
 	assert.Equal("added", result.Files[0].Status)
 }
 
+// TestDiffPathsMultiFileBatch pins the shape the /diff/hunks endpoint
+// actually uses: a batch of several files at once, including a rename (old
+// and new path both requested). The batch's files must deep-equal the same
+// entries from the full diff.
+func TestDiffPathsMultiFileBatch(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+
+	mgr, mb, headSHA := setupDiffVarietyRepo(t)
+
+	full, err := mgr.Diff(ctx, "github.com", "test", "repo", mb, headSHA, false)
+	require.NoError(err)
+	fullByPath := make(map[string]DiffFile, len(full.Files))
+	for _, f := range full.Files {
+		fullByPath[f.Path] = f
+	}
+
+	batch := []string{
+		"mod.go", "mod.go",
+		"rename_dst.go", "rename_src.go",
+		"copy_dst.go", "copy_src.go",
+		"new.go",
+	}
+	result, err := mgr.DiffPaths(
+		ctx, "github.com", "test", "repo", mb, headSHA, false, batch)
+	require.NoError(err)
+	require.Len(result.Files, 4)
+
+	for _, f := range result.Files {
+		ff, ok := fullByPath[f.Path]
+		require.True(ok, "batch file %q not present in full diff", f.Path)
+		assert.Equal(ff, f)
+	}
+}
+
+// TestDiffPathsEmptyAndDuplicatePaths covers two edge cases a caller can
+// trigger: a paths list mixing "" and duplicates still works (git rejects a
+// literal "" pathspec, so it must never reach the command line), and an
+// all-empty/all-blank list short-circuits to no files without running git.
+func TestDiffPathsEmptyAndDuplicatePaths(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+
+	mgr, mb, headSHA := setupDiffVarietyRepo(t)
+
+	result, err := mgr.DiffPaths(
+		ctx, "github.com", "test", "repo", mb, headSHA, false,
+		[]string{"", "mod.go", "mod.go", "", "mod.go"})
+	require.NoError(err)
+	require.Len(result.Files, 1)
+	assert.Equal("mod.go", result.Files[0].Path)
+
+	// A clone path that does not exist would make any real git invocation
+	// fail, so a nil error here only holds if DiffPaths took the early-exit
+	// path and never ran git.
+	empty, err := mgr.DiffPaths(
+		ctx, "github.com", "nonexistent-owner", "nonexistent-repo",
+		mb, headSHA, false, []string{"", ""})
+	require.NoError(err)
+	assert.Empty(empty.Files)
+}
+
 func getSHA(t *testing.T, dir, ref string) string {
 	t.Helper()
 	cmd := exec.Command("git", "-C", dir, "rev-parse", ref)

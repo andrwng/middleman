@@ -229,6 +229,76 @@ func TestDiffRevspecPathsRenameWithoutOldPath(t *testing.T) {
 	assert.Equal("added", result[0].Status)
 }
 
+// TestDiffRevspecPathsMultiFileBatch pins the shape the /diff/hunks endpoint
+// actually uses: a batch of several files at once, including a rename (old
+// and new path both requested). The batch's files must deep-equal the same
+// entries from the full diff.
+func TestDiffRevspecPathsMultiFileBatch(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on PATH")
+	}
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+
+	dir, sha := setupDiffVarietyWorktree(t)
+	r := RevspecSingleCommit(sha)
+
+	full, err := diffRevspec(ctx, dir, r)
+	require.NoError(err)
+	fullByPath := make(map[string]gitclone.DiffFile, len(full))
+	for _, f := range full {
+		fullByPath[f.Path] = f
+	}
+
+	batch := []string{
+		"mod.txt", "mod.txt",
+		"rename_dst.txt", "rename_src.txt",
+		"copy_dst.txt", "copy_src.txt",
+		"new.txt",
+	}
+	result, err := DiffRevspecPaths(ctx, dir, r, batch)
+	require.NoError(err)
+	require.Len(result, 4)
+
+	for _, f := range result {
+		ff, ok := fullByPath[f.Path]
+		require.True(ok, "batch file %q not present in full diff", f.Path)
+		assert.Equal(ff, f)
+	}
+}
+
+// TestDiffRevspecPathsEmptyAndDuplicatePaths covers two edge cases a caller
+// can trigger: a paths list mixing "" and duplicates still works (git
+// rejects a literal "" pathspec, so it must never reach the command line),
+// and an all-empty/all-blank list short-circuits to no files without
+// running git.
+func TestDiffRevspecPathsEmptyAndDuplicatePaths(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on PATH")
+	}
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+
+	dir, sha := setupDiffVarietyWorktree(t)
+	r := RevspecSingleCommit(sha)
+
+	result, err := DiffRevspecPaths(ctx, dir, r,
+		[]string{"", "mod.txt", "mod.txt", "", "mod.txt"})
+	require.NoError(err)
+	require.Len(result, 1)
+	assert.Equal("mod.txt", result[0].Path)
+
+	// A worktree path that does not exist would make any real git
+	// invocation fail, so a nil error here only holds if DiffRevspecPaths
+	// took the early-exit path and never ran git.
+	empty, err := DiffRevspecPaths(
+		ctx, filepath.Join(dir, "does-not-exist"), r, []string{"", ""})
+	require.NoError(err)
+	assert.Empty(empty)
+}
+
 func paths(files []gitclone.DiffFile) []string {
 	out := make([]string, 0, len(files))
 	for _, f := range files {
