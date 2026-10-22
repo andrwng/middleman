@@ -25,6 +25,7 @@ type ReviewDraft struct {
 	Body           string
 	Origin         string
 	State          string
+	RunID          *int64
 	SubmitError    string
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
@@ -63,7 +64,7 @@ type ReviewDraftCount struct {
 
 const reviewDraftColumns = `id, merge_request_id, branch, path, side, line, start_line,
 	commit_sha, in_reply_to, body, origin, state, submit_error,
-	created_at, updated_at, body_edited_at`
+	created_at, updated_at, body_edited_at, run_id`
 
 func scanReviewDraft(sc interface{ Scan(...any) error }) (ReviewDraft, error) {
 	var (
@@ -71,10 +72,11 @@ func scanReviewDraft(sc interface{ Scan(...any) error }) (ReviewDraft, error) {
 		startLine sql.NullInt64
 		inReplyTo sql.NullInt64
 		editedAt  sql.NullTime
+		runID     sql.NullInt64
 	)
 	err := sc.Scan(&r.ID, &r.MergeRequestID, &r.Branch, &r.Path, &r.Side, &r.Line,
 		&startLine, &r.CommitSHA, &inReplyTo, &r.Body, &r.Origin, &r.State,
-		&r.SubmitError, &r.CreatedAt, &r.UpdatedAt, &editedAt)
+		&r.SubmitError, &r.CreatedAt, &r.UpdatedAt, &editedAt, &runID)
 	if err != nil {
 		return r, err
 	}
@@ -89,6 +91,10 @@ func scanReviewDraft(sc interface{ Scan(...any) error }) (ReviewDraft, error) {
 	if editedAt.Valid {
 		v := editedAt.Time.UTC()
 		r.BodyEditedAt = &v
+	}
+	if runID.Valid {
+		v := runID.Int64
+		r.RunID = &v
 	}
 	r.CreatedAt = r.CreatedAt.UTC()
 	r.UpdatedAt = r.UpdatedAt.UTC()
@@ -316,4 +322,78 @@ func (d *DB) ListReviewDraftCounts(ctx context.Context) ([]ReviewDraftCount, err
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+var ErrInvalidDraftTransition = errors.New("invalid draft state transition")
+
+// InsertClaudeSuggestion stores one finding from a review run as a
+// suggestion. Suggestions are never published until the reviewer adds
+// them to drafts.
+func (d *DB) InsertClaudeSuggestion(
+	ctx context.Context, mrID int64, branch string, runID int64, in NewReviewDraft,
+) (ReviewDraft, error) {
+	now := time.Now().UTC()
+	if _, err := d.rw.ExecContext(ctx,
+		`INSERT INTO middleman_review_drafts
+		     (id, merge_request_id, branch, path, side, line, start_line,
+		      commit_sha, in_reply_to, body, origin, state, run_id, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, 'claude', 'suggestion', ?, ?, ?)`,
+		in.ID, mrID, branch, in.Path, in.Side, in.Line, in.StartLine,
+		in.CommitSHA, in.Body, runID, now, now,
+	); err != nil {
+		return ReviewDraft{}, err
+	}
+	r, err := d.GetReviewDraft(ctx, mrID, branch, in.ID)
+	if err != nil {
+		return ReviewDraft{}, err
+	}
+	return *r, nil
+}
+
+// transitionReviewDraft moves a draft between states with a
+// compare-and-set on the current state. Returns nil, nil when the
+// draft does not exist on this PR/branch.
+func (d *DB) transitionReviewDraft(
+	ctx context.Context, mrID int64, branch, id, setSQL string, fromStates []string,
+) (*ReviewDraft, error) {
+	cur, err := d.GetReviewDraft(ctx, mrID, branch, id)
+	if err != nil || cur == nil {
+		return nil, err
+	}
+	allowed := false
+	for _, s := range fromStates {
+		if cur.State == s {
+			allowed = true
+		}
+	}
+	if !allowed {
+		return nil, ErrInvalidDraftTransition
+	}
+	res, err := d.rw.ExecContext(ctx,
+		`UPDATE middleman_review_drafts SET `+setSQL+`, updated_at = ?
+		  WHERE merge_request_id = ? AND branch = ? AND id = ? AND state = ?`,
+		time.Now().UTC(), mrID, branch, id, cur.State,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, ErrInvalidDraftTransition // raced with another transition
+	}
+	return d.GetReviewDraft(ctx, mrID, branch, id)
+}
+
+func (d *DB) AcceptReviewDraft(ctx context.Context, mrID int64, branch, id string) (*ReviewDraft, error) {
+	return d.transitionReviewDraft(ctx, mrID, branch, id, `state = 'draft'`, []string{"suggestion"})
+}
+
+func (d *DB) DiscardReviewDraft(ctx context.Context, mrID int64, branch, id string) (*ReviewDraft, error) {
+	return d.transitionReviewDraft(ctx, mrID, branch, id,
+		`discarded_from = state, state = 'discarded'`, []string{"suggestion", "draft"})
+}
+
+func (d *DB) RestoreReviewDraft(ctx context.Context, mrID int64, branch, id string) (*ReviewDraft, error) {
+	return d.transitionReviewDraft(ctx, mrID, branch, id,
+		`state = CASE discarded_from WHEN 'draft' THEN 'draft' ELSE 'suggestion' END, discarded_from = ''`,
+		[]string{"discarded"})
 }

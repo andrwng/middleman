@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -169,4 +170,88 @@ func TestListReviewDraftCounts(t *testing.T) {
 	assert.Equal(2, counts[0].Count)
 	assert.Equal("acme", counts[0].Owner)
 	assert.NotZero(counts[0].Number)
+}
+
+func TestReviewDraftTransitions(t *testing.T) {
+	d := openTestDB(t)
+	ctx := context.Background()
+	mrID := seedAIQuestionTestMR(t, d)
+	run, err := d.CreateAIReviewRun(ctx, NewAIReviewRun{MergeRequestID: mrID, HeadSHA: "h", ReadSHA: "h"})
+	require.NoError(t, err)
+
+	type step struct {
+		op      string // accept|discard|restore|edit
+		want    string // resulting state, "" when the op must fail
+		wantErr error
+	}
+	cases := []struct {
+		name  string
+		start string // suggestion|draft
+		steps []step
+	}{
+		{"accept suggestion", "suggestion", []step{{op: "accept", want: "draft"}}},
+		{"accept twice fails", "suggestion", []step{{op: "accept", want: "draft"}, {op: "accept", wantErr: ErrInvalidDraftTransition}}},
+		{"discard and restore suggestion", "suggestion", []step{{op: "discard", want: "discarded"}, {op: "restore", want: "suggestion"}}},
+		{"discard and restore draft", "draft", []step{{op: "discard", want: "discarded"}, {op: "restore", want: "draft"}}},
+		{"restore live draft fails", "draft", []step{{op: "restore", wantErr: ErrInvalidDraftTransition}}},
+		{"accept discarded fails", "suggestion", []step{{op: "discard", want: "discarded"}, {op: "accept", wantErr: ErrInvalidDraftTransition}}},
+		{"edit keeps suggestion state", "suggestion", []step{{op: "edit", want: "suggestion"}}},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			id := fmt.Sprintf("t-%d", i)
+			nd := NewReviewDraft{ID: id, Path: "a.go", Side: "RIGHT", Line: 1, CommitSHA: "h", Body: "b"}
+			if tc.start == "suggestion" {
+				_, err := d.InsertClaudeSuggestion(ctx, mrID, "", run.ID, nd)
+				require.NoError(t, err)
+			} else {
+				_, err := d.InsertUserReviewDrafts(ctx, mrID, "", []NewReviewDraft{nd})
+				require.NoError(t, err)
+			}
+			for _, s := range tc.steps {
+				var got *ReviewDraft
+				var err error
+				switch s.op {
+				case "accept":
+					got, err = d.AcceptReviewDraft(ctx, mrID, "", id)
+				case "discard":
+					got, err = d.DiscardReviewDraft(ctx, mrID, "", id)
+				case "restore":
+					got, err = d.RestoreReviewDraft(ctx, mrID, "", id)
+				case "edit":
+					got, err = d.UpdateReviewDraftBody(ctx, mrID, "", id, "edited")
+				}
+				if s.wantErr != nil {
+					require.ErrorIs(t, err, s.wantErr)
+					continue
+				}
+				require.NoError(t, err)
+				require.NotNil(t, got)
+				assert.Equal(t, s.want, got.State)
+			}
+		})
+	}
+
+	missing, err := d.AcceptReviewDraft(ctx, mrID, "", "nope")
+	require.NoError(t, err)
+	assert.Nil(t, missing)
+}
+
+func TestDraftRationales(t *testing.T) {
+	require := require.New(t)
+	d := openTestDB(t)
+	ctx := context.Background()
+	mrID := seedAIQuestionTestMR(t, d)
+	run, err := d.CreateAIReviewRun(ctx, NewAIReviewRun{MergeRequestID: mrID, HeadSHA: "h", ReadSHA: "h"})
+	require.NoError(err)
+	_, err = d.InsertClaudeSuggestion(ctx, mrID, "", run.ID, NewReviewDraft{ID: "r-1", Path: "a.go", Side: "RIGHT", Line: 1, CommitSHA: "h", Body: "b"})
+	require.NoError(err)
+	_, err = d.InsertReviewDraftMessage(ctx, NewReviewDraftMessage{DraftID: "r-1", Author: "claude", Kind: "message", Body: "because X", Status: "done"})
+	require.NoError(err)
+	_, err = d.InsertReviewDraftMessage(ctx, NewReviewDraftMessage{DraftID: "r-1", Author: "claude", Kind: "message", Body: "later reply", Status: "done"})
+	require.NoError(err)
+
+	got, err := d.ListDraftRationales(ctx, mrID, "")
+	require.NoError(err)
+	require.Equal(map[string]string{"r-1": "because X"}, got)
 }
