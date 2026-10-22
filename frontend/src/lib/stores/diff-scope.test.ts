@@ -101,7 +101,11 @@ describe("diff store scope", () => {
     await store.loadCommits();
     await store.loadCommits();
 
-    expect(mockFetch).toHaveBeenCalledTimes(3);
+    // Count only commit fetches: loadDiff also loads review drafts.
+    const commitFetches = mockFetch.mock.calls.filter(([input]) =>
+      String(typeof input === "string" ? input : input instanceof URL ? input : (input as Request).url).includes("/commits"),
+    );
+    expect(commitFetches).toHaveLength(1);
   });
 
   it("selectCommit sets scope and refetches diff", async () => {
