@@ -12,34 +12,42 @@ var ErrReviewRunActive = errors.New("a review run is already active for this pul
 // AIReviewRun is one "Review with Claude" invocation. ClaudeSessionID
 // is the root session every per-suggestion chat forks from.
 type AIReviewRun struct {
-	ID              int64
-	MergeRequestID  int64
-	Branch          string
-	HeadSHA         string
-	ReadSHA         string
-	Instructions    string
-	ClaudeSessionID string
-	WorktreePath    string
-	Status          string
-	Summary         string
-	RawJSON         string
-	Error           string
-	CreatedAt       time.Time
-	StartedAt       *time.Time
-	CompletedAt     *time.Time
-}
-
-type NewAIReviewRun struct {
+	ID             int64
 	MergeRequestID int64
 	Branch         string
 	HeadSHA        string
 	ReadSHA        string
-	Instructions   string
+	// BaseSHA is the diff base the run was started against; anchors are
+	// validated against BaseSHA..ReadSHA for the whole run.
+	BaseSHA string
+	// LocalWorktreePath is the reviewer's worktree for local runs ("" for
+	// GitHub runs); the run's checkout and snapshot ref live in its repo.
+	LocalWorktreePath string
+	Instructions      string
+	ClaudeSessionID   string
+	WorktreePath      string
+	Status            string
+	Summary           string
+	RawJSON           string
+	Error             string
+	CreatedAt         time.Time
+	StartedAt         *time.Time
+	CompletedAt       *time.Time
+}
+
+type NewAIReviewRun struct {
+	MergeRequestID    int64
+	Branch            string
+	HeadSHA           string
+	ReadSHA           string
+	BaseSHA           string
+	LocalWorktreePath string
+	Instructions      string
 }
 
 const aiReviewRunColumns = `id, merge_request_id, branch, head_sha, read_sha, instructions,
 	claude_session_id, worktree_path, status, summary, raw_json, error,
-	created_at, started_at, completed_at`
+	created_at, started_at, completed_at, base_sha, local_worktree_path`
 
 func scanAIReviewRun(sc interface{ Scan(...any) error }) (AIReviewRun, error) {
 	var (
@@ -49,7 +57,7 @@ func scanAIReviewRun(sc interface{ Scan(...any) error }) (AIReviewRun, error) {
 	)
 	err := sc.Scan(&r.ID, &r.MergeRequestID, &r.Branch, &r.HeadSHA, &r.ReadSHA, &r.Instructions,
 		&r.ClaudeSessionID, &r.WorktreePath, &r.Status, &r.Summary, &r.RawJSON, &r.Error,
-		&r.CreatedAt, &started, &completed)
+		&r.CreatedAt, &started, &completed, &r.BaseSHA, &r.LocalWorktreePath)
 	if err != nil {
 		return r, err
 	}
@@ -87,9 +95,11 @@ func (d *DB) CreateAIReviewRun(ctx context.Context, in NewAIReviewRun) (AIReview
 	}
 	res, err := tx.ExecContext(ctx,
 		`INSERT INTO middleman_ai_review_runs
-		     (merge_request_id, branch, head_sha, read_sha, instructions, status, created_at)
-		 VALUES (?, ?, ?, ?, ?, 'queued', ?)`,
-		in.MergeRequestID, in.Branch, in.HeadSHA, in.ReadSHA, in.Instructions, time.Now().UTC(),
+		     (merge_request_id, branch, head_sha, read_sha, base_sha, local_worktree_path,
+		      instructions, status, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?)`,
+		in.MergeRequestID, in.Branch, in.HeadSHA, in.ReadSHA, in.BaseSHA, in.LocalWorktreePath,
+		in.Instructions, time.Now().UTC(),
 	)
 	if err != nil {
 		return AIReviewRun{}, err
@@ -213,4 +223,53 @@ func (d *DB) CountRunSuggestions(ctx context.Context, runID int64) (int, error) 
 		`SELECT COUNT(*) FROM middleman_review_drafts WHERE run_id = ? AND origin = 'claude'`,
 		runID).Scan(&n)
 	return n, err
+}
+
+// SetAIReviewRunReadSHA records what Claude reads for a run (the local
+// snapshot, created after the row exists so it can be named by run id).
+func (d *DB) SetAIReviewRunReadSHA(ctx context.Context, id int64, readSHA string) error {
+	_, err := d.rw.ExecContext(ctx,
+		`UPDATE middleman_ai_review_runs SET read_sha = ? WHERE id = ?`, readSHA, id)
+	return err
+}
+
+func (d *DB) listRuns(ctx context.Context, query string, args ...any) ([]AIReviewRun, error) {
+	rows, err := d.ro.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []AIReviewRun{}
+	for rows.Next() {
+		r, err := scanAIReviewRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ListActiveAIReviewRunsOnClosedPRs returns queued/running runs whose
+// pull request has been closed or merged.
+func (d *DB) ListActiveAIReviewRunsOnClosedPRs(ctx context.Context) ([]AIReviewRun, error) {
+	return d.listRuns(ctx,
+		`SELECT `+aiReviewRunColumns+` FROM middleman_ai_review_runs r
+		  WHERE r.status IN ('queued', 'running')
+		    AND r.merge_request_id IN (
+		        SELECT id FROM middleman_merge_requests WHERE state IN ('closed', 'merged'))
+		  ORDER BY r.id`)
+}
+
+// ListLocalRunsWithoutLiveDrafts returns finished local runs that no
+// suggestion or draft points at any more; their snapshot refs can go.
+func (d *DB) ListLocalRunsWithoutLiveDrafts(ctx context.Context) ([]AIReviewRun, error) {
+	return d.listRuns(ctx,
+		`SELECT `+aiReviewRunColumns+` FROM middleman_ai_review_runs r
+		  WHERE r.local_worktree_path != ''
+		    AND r.status NOT IN ('queued', 'running')
+		    AND NOT EXISTS (
+		        SELECT 1 FROM middleman_review_drafts rd
+		         WHERE rd.run_id = r.id AND rd.state IN ('suggestion', 'draft'))
+		  ORDER BY r.id`)
 }

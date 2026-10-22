@@ -95,3 +95,55 @@ func TestReviewRunFailureKeepsSuggestions(t *testing.T) {
 	require.NoError(err)
 	assert.Empty(active)
 }
+
+func TestAIReviewRunLocalFieldsAndCleanupQueries(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	d := openTestDB(t)
+	ctx := context.Background()
+	mrID := seedAIQuestionTestMR(t, d)
+
+	local, err := d.CreateAIReviewRun(ctx, NewAIReviewRun{MergeRequestID: mrID, Branch: "feat/a", HeadSHA: "head", ReadSHA: "head", BaseSHA: "base", LocalWorktreePath: "/w"})
+	require.NoError(err)
+	assert.Equal("base", local.BaseSHA)
+	assert.Equal("/w", local.LocalWorktreePath)
+	require.NoError(d.SetAIReviewRunReadSHA(ctx, local.ID, "snap"))
+	got, err := d.GetAIReviewRun(ctx, local.ID)
+	require.NoError(err)
+	assert.Equal("snap", got.ReadSHA)
+
+	// Active local run: not prunable yet.
+	prunable, err := d.ListLocalRunsWithoutLiveDrafts(ctx)
+	require.NoError(err)
+	assert.Empty(prunable)
+
+	_, err = d.InsertClaudeSuggestion(ctx, mrID, "feat/a", local.ID, NewReviewDraft{ID: "l1", Path: "a", Side: "RIGHT", Line: 1, CommitSHA: "head", Body: "b"})
+	require.NoError(err)
+	require.NoError(d.MarkAIReviewRunDone(ctx, local.ID, "s", "", ""))
+	prunable, err = d.ListLocalRunsWithoutLiveDrafts(ctx)
+	require.NoError(err)
+	assert.Empty(prunable) // a live suggestion still points at it
+
+	_, err = d.DiscardReviewDraft(ctx, mrID, "feat/a", "l1")
+	require.NoError(err)
+	prunable, err = d.ListLocalRunsWithoutLiveDrafts(ctx)
+	require.NoError(err)
+	require.Len(prunable, 1)
+	assert.Equal(local.ID, prunable[0].ID)
+
+	// GitHub runs are never in the prune list; active runs on closed PRs are listed.
+	gh, err := d.CreateAIReviewRun(ctx, NewAIReviewRun{MergeRequestID: mrID, HeadSHA: "h", ReadSHA: "h", BaseSHA: "b"})
+	require.NoError(err)
+	closed, err := d.ListActiveAIReviewRunsOnClosedPRs(ctx)
+	require.NoError(err)
+	assert.Empty(closed)
+	_, err = d.rw.ExecContext(ctx, `UPDATE middleman_merge_requests SET state = 'merged' WHERE id = ?`, mrID)
+	require.NoError(err)
+	closed, err = d.ListActiveAIReviewRunsOnClosedPRs(ctx)
+	require.NoError(err)
+	require.Len(closed, 1)
+	assert.Equal(gh.ID, closed[0].ID)
+	prunable, err = d.ListLocalRunsWithoutLiveDrafts(ctx)
+	require.NoError(err)
+	require.Len(prunable, 1)
+}
