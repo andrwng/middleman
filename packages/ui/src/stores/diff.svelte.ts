@@ -6,6 +6,7 @@ import type {
 } from "../api/types.js";
 import type { MiddlemanClient } from "../types.js";
 import { apiErrorMessage } from "../api/errors.js";
+import { createReviewDraftsApi, DraftApiError, type PRRef, type ServerDraft } from "./reviewDraftsApi.js";
 import {
   LAZY_DIFF_LINES,
   compileGlob,
@@ -132,8 +133,9 @@ function saveReviewedCommits(rc: Record<string, string[]>): void {
   safeSetItem("diff-reviewed-commits", JSON.stringify(rc));
 }
 
-// Per-PR draft review state. Kept in localStorage so reloads don't
-// lose pending comments. commit_id on each comment is critical —
+// Per-PR draft review state. Persisted server-side through
+// reviewDraftsApi; the in-memory copy is optimistic so the draft API
+// stays synchronous for callers. commit_id on each comment is critical —
 // GitHub refuses to anchor review comments unless the referenced
 // commit is part of the PR's history.
 export type ReviewEvent = "APPROVE" | "COMMENT" | "REQUEST_CHANGES";
@@ -152,6 +154,9 @@ export interface DraftComment {
   // ignored in favor of the parent thread's anchor — we still keep
   // them here so the draft renders in the right spot in the diff UI.
   inReplyTo?: number;
+  // GitHub's error from the last publish attempt, when this draft
+  // blocked it. Cleared by the next body edit.
+  submitError?: string;
 }
 
 export interface DraftReview {
@@ -199,8 +204,42 @@ function loadDraftReviews(): Record<string, DraftReview> {
   }
 }
 
-function saveDraftReviews(d: Record<string, DraftReview>): void {
-  safeSetItem("diff-draft-reviews", JSON.stringify(d));
+function fromServerDraft(d: ServerDraft): DraftComment {
+  return {
+    id: d.id,
+    path: d.path,
+    line: d.line,
+    side: d.side,
+    ...(d.start_line != null ? { startLine: d.start_line } : {}),
+    commitSha: d.commit_sha,
+    body: d.body,
+    createdAt: d.created_at,
+    ...(d.in_reply_to != null ? { inReplyTo: d.in_reply_to } : {}),
+    ...(d.submit_error ? { submitError: d.submit_error } : {}),
+  };
+}
+
+function toDraftWrite(c: DraftComment) {
+  return {
+    id: c.id,
+    path: c.path,
+    side: c.side,
+    line: c.line,
+    ...(c.startLine != null ? { start_line: c.startLine } : {}),
+    commit_sha: c.commitSha,
+    ...(c.inReplyTo != null ? { in_reply_to: c.inReplyTo } : {}),
+    body: c.body,
+    created_at: c.createdAt,
+  };
+}
+
+function draftKeyFor(pr: PRRef): string {
+  return `${pr.owner}/${pr.name}#${pr.number}`;
+}
+
+function parseDraftKey(key: string): PRRef | null {
+  const m = key.match(/^(.+)\/(.+)#(\d+)$/);
+  return m ? { owner: m[1]!, name: m[2]!, number: Number(m[3]) } : null;
 }
 
 function loadReviewedFiles(): Record<string, string[]> {
@@ -313,7 +352,147 @@ export function createDiffStore(opts: DiffStoreOptions) {
   let currentNumber = $state(0);
   let reviewedCommits = $state<Record<string, string[]>>(loadReviewedCommits());
   let reviewedFiles = $state<Record<string, string[]>>(loadReviewedFiles());
-  let draftReviews = $state<Record<string, DraftReview>>(loadDraftReviews());
+  let draftReviews = $state<Record<string, DraftReview>>({});
+  let draftSyncError = $state<string | null>(null);
+  // Per-PR publishable-draft counts for PRs whose drafts are not
+  // loaded; fetched lazily by hasDraftForPR.
+  let draftSummary = $state<Record<string, number> | null>(null);
+  const draftsApi = createReviewDraftsApi(getBasePath);
+  // Bumped per drafts load so a late response for a PR the user has
+  // left is dropped.
+  let draftsGen = 0;
+  let importPromise: Promise<void> | null = null;
+  // Creates the server has not answered yet, by draft id. Removes and
+  // edits wait on these so the server never ends up with a draft the
+  // user already deleted.
+  const pendingCreates = new Map<string, Promise<unknown>>();
+  const inflight = new Set<Promise<unknown>>();
+  let metaTimer: ReturnType<typeof setTimeout> | null = null;
+  let metaPendingFor: PRRef | null = null;
+
+  function track<T>(p: Promise<T>): Promise<T> {
+    inflight.add(p);
+    void p.then(
+      () => inflight.delete(p),
+      () => inflight.delete(p),
+    );
+    return p;
+  }
+
+  async function whenDraftsSettled(): Promise<void> {
+    while (inflight.size > 0) {
+      await Promise.allSettled([...inflight]);
+    }
+  }
+
+  function currentPRRef(): PRRef | null {
+    return currentOwner ? { owner: currentOwner, name: currentName, number: currentNumber } : null;
+  }
+
+  function syncFailed(err: unknown): void {
+    draftSyncError = err instanceof Error ? err.message : String(err);
+  }
+
+  // One-time move of drafts written by older builds into the server.
+  // The key is removed only when every PR imported; the server ignores
+  // ids it already has, so a retry on the next load is safe.
+  function importLegacyDrafts(): Promise<void> {
+    if (importPromise) return importPromise;
+    importPromise = track((async () => {
+      const legacy = loadDraftReviews();
+      const keys = Object.keys(legacy);
+      if (keys.length === 0) return;
+      let allOk = true;
+      for (const key of keys) {
+        const pr = parseDraftKey(key);
+        const d = legacy[key]!;
+        if (!pr) continue;
+        try {
+          if (d.comments.length > 0) await draftsApi.create(pr, d.comments.map(toDraftWrite));
+          if (d.body || d.event !== "COMMENT") await draftsApi.putMeta(pr, d.body, d.event);
+        } catch {
+          allOk = false;
+        }
+      }
+      if (allOk) {
+        try {
+          localStorage.removeItem("diff-draft-reviews");
+        } catch {
+          // storage unavailable; the import will just run again
+        }
+      } else {
+        draftSyncError = "Some drafts from this browser could not be imported; they will retry on reload";
+      }
+    })());
+    return importPromise;
+  }
+
+  function loadDraftsFor(pr: PRRef): Promise<void> {
+    const gen = ++draftsGen;
+    const key = draftKeyFor(pr);
+    return track((async () => {
+      await importLegacyDrafts();
+      try {
+        const res = await draftsApi.list(pr);
+        if (gen !== draftsGen) return;
+        const server = res.drafts.filter((d) => d.state === "draft").map(fromServerDraft);
+        const local = draftReviews[key]?.comments ?? [];
+        const pendingLocal = local.filter(
+          (c) => pendingCreates.has(c.id) && !server.some((sd) => sd.id === c.id),
+        );
+        // A summary/event edit not yet flushed is newer than what the
+        // server has; keep it rather than clobbering the user's typing.
+        const localMeta = metaPendingFor && draftKeyFor(metaPendingFor) === key ? draftReviews[key] : undefined;
+        const event: ReviewEvent = localMeta
+          ? localMeta.event
+          : res.meta.event === "APPROVE" || res.meta.event === "REQUEST_CHANGES"
+            ? res.meta.event
+            : "COMMENT";
+        draftReviews = {
+          ...draftReviews,
+          [key]: { body: localMeta ? localMeta.body : res.meta.body, event, comments: [...server, ...pendingLocal] },
+        };
+      } catch (err) {
+        if (gen === draftsGen) syncFailed(err);
+      }
+    })());
+  }
+
+  function reloadDrafts(): Promise<void> {
+    const pr = currentPRRef();
+    return pr ? loadDraftsFor(pr) : Promise.resolve();
+  }
+
+  function flushMeta(): void {
+    if (metaTimer) {
+      clearTimeout(metaTimer);
+      metaTimer = null;
+    }
+    const pr = metaPendingFor;
+    metaPendingFor = null;
+    if (!pr) return;
+    const d = draftReviews[draftKeyFor(pr)] ?? emptyDraft();
+    track(draftsApi.putMeta(pr, d.body, d.event).catch(syncFailed));
+  }
+
+  function scheduleMeta(): void {
+    const pr = currentPRRef();
+    if (!pr) return;
+    if (metaPendingFor && draftKeyFor(metaPendingFor) !== draftKeyFor(pr)) flushMeta();
+    metaPendingFor = pr;
+    if (metaTimer) clearTimeout(metaTimer);
+    metaTimer = setTimeout(flushMeta, 400);
+  }
+
+  function removeOnServer(pr: PRRef, ids: string[]): void {
+    if (ids.length === 0) return;
+    track(
+      (async () => {
+        await Promise.allSettled(ids.map((id) => pendingCreates.get(id) ?? Promise.resolve()));
+        await draftsApi.remove(pr, ids);
+      })().catch(syncFailed),
+    );
+  }
 
   function getCurrentPR(): { owner: string; name: string; number: number } | null {
     if (!currentOwner) return null;
@@ -321,9 +500,12 @@ export function createDiffStore(opts: DiffStoreOptions) {
   }
 
   function setActivePR(owner: string, name: string, number: number): void {
+    const changed = owner !== currentOwner || name !== currentName || number !== currentNumber;
+    if (changed) flushMeta();
     currentOwner = owner;
     currentName = name;
     currentNumber = number;
+    if (changed && owner) void loadDraftsFor({ owner, name, number });
   }
 
   // --- reads ---
@@ -828,10 +1010,12 @@ export function createDiffStore(opts: DiffStoreOptions) {
       owner !== currentOwner ||
       name !== currentName ||
       number !== currentNumber;
+    if (prChanged) flushMeta();
     currentOwner = owner;
     currentName = name;
     currentNumber = number;
     if (prChanged) {
+      void loadDraftsFor({ owner, name, number });
       scope = { kind: "head" };
       commits = null;
       commitsLoading = false;
@@ -967,6 +1151,7 @@ export function createDiffStore(opts: DiffStoreOptions) {
     patchsetsLoading = false;
     patchsetsError = null;
     resetNotes();
+    flushMeta();
     scope = { kind: "head" };
     currentOwner = "";
     currentName = "";
@@ -1407,7 +1592,50 @@ export function createDiffStore(opts: DiffStoreOptions) {
   ): boolean {
     const key = `${owner}/${name}#${number}`;
     const d = draftReviews[key];
-    return !!d && d.comments.length > 0;
+    if (d) return d.comments.length > 0;
+    if (draftSummary === null) {
+      draftSummary = {};
+      track(
+        draftsApi
+          .summary()
+          .then((prs) => {
+            const next: Record<string, number> = {};
+            for (const p of prs) next[`${p.owner}/${p.name}#${p.number}`] = p.count;
+            draftSummary = next;
+          })
+          .catch(() => {}),
+      );
+    }
+    return (draftSummary[key] ?? 0) > 0;
+  }
+
+  // publishDraft posts the current PR's server-side drafts to GitHub.
+  // On failure it reloads drafts so the ones GitHub accepted disappear
+  // and the one that failed shows its error.
+  async function publishDraft(req: {
+    event: ReviewEvent;
+    body: string;
+    commitId?: string;
+  }): Promise<{ ok: true } | { ok: false; error: string }> {
+    const pr = currentPRRef();
+    if (!pr) return { ok: false, error: "No pull request selected" };
+    flushMeta();
+    await whenDraftsSettled();
+    try {
+      await draftsApi.publish(pr, {
+        event: req.event,
+        body: req.body,
+        ...(req.commitId ? { commit_id: req.commitId } : {}),
+      });
+      const next = { ...draftReviews };
+      delete next[draftKeyFor(pr)];
+      draftReviews = next;
+      draftSummary = null;
+      return { ok: true };
+    } catch (err) {
+      await reloadDrafts();
+      return { ok: false, error: err instanceof DraftApiError ? err.message : String(err) };
+    }
   }
 
   function setDraftBody(body: string): void {
@@ -1415,7 +1643,7 @@ export function createDiffStore(opts: DiffStoreOptions) {
     const key = draftKey();
     const existing = draftReviews[key] ?? emptyDraft();
     draftReviews = { ...draftReviews, [key]: { ...existing, body } };
-    saveDraftReviews(draftReviews);
+    scheduleMeta();
   }
 
   function setDraftEvent(event: ReviewEvent): void {
@@ -1423,7 +1651,7 @@ export function createDiffStore(opts: DiffStoreOptions) {
     const key = draftKey();
     const existing = draftReviews[key] ?? emptyDraft();
     draftReviews = { ...draftReviews, [key]: { ...existing, event } };
-    saveDraftReviews(draftReviews);
+    scheduleMeta();
   }
 
   function addDraftComment(
@@ -1443,7 +1671,18 @@ export function createDiffStore(opts: DiffStoreOptions) {
       ...draftReviews,
       [key]: { ...existing, comments: [...existing.comments, comment] },
     };
-    saveDraftReviews(draftReviews);
+    const pr = currentPRRef();
+    if (pr) {
+      const p = track(draftsApi.create(pr, [toDraftWrite(comment)]));
+      pendingCreates.set(comment.id, p);
+      void p.then(
+        () => pendingCreates.delete(comment.id),
+        (err: unknown) => {
+          pendingCreates.delete(comment.id);
+          syncFailed(err);
+        },
+      );
+    }
     return comment;
   }
 
@@ -1457,7 +1696,8 @@ export function createDiffStore(opts: DiffStoreOptions) {
       ...draftReviews,
       [key]: { ...existing, comments: next },
     };
-    saveDraftReviews(draftReviews);
+    const pr = currentPRRef();
+    if (pr) removeOnServer(pr, [id]);
   }
 
   // updateDraftCommentBody edits the body of an existing draft without
@@ -1476,14 +1716,23 @@ export function createDiffStore(opts: DiffStoreOptions) {
     const nextComments = existing.comments.map((c) => {
       if (c.id !== id || c.body === trimmed) return c;
       changed = true;
-      return { ...c, body: trimmed };
+      const { submitError: _cleared, ...rest } = c;
+      return { ...rest, body: trimmed };
     });
     if (!changed) return;
     draftReviews = {
       ...draftReviews,
       [key]: { ...existing, comments: nextComments },
     };
-    saveDraftReviews(draftReviews);
+    const pr = currentPRRef();
+    if (pr) {
+      track(
+        (async () => {
+          await (pendingCreates.get(id) ?? Promise.resolve()).catch(() => {});
+          await draftsApi.updateBody(pr, id, trimmed);
+        })().catch(syncFailed),
+      );
+    }
   }
 
   // Transient signal so the sidebar drafts list can ask the inline
@@ -1509,11 +1758,20 @@ export function createDiffStore(opts: DiffStoreOptions) {
 
   function clearDraft(): void {
     const key = draftKey();
-    if (!draftReviews[key]) return;
+    const existing = draftReviews[key];
+    if (!existing) return;
+    const ids = existing.comments.map((c) => c.id);
     const next = { ...draftReviews };
     delete next[key];
     draftReviews = next;
-    saveDraftReviews(draftReviews);
+    draftSummary = null;
+    const pr = currentPRRef();
+    if (!pr) return;
+    removeOnServer(pr, ids);
+    if (metaTimer) clearTimeout(metaTimer);
+    metaTimer = null;
+    metaPendingFor = null;
+    track(draftsApi.putMeta(pr, "", "").catch(syncFailed));
   }
 
   function clearDraftCommentsForPath(path: string): void {
@@ -1522,8 +1780,10 @@ export function createDiffStore(opts: DiffStoreOptions) {
     if (!existing) return;
     const next = existing.comments.filter((c) => c.path !== path);
     if (next.length === existing.comments.length) return;
+    const removed = existing.comments.filter((c) => c.path === path).map((c) => c.id);
     draftReviews = { ...draftReviews, [key]: { ...existing, comments: next } };
-    saveDraftReviews(draftReviews);
+    const pr = currentPRRef();
+    if (pr) removeOnServer(pr, removed);
   }
 
   function markCommitReviewed(sha: string): void {
@@ -1796,6 +2056,10 @@ export function createDiffStore(opts: DiffStoreOptions) {
     getDraftCommentsForPath,
     clearDraft,
     clearDraftCommentsForPath,
+    getDraftSyncError: (): string | null => draftSyncError,
+    reloadDrafts,
+    publishDraft,
+    whenDraftsSettled,
     loadCommits,
     loadPatchsets,
     getPatchsets,
