@@ -80,6 +80,10 @@ type Runner struct {
 	running               map[int64]context.CancelFunc // questionID -> cancel
 	briefsRunning         map[int64]context.CancelFunc // briefID -> cancel
 	commitAnalysisRunning map[int64]context.CancelFunc // commit-analysis ID -> cancel
+	reviewRunsRunning     map[int64]context.CancelFunc // review run ID -> cancel
+
+	// reviewRunTimeout caps one Review with Claude run.
+	reviewRunTimeout time.Duration
 }
 
 // RunnerConfig holds dependencies for a Runner.
@@ -96,9 +100,16 @@ type RunnerConfig struct {
 	// token is absent, context is appended to the end of the file.
 	// Read errors fall back to the built-in prompt with a log.
 	BriefPromptFile string
+	// ReviewRunTimeout caps one Review with Claude run; zero means 15
+	// minutes.
+	ReviewRunTimeout time.Duration
 }
 
 func New(cfg RunnerConfig) *Runner {
+	reviewRunTimeout := cfg.ReviewRunTimeout
+	if reviewRunTimeout <= 0 {
+		reviewRunTimeout = 15 * time.Minute
+	}
 	return &Runner{
 		db:                    cfg.DB,
 		clones:                cfg.Clones,
@@ -108,6 +119,8 @@ func New(cfg RunnerConfig) *Runner {
 		running:               make(map[int64]context.CancelFunc),
 		briefsRunning:         make(map[int64]context.CancelFunc),
 		commitAnalysisRunning: make(map[int64]context.CancelFunc),
+		reviewRunsRunning:     make(map[int64]context.CancelFunc),
+		reviewRunTimeout:      reviewRunTimeout,
 	}
 }
 
@@ -127,6 +140,13 @@ func (r *Runner) ReconcileOnStartup(ctx context.Context) error {
 	}
 	for _, b := range orphanBriefs {
 		_ = r.db.MarkAIBriefFailed(ctx, b.ID, "interrupted by middleman restart")
+	}
+	runs, err := r.db.ListActiveAIReviewRuns(ctx)
+	if err != nil {
+		return fmt.Errorf("list active review runs: %w", err)
+	}
+	for _, run := range runs {
+		_ = r.db.MarkAIReviewRunFailed(ctx, run.ID, "interrupted by middleman restart", "")
 	}
 	return nil
 }
@@ -452,15 +472,16 @@ func (r *Runner) runQuestion(ctx context.Context, thread db.AIThread, question d
 // primary key after a regenerate), we tear it down first so
 // `git worktree add` doesn't refuse.
 func (r *Runner) provisionWorktree(ctx context.Context, owner, name, commitSHA string, threadID int64) (string, error) {
+	return r.provisionWorktreeAt(ctx, owner, name, commitSHA, filepath.Join(r.rootDir, strconv.FormatInt(threadID, 10)))
+}
+
+// provisionWorktreeAt creates a detached worktree at commitSHA at the
+// given path, replacing anything already there.
+func (r *Runner) provisionWorktreeAt(ctx context.Context, owner, name, commitSHA, worktreePath string) (string, error) {
 	if r.hostFor == nil {
 		return "", errors.New("host resolver not configured")
 	}
-	host := r.hostFor(owner, name)
-	if host == "" {
-		host = "github.com"
-	}
-	cloneDir := r.clones.ClonePath(host, owner, name)
-	worktreePath := filepath.Join(r.rootDir, strconv.FormatInt(threadID, 10))
+	cloneDir := r.cloneDirFor(owner, name)
 
 	r.cleanWorktreePath(ctx, cloneDir, worktreePath)
 
@@ -470,6 +491,18 @@ func (r *Runner) provisionWorktree(ctx context.Context, owner, name, commitSHA s
 		return "", fmt.Errorf("git worktree add: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return worktreePath, nil
+}
+
+// cloneDirFor returns the bare clone directory for owner/name.
+func (r *Runner) cloneDirFor(owner, name string) string {
+	host := ""
+	if r.hostFor != nil {
+		host = r.hostFor(owner, name)
+	}
+	if host == "" {
+		host = "github.com"
+	}
+	return r.clones.ClonePath(host, owner, name)
 }
 
 // cleanWorktreePath ensures worktreePath doesn't exist on disk and

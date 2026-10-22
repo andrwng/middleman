@@ -129,6 +129,9 @@ type MCPConfig struct {
 	Owner   string
 	Name    string
 	Number  int
+	// RunID > 0 starts the MCP server in review-run mode (`middleman mcp
+	// --run <id>`), which serves only the Review with Claude tools.
+	RunID int64
 }
 
 // SubmitTurnInput packages a user-driven turn submission.
@@ -518,17 +521,21 @@ func (r *SessionRunner) markFailed(ctx context.Context, turnID int64, msg string
 // writeMCPConfig writes a temp `claude --mcp-config` JSON declaring the
 // middleman stdio server for one review, and returns its path + a cleanup.
 func writeMCPConfig(c MCPConfig) (string, func(), error) {
+	args := []string{
+		"mcp",
+		"--base-url", c.BaseURL,
+		"--owner", c.Owner,
+		"--name", c.Name,
+		"--number", fmt.Sprintf("%d", c.Number),
+	}
+	if c.RunID > 0 {
+		args = append(args, "--run", fmt.Sprintf("%d", c.RunID))
+	}
 	cfg := map[string]any{
 		"mcpServers": map[string]any{
 			"middleman": map[string]any{
 				"command": c.Binary,
-				"args": []string{
-					"mcp",
-					"--base-url", c.BaseURL,
-					"--owner", c.Owner,
-					"--name", c.Name,
-					"--number", fmt.Sprintf("%d", c.Number),
-				},
+				"args":    args,
 			},
 		},
 	}
