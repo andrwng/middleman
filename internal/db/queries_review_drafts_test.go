@@ -199,14 +199,15 @@ func TestReviewDraftTransitions(t *testing.T) {
 	}
 	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			must := require.New(t)
 			id := fmt.Sprintf("t-%d", i)
 			nd := NewReviewDraft{ID: id, Path: "a.go", Side: "RIGHT", Line: 1, CommitSHA: "h", Body: "b"}
 			if tc.start == "suggestion" {
 				_, err := d.InsertClaudeSuggestion(ctx, mrID, "", run.ID, nd)
-				require.NoError(t, err)
+				must.NoError(err)
 			} else {
 				_, err := d.InsertUserReviewDrafts(ctx, mrID, "", []NewReviewDraft{nd})
-				require.NoError(t, err)
+				must.NoError(err)
 			}
 			for _, s := range tc.steps {
 				var got *ReviewDraft
@@ -222,12 +223,12 @@ func TestReviewDraftTransitions(t *testing.T) {
 					got, err = d.UpdateReviewDraftBody(ctx, mrID, "", id, "edited")
 				}
 				if s.wantErr != nil {
-					require.ErrorIs(t, err, s.wantErr)
+					must.ErrorIs(err, s.wantErr)
 					continue
 				}
-				require.NoError(t, err)
-				require.NotNil(t, got)
-				assert.Equal(t, s.want, got.State)
+				must.NoError(err)
+				must.NotNil(got)
+				must.Equal(s.want, got.State)
 			}
 		})
 	}
