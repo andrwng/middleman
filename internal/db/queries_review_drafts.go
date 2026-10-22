@@ -201,6 +201,21 @@ func (d *DB) GetReviewDraft(
 	return &r, nil
 }
 
+// GetReviewDraftByID looks a draft up by id alone. Only for internal
+// callers that already hold a trusted id (the chat runner); routes must
+// use the PR-scoped GetReviewDraft.
+func (d *DB) GetReviewDraftByID(ctx context.Context, id string) (*ReviewDraft, error) {
+	r, err := scanReviewDraft(d.rw.QueryRowContext(ctx,
+		`SELECT `+reviewDraftColumns+` FROM middleman_review_drafts WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
 // UpdateReviewDraftBody records a reviewer edit and clears any stale
 // submit error. Returns nil, nil when the draft does not exist on this
 // PR/branch.

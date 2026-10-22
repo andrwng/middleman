@@ -132,6 +132,9 @@ type MCPConfig struct {
 	// RunID > 0 starts the MCP server in review-run mode (`middleman mcp
 	// --run <id>`), which serves only the Review with Claude tools.
 	RunID int64
+	// DraftID non-empty starts the MCP server in draft-chat mode
+	// (`middleman mcp --draft <id>`).
+	DraftID string
 }
 
 // SubmitTurnInput packages a user-driven turn submission.
@@ -530,6 +533,9 @@ func writeMCPConfig(c MCPConfig) (string, func(), error) {
 	}
 	if c.RunID > 0 {
 		args = append(args, "--run", fmt.Sprintf("%d", c.RunID))
+	}
+	if c.DraftID != "" {
+		args = append(args, "--draft", c.DraftID)
 	}
 	cfg := map[string]any{
 		"mcpServers": map[string]any{

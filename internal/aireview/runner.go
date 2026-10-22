@@ -84,6 +84,14 @@ type Runner struct {
 
 	// reviewRunTimeout caps one Review with Claude run.
 	reviewRunTimeout time.Duration
+
+	// Draft chat: per-draft FIFO queues (guarded by mu), a global slot
+	// semaphore, and cancel funcs for running turns.
+	draftQueues       map[string][]DraftTurnInput
+	draftBusy         map[string]bool
+	draftSem          chan struct{}
+	draftTurnsRunning map[int64]context.CancelFunc
+	draftTurnTimeout  time.Duration
 }
 
 // RunnerConfig holds dependencies for a Runner.
@@ -103,12 +111,24 @@ type RunnerConfig struct {
 	// ReviewRunTimeout caps one Review with Claude run; zero means 15
 	// minutes.
 	ReviewRunTimeout time.Duration
+	// DraftChatConcurrency caps concurrent chat turns; zero means 3.
+	DraftChatConcurrency int
+	// DraftTurnTimeout caps one chat turn; zero means 10 minutes.
+	DraftTurnTimeout time.Duration
 }
 
 func New(cfg RunnerConfig) *Runner {
 	reviewRunTimeout := cfg.ReviewRunTimeout
 	if reviewRunTimeout <= 0 {
 		reviewRunTimeout = 15 * time.Minute
+	}
+	chatSlots := cfg.DraftChatConcurrency
+	if chatSlots <= 0 {
+		chatSlots = 3
+	}
+	turnTimeout := cfg.DraftTurnTimeout
+	if turnTimeout <= 0 {
+		turnTimeout = 10 * time.Minute
 	}
 	return &Runner{
 		db:                    cfg.DB,
@@ -121,6 +141,11 @@ func New(cfg RunnerConfig) *Runner {
 		commitAnalysisRunning: make(map[int64]context.CancelFunc),
 		reviewRunsRunning:     make(map[int64]context.CancelFunc),
 		reviewRunTimeout:      reviewRunTimeout,
+		draftQueues:           make(map[string][]DraftTurnInput),
+		draftBusy:             make(map[string]bool),
+		draftSem:              make(chan struct{}, chatSlots),
+		draftTurnsRunning:     make(map[int64]context.CancelFunc),
+		draftTurnTimeout:      turnTimeout,
 	}
 }
 
@@ -147,6 +172,13 @@ func (r *Runner) ReconcileOnStartup(ctx context.Context) error {
 	}
 	for _, run := range runs {
 		_ = r.db.MarkAIReviewRunFailed(ctx, run.ID, "interrupted by middleman restart", "")
+	}
+	msgs, err := r.db.ListActiveDraftMessages(ctx)
+	if err != nil {
+		return fmt.Errorf("list active draft chat turns: %w", err)
+	}
+	for _, m := range msgs {
+		_ = r.db.MarkDraftMessageFailed(ctx, m.ID, "interrupted by middleman restart", "")
 	}
 	return nil
 }
