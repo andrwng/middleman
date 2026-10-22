@@ -154,3 +154,41 @@ func TestDraftChatUseExistingDir(t *testing.T) {
 	_, err = os.Stat(filepath.Join(dir, "tracked.txt"))
 	require.NoError(err)
 }
+
+// A local run must not touch the reviewer's other worktrees, even ones
+// git would consider prunable (moved or on an unmounted volume), and must
+// not run the reviewer's checkout hooks.
+func TestLocalRunLeavesReviewersRepoAlone(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dir := localRepo(t)
+	away := filepath.Join(t.TempDir(), "elsewhere")
+	gitIn(t, dir, "worktree", "add", "--detach", away)
+	require.NoError(os.RemoveAll(away)) // now "prunable" in git's eyes
+	marker := filepath.Join(t.TempDir(), "hook-ran")
+	hook := filepath.Join(dir, ".git", "hooks", "post-checkout")
+	require.NoError(os.WriteFile(hook, []byte("#!/bin/sh\ntouch "+marker+"\n"), 0o755))
+
+	database := openTestDB(t)
+	mrID := seedMR(t, database)
+	r := New(RunnerConfig{DB: database, WorktreeDir: t.TempDir()})
+	ctx := context.Background()
+	run, err := database.CreateAIReviewRun(ctx, db.NewAIReviewRun{MergeRequestID: mrID, Branch: "feat/a", HeadSHA: "h", ReadSHA: "h", LocalWorktreePath: dir})
+	require.NoError(err)
+	snap, err := SnapshotWorkingTree(ctx, dir, run.ID)
+	require.NoError(err)
+	tmp := t.TempDir()
+	fake := filepath.Join(tmp, "claude.sh")
+	writeFakeReviewClaude(t, fake, filepath.Join(tmp, "args.txt"), fakeStreamOK)
+	orig := SetBinaryForTest(fake)
+	t.Cleanup(func() { SetBinaryForTest(orig) })
+	require.NoError(r.StartReviewRun(ctx, ReviewRunInput{RunID: run.ID, Owner: "local", Name: "demo", Number: 1, HeadSHA: snap, RepoDir: dir}))
+	waitRunStatus(t, database, run.ID, "done")
+	require.Eventually(func() bool {
+		return !strings.Contains(gitIn(t, dir, "worktree", "list"), r.ReviewRunPath(run.ID))
+	}, 5*time.Second, 20*time.Millisecond)
+
+	assert.Contains(gitIn(t, dir, "worktree", "list"), away, "reviewer's other worktree metadata must survive")
+	_, statErr := os.Stat(marker)
+	assert.True(os.IsNotExist(statErr), "reviewer's post-checkout hook must not run")
+}

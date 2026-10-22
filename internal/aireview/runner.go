@@ -528,8 +528,12 @@ func (r *Runner) provisionWorktreeAt(ctx context.Context, owner, name, commitSHA
 func (r *Runner) provisionWorktreeIn(ctx context.Context, cloneDir, commitSHA, worktreePath string) (string, error) {
 	r.cleanWorktreePath(ctx, cloneDir, worktreePath)
 
-	out, err := exec.CommandContext(ctx, "git", "-C", cloneDir,
-		"worktree", "add", "--detach", worktreePath, commitSHA).CombinedOutput()
+	// The repo may be the reviewer's own: don't run their checkout hooks
+	// or LFS downloads for a read-only checkout Claude reads from.
+	cmd := exec.CommandContext(ctx, "git", "-c", "core.hooksPath=/dev/null", "-C", cloneDir,
+		"worktree", "add", "--detach", worktreePath, commitSHA)
+	cmd.Env = append(os.Environ(), "GIT_LFS_SKIP_SMUDGE=1")
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("git worktree add: %w: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -589,30 +593,26 @@ func (r *Runner) cloneDirFor(owner, name string) string {
 }
 
 // cleanWorktreePath ensures worktreePath doesn't exist on disk and
-// isn't tracked in the clone's worktree list. Safe to call when
-// nothing exists there. Best-effort: any individual step that fails
-// is logged and we move on.
+// isn't tracked in the repo's worktree list. Safe to call when nothing
+// exists there. Best-effort: any individual step that fails is logged and
+// we move on. Only worktreePath's own metadata is touched: the repo may
+// be the reviewer's, whose other worktrees (moved, on an unmounted
+// volume) a global `git worktree prune` would wrongly forget.
 func (r *Runner) cleanWorktreePath(ctx context.Context, cloneDir, worktreePath string) {
-	// If the path doesn't exist, nothing to do.
-	if _, err := os.Stat(worktreePath); err != nil {
-		// Still prune dangling metadata in case `.git/worktrees/...`
-		// is orphaned after a previous interrupted removal.
-		_ = exec.CommandContext(ctx, "git", "-C", cloneDir, "worktree", "prune").Run()
-		return
-	}
-	// Preferred: let git remove it cleanly.
+	// `worktree remove --force` drops the metadata even when the
+	// directory is already gone.
 	if out, err := exec.CommandContext(ctx, "git", "-C", cloneDir,
 		"worktree", "remove", "--force", worktreePath).CombinedOutput(); err != nil {
-		slog.Warn("git worktree remove during cleanup failed; falling back to rm -rf",
-			"path", worktreePath, "err", err, "output", strings.TrimSpace(string(out)))
+		if _, statErr := os.Stat(worktreePath); statErr == nil {
+			slog.Warn("git worktree remove during cleanup failed; falling back to rm -rf",
+				"path", worktreePath, "err", err, "output", strings.TrimSpace(string(out)))
+		}
 	}
-	// If git didn't do the job (permissions, half-cleaned state),
-	// nuke the directory from disk.
+	// If git didn't do the job (permissions, half-cleaned state, or a
+	// directory git never registered), remove it from disk.
 	if err := os.RemoveAll(worktreePath); err != nil {
 		slog.Warn("rm -rf worktree failed", "path", worktreePath, "err", err)
 	}
-	// Prune git's internal metadata. Idempotent and fast.
-	_ = exec.CommandContext(ctx, "git", "-C", cloneDir, "worktree", "prune").Run()
 }
 
 // commitCacheDirName lives inside the worktree as a sibling to the
