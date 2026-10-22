@@ -244,7 +244,7 @@ func TestAPIDraftChatRejects(t *testing.T) {
 		name, owner, draft, body string
 		want                     int
 	}{
-		{"local owner", "local", "x", "hi", http.StatusBadRequest},
+		{"unknown local worktree", "local", "x", "hi", http.StatusNotFound},
 		{"empty body", "acme", "x", "  ", http.StatusBadRequest},
 		{"unknown draft", "acme", "missing", "hi", http.StatusNotFound},
 	}

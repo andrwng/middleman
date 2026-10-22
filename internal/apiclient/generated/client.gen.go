@@ -967,6 +967,12 @@ type PublishReviewDraftsInputBody struct {
 
 	// Event APPROVE, REQUEST_CHANGES, or COMMENT
 	Event string `json:"event"`
+
+	// Mode Local only: act-immediately or persist-only (default)
+	Mode *string `json:"mode,omitempty"`
+
+	// Path Local only: publish only this file's drafts
+	Path *string `json:"path,omitempty"`
 }
 
 // PublishReviewDraftsOutputBody defines model for PublishReviewDraftsOutputBody.

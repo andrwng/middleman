@@ -2800,6 +2800,10 @@ export interface components {
             commit_id?: string;
             /** @description APPROVE, REQUEST_CHANGES, or COMMENT */
             event: string;
+            /** @description Local only: act-immediately or persist-only (default) */
+            mode?: string;
+            /** @description Local only: publish only this file's drafts */
+            path?: string;
         };
         PublishReviewDraftsOutputBody: {
             /**

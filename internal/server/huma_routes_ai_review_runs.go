@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/wesm/middleman/internal/aireview"
 	"github.com/wesm/middleman/internal/db"
 	"github.com/wesm/middleman/internal/gitclone"
+	"github.com/wesm/middleman/internal/worktrees"
 )
 
 const reviewInstructionsMaxBytes = 8192
@@ -139,11 +141,11 @@ func (s *Server) startAIReviewRun(ctx context.Context, input *startAIReviewRunIn
 	if s.aiReview == nil {
 		return nil, huma.Error503ServiceUnavailable("Review with Claude is not available: clone manager or worktree dir not configured")
 	}
-	if isLocalSource(input.Owner) {
-		return nil, huma.Error400BadRequest("Review with Claude is not available for local worktrees yet")
-	}
 	if len(input.Body.Instructions) > reviewInstructionsMaxBytes {
 		return nil, huma.Error400BadRequest("instructions too long")
+	}
+	if isLocalSource(input.Owner) {
+		return s.startAIReviewRunLocal(ctx, input)
 	}
 	mrID, err := s.lookupMRID(ctx, repoNumberPathRef{owner: input.Owner, name: input.Name, number: input.Number})
 	if err != nil {
@@ -162,7 +164,7 @@ func (s *Server) startAIReviewRun(ctx context.Context, input *startAIReviewRunIn
 
 	run, err := s.db.CreateAIReviewRun(ctx, db.NewAIReviewRun{
 		MergeRequestID: mrID, HeadSHA: shas.DiffHeadSHA, ReadSHA: shas.DiffHeadSHA,
-		Instructions: strings.TrimSpace(input.Body.Instructions),
+		BaseSHA: shas.MergeBaseSHA, Instructions: strings.TrimSpace(input.Body.Instructions),
 	})
 	if errors.Is(err, db.ErrReviewRunActive) {
 		return nil, huma.Error409Conflict("a Review with Claude run is already in progress for this pull request")
@@ -263,14 +265,9 @@ func (s *Server) proposeComment(ctx context.Context, input *proposeCommentInput)
 	if len(in.Rationale) > reviewDraftBodyMaxBytes {
 		return nil, huma.Error400BadRequest("rationale too large")
 	}
-	shas, err := s.db.GetDiffSHAs(ctx, input.Owner, input.Name, input.Number)
-	if err != nil || shas == nil || shas.MergeBaseSHA == "" {
-		return nil, huma.Error409Conflict("PR's diff SHAs aren't synced yet")
-	}
-	host := s.syncer.HostForRepo(input.Owner, input.Name)
-	file, err := anchorFileDiff(ctx, s.clones, host, input.Owner, input.Name, shas.MergeBaseSHA, run.ReadSHA, in.Path)
+	file, err := s.runAnchorFile(ctx, input.Owner, input.Name, input.Number, run, in.Path)
 	if err != nil {
-		return nil, huma.Error500InternalServerError("load diff: " + err.Error())
+		return nil, err
 	}
 	if file == nil {
 		return nil, huma.Error400BadRequest(fmt.Sprintf("%s is not changed in this pull request", in.Path))
@@ -322,7 +319,43 @@ func (s *Server) acceptReviewDraft(ctx context.Context, input *draftTransitionIn
 	return s.transitionDraft(ctx, input, s.db.AcceptReviewDraft)
 }
 func (s *Server) discardReviewDraft(ctx context.Context, input *draftTransitionInput) (*reviewDraftOutput, error) {
-	return s.transitionDraft(ctx, input, s.db.DiscardReviewDraft)
+	out, err := s.transitionDraft(ctx, input, s.db.DiscardReviewDraft)
+	if err == nil && isLocalSource(input.Owner) {
+		s.pruneSnapshotRefs(ctx)
+	}
+	return out, err
+}
+
+// CancelReviewRunsForClosedPRs stops review runs on pull requests that
+// were closed or merged. Called after each sync and at startup.
+func (s *Server) CancelReviewRunsForClosedPRs() {
+	if s.aiReview == nil {
+		return
+	}
+	runs, err := s.db.ListActiveAIReviewRunsOnClosedPRs(s.bgCtx)
+	if err != nil {
+		slog.Warn("list review runs on closed PRs failed", "err", err)
+		return
+	}
+	for _, r := range runs {
+		if err := s.aiReview.CancelReviewRun(s.bgCtx, r.ID); err != nil {
+			slog.Warn("cancel review run on closed PR failed", "run_id", r.ID, "err", err)
+		}
+	}
+}
+
+// pruneSnapshotRefs deletes the snapshot refs of finished local runs that
+// no suggestion or draft points at any more. Best-effort: a worktree that
+// was removed simply has nothing left to clean.
+func (s *Server) pruneSnapshotRefs(ctx context.Context) {
+	runs, err := s.db.ListLocalRunsWithoutLiveDrafts(ctx)
+	if err != nil {
+		slog.Warn("list prunable review snapshots failed", "err", err)
+		return
+	}
+	for _, r := range runs {
+		_ = aireview.DeleteSnapshotRef(ctx, r.LocalWorktreePath, r.ID)
+	}
 }
 func (s *Server) restoreReviewDraft(ctx context.Context, input *draftTransitionInput) (*reviewDraftOutput, error) {
 	return s.transitionDraft(ctx, input, s.db.RestoreReviewDraft)
@@ -382,4 +415,121 @@ func (s *Server) prContextBlock(
 	}
 	pc.WriteString(s.reviewCommentsContext(ctx, mrID))
 	return pc.String()
+}
+
+// runAnchorFile loads path's diff for a run: base..read_sha, the diff
+// Claude was shown. Local runs diff in the reviewer's repo, where the
+// snapshot commit lives; the unfiltered diff keeps renames intact.
+func (s *Server) runAnchorFile(
+	ctx context.Context, owner, name string, number int, run *db.AIReviewRun, path string,
+) (*gitclone.DiffFile, error) {
+	if run.LocalWorktreePath != "" {
+		files, err := worktrees.DiffRange(ctx, run.LocalWorktreePath, run.BaseSHA, run.ReadSHA)
+		if err != nil {
+			return nil, huma.Error500InternalServerError("load diff: " + err.Error())
+		}
+		for i := range files {
+			if files[i].Path == path {
+				return &files[i], nil
+			}
+		}
+		return nil, nil
+	}
+	base := run.BaseSHA
+	if base == "" { // runs started before base_sha was recorded
+		shas, err := s.db.GetDiffSHAs(ctx, owner, name, number)
+		if err != nil || shas == nil || shas.MergeBaseSHA == "" {
+			return nil, huma.Error409Conflict("PR's diff SHAs aren't synced yet")
+		}
+		base = shas.MergeBaseSHA
+	}
+	host := s.syncer.HostForRepo(owner, name)
+	file, err := anchorFileDiff(ctx, s.clones, host, owner, name, base, run.ReadSHA, path)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("load diff: " + err.Error())
+	}
+	return file, nil
+}
+
+// startAIReviewRunLocal reviews a local worktree. Claude reads a snapshot
+// commit of the live tree (uncommitted and untracked work included) in
+// its own checkout; suggestions anchor to HEAD like working-tree
+// comments, so they are not outdated the moment they appear.
+func (s *Server) startAIReviewRunLocal(ctx context.Context, input *startAIReviewRunInput) (*aiReviewRunOutput, error) {
+	w, err := s.resolveLocalWorktree(ctx, input.Name, input.Number)
+	if err != nil {
+		return nil, huma.Error404NotFound("worktree not found")
+	}
+	mrID, err := s.ensureSyntheticMRForWorktree(ctx, w)
+	if err != nil {
+		return nil, huma.Error404NotFound("worktree not found")
+	}
+	branch := s.currentWorktreeBranch(ctx, w)
+	baseRef := s.lookupBaseRefForWorktree(ctx, *w)
+	base, err := worktrees.ResolveBase(ctx, w.Path, baseRef)
+	if err != nil {
+		return nil, huma.Error409Conflict("resolve base: " + err.Error())
+	}
+	head, err := worktrees.ResolveCommitSHA(ctx, w.Path, "HEAD")
+	if err != nil {
+		return nil, huma.Error500InternalServerError("resolve HEAD: " + err.Error())
+	}
+	run, err := s.db.CreateAIReviewRun(ctx, db.NewAIReviewRun{
+		MergeRequestID: mrID, Branch: branch, HeadSHA: head, ReadSHA: head,
+		BaseSHA: base.SHA, LocalWorktreePath: w.Path,
+		Instructions: strings.TrimSpace(input.Body.Instructions),
+	})
+	if errors.Is(err, db.ErrReviewRunActive) {
+		return nil, huma.Error409Conflict("a Review with Claude run is already in progress for this branch")
+	}
+	if err != nil {
+		return nil, huma.Error500InternalServerError("create review run: " + err.Error())
+	}
+	fail := func(msg string) (*aiReviewRunOutput, error) {
+		_ = s.db.MarkAIReviewRunFailed(context.WithoutCancel(ctx), run.ID, msg, "")
+		return nil, huma.Error502BadGateway(msg)
+	}
+	snap, err := aireview.SnapshotWorkingTree(ctx, w.Path, run.ID)
+	if err != nil {
+		return fail("snapshot working tree: " + err.Error())
+	}
+	if err := s.db.SetAIReviewRunReadSHA(ctx, run.ID, snap); err != nil {
+		return fail("record snapshot: " + err.Error())
+	}
+	files, err := worktrees.DiffRange(ctx, w.Path, base.SHA, snap)
+	if err != nil {
+		return fail("diff snapshot: " + err.Error())
+	}
+	gitLog, _ := runGitLogForBrief(ctx, w.Path, base.SHA, head)
+	var pc strings.Builder
+	fmt.Fprintf(&pc, "Local worktree: %s on branch %s\nBase: %s (%s)\n", input.Name, branch, base.Ref, shortRef(base.SHA))
+	pc.WriteString("The working copy is a snapshot of the reviewer's worktree, uncommitted and untracked changes included.\n")
+	if gitLog != "" {
+		pc.WriteString("\nCommits since base (oldest first):\n" + gitLog + "\n")
+	}
+	pc.WriteString(changedFilesContext(files))
+	exe, err := os.Executable()
+	if err != nil || exe == "" {
+		return fail("cannot resolve middleman executable for the MCP server")
+	}
+	if err := s.aiReview.StartReviewRun(ctx, aireview.ReviewRunInput{
+		RunID: run.ID, Owner: input.Owner, Name: input.Name, Number: input.Number,
+		HeadSHA: snap, MergeBaseSHA: base.SHA, RepoDir: w.Path,
+		Instructions: run.Instructions, PromptContext: pc.String(),
+		MCP: aireview.MCPConfig{Binary: exe, BaseURL: s.selfBaseURL(), Owner: input.Owner, Name: input.Name, Number: input.Number, RunID: run.ID},
+	}); err != nil {
+		return nil, huma.Error502BadGateway("start review run: " + err.Error())
+	}
+	cur, err := s.db.GetAIReviewRun(ctx, run.ID)
+	if err != nil || cur == nil {
+		return nil, huma.Error500InternalServerError("reload review run")
+	}
+	return &aiReviewRunOutput{Body: s.toAIReviewRunResponse(ctx, *cur)}, nil
+}
+
+func shortRef(sha string) string {
+	if len(sha) > 7 {
+		return sha[:7]
+	}
+	return sha
 }

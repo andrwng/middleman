@@ -360,6 +360,8 @@ func newServer(
 		} else if n > 0 {
 			slog.Info("auto-closed AI threads on closed PRs", "count", n, "phase", "startup")
 		}
+		s.CancelReviewRunsForClosedPRs()
+		s.pruneSnapshotRefs(bgCtx)
 		s.sessionRunner = aireview.NewSessionRunner(database)
 		if err := s.sessionRunner.ReconcileOnStartup(bgCtx); err != nil {
 			slog.Warn("session runner reconcile on startup failed", "err", err)

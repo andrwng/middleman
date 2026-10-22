@@ -23,6 +23,12 @@ import (
 // and AI review enabled, and swaps in a fake claude running body.
 func setupReviewRunServer(t *testing.T, claudeBody string) (*apiclient.Client, *db.DB, string) {
 	t.Helper()
+	client, database, argsFile, _ := setupReviewRunServerWithSrv(t, claudeBody)
+	return client, database, argsFile
+}
+
+func setupReviewRunServerWithSrv(t *testing.T, claudeBody string) (*apiclient.Client, *db.DB, string, *Server) {
+	t.Helper()
 	dir := t.TempDir()
 	database, err := db.Open(filepath.Join(dir, "test.db"))
 	require.NoError(t, err)
@@ -43,7 +49,7 @@ func setupReviewRunServer(t *testing.T, claudeBody string) (*apiclient.Client, *
 	syncer := ghclient.NewSyncer(map[string]ghclient.Client{"github.com": mock}, database, diffRepo.Manager, repos, time.Minute, nil, nil)
 	t.Cleanup(syncer.Stop)
 	srv := New(database, syncer, nil, "/", nil, ServerOptions{Clones: diffRepo.Manager, WorktreeDir: filepath.Join(dir, "wt")})
-	return setupTestClient(t, srv), database, argsFile
+	return setupTestClient(t, srv), database, argsFile, srv
 }
 
 const okStream = `echo '{"type":"system","subtype":"init","session_id":"sess-root"}'
@@ -240,11 +246,11 @@ func TestAPISuggestionTransitions(t *testing.T) {
 	require.NoError(err)
 }
 
-func TestAPIReviewRunRejectsLocal(t *testing.T) {
+func TestAPIReviewRunUnknownLocalWorktree(t *testing.T) {
 	client, _, _ := setupReviewRunServer(t, okStream)
-	resp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberAiReviewRunsWithResponse(context.Background(), "local", "demo", 1, generated.StartAIReviewRunInputBody{})
+	resp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberAiReviewRunsWithResponse(context.Background(), "local", "demo", 999, generated.StartAIReviewRunInputBody{})
 	require.NoError(t, err)
-	Assert.Equal(t, http.StatusBadRequest, resp.StatusCode())
+	Assert.Equal(t, http.StatusNotFound, resp.StatusCode())
 }
 
 func TestAPIReviewRunUnavailableWithoutAIReview(t *testing.T) {

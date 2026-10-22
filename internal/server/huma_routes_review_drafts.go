@@ -292,6 +292,9 @@ func (s *Server) deleteReviewDrafts(ctx context.Context, input *deleteReviewDraf
 	if err != nil {
 		return nil, huma.Error500InternalServerError("delete review drafts: " + err.Error())
 	}
+	if isLocalSource(input.Owner) {
+		s.pruneSnapshotRefs(ctx)
+	}
 	out := &deleteReviewDraftsOutput{}
 	out.Body.Deleted = n
 	return out, nil
@@ -338,6 +341,8 @@ type publishReviewDraftsInput struct {
 		Event    string `json:"event"               doc:"APPROVE, REQUEST_CHANGES, or COMMENT"`
 		Body     string `json:"body,omitempty"      doc:"Optional top-level review body"`
 		CommitID string `json:"commit_id,omitempty" doc:"PR head SHA; fallback anchor for drafts without one"`
+		Mode     string `json:"mode,omitempty"      doc:"Local only: act-immediately or persist-only (default)"`
+		Path     string `json:"path,omitempty"      doc:"Local only: publish only this file's drafts"`
 	}
 }
 
@@ -367,7 +372,7 @@ func draftToSubmitComment(d db.ReviewDraft) submitReviewComment {
 // wrapper goes out only after every draft succeeded.
 func (s *Server) publishReviewDrafts(ctx context.Context, input *publishReviewDraftsInput) (*publishReviewDraftsOutput, error) {
 	if isLocalSource(input.Owner) {
-		return nil, huma.Error400BadRequest("local drafts publish as review threads")
+		return s.publishLocalReviewDrafts(ctx, input)
 	}
 	switch input.Body.Event {
 	case "APPROVE", "REQUEST_CHANGES", "COMMENT":
@@ -427,5 +432,56 @@ func (s *Server) publishReviewDrafts(ctx context.Context, input *publishReviewDr
 		out.Body.ReviewID = review.GetID()
 		out.Body.State = review.GetState()
 	}
+	return out, nil
+}
+
+// publishLocalReviewDrafts turns a local worktree's drafts into review
+// threads (the local equivalent of posting a review), then removes the
+// drafts it turned into threads. Path scopes it to one file (doc pane).
+func (s *Server) publishLocalReviewDrafts(ctx context.Context, input *publishReviewDraftsInput) (*publishReviewDraftsOutput, error) {
+	mode := input.Body.Mode
+	switch mode {
+	case "", "persist-only":
+		mode = ""
+	case "act-immediately":
+	default:
+		return nil, huma.Error400BadRequest("mode must be act-immediately or persist-only")
+	}
+	mrID, branch, err := s.resolveDraftScope(ctx, input.Owner, input.Name, input.Number)
+	if err != nil {
+		return nil, huma.Error404NotFound("worktree not found")
+	}
+	rows, err := s.db.ListReviewDrafts(ctx, mrID, branch)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("list review drafts: " + err.Error())
+	}
+	in := &createReviewThreadsInput{Owner: input.Owner, Name: input.Name, Number: input.Number}
+	in.Body.Mode = mode
+	var ids []string
+	for _, r := range rows {
+		if r.State != "draft" || r.InReplyTo != nil || (input.Body.Path != "" && r.Path != input.Body.Path) {
+			continue
+		}
+		in.Body.Threads = append(in.Body.Threads, reviewThreadDraft{
+			Path: r.Path, Side: r.Side, Line: r.Line, StartLine: r.StartLine, CommitSHA: r.CommitSHA, Body: r.Body,
+		})
+		ids = append(ids, r.ID)
+	}
+	out := &publishReviewDraftsOutput{}
+	if len(ids) == 0 {
+		return nil, huma.Error400BadRequest("add at least one inline comment to create review threads")
+	}
+	if _, err := s.createReviewThreads(ctx, in); err != nil {
+		return nil, err
+	}
+	dbCtx := context.WithoutCancel(ctx)
+	if _, err := s.db.DeleteReviewDrafts(dbCtx, mrID, branch, ids); err != nil {
+		return nil, huma.Error500InternalServerError("threads created but drafts not cleared: " + err.Error())
+	}
+	if input.Body.Path == "" {
+		_ = s.db.DeleteReviewDraftMeta(dbCtx, mrID, branch)
+	}
+	s.pruneSnapshotRefs(dbCtx)
+	out.Body.Published = len(ids)
 	return out, nil
 }

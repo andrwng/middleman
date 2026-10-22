@@ -364,6 +364,7 @@ func run(configPath string) error {
 		syncer.SetOnSyncCompleted(func(results []ghclient.RepoSyncResult) {
 			stackHook(results)
 			srv.AutoCloseAIThreadsForClosedPRs()
+			srv.CancelReviewRunsForClosedPRs()
 		})
 	}
 	syncer.Start(ctx)

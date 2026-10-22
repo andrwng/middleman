@@ -98,7 +98,7 @@ func TestAPIPublishReviewDrafts_PartialFailure(t *testing.T) {
 	assert.Equal(4, calls) // 2 in the first attempt (p-1 ok, p-2 fail), 2 on retry
 }
 
-func TestAPIPublishReviewDrafts_RejectsLocalAndBadEvent(t *testing.T) {
+func TestAPIPublishReviewDrafts_RejectsUnknownLocalAndBadEvent(t *testing.T) {
 	srv, database := setupTestServer(t)
 	client := setupTestClient(t, srv)
 	ctx := context.Background()
@@ -106,16 +106,17 @@ func TestAPIPublishReviewDrafts_RejectsLocalAndBadEvent(t *testing.T) {
 
 	cases := []struct {
 		name, owner, event string
+		want               int
 	}{
-		{"local owner", "local", "COMMENT"},
-		{"bad event", "acme", "MAYBE"},
+		{"unknown local worktree", "local", "COMMENT", http.StatusNotFound},
+		{"bad event", "acme", "MAYBE", http.StatusBadRequest},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			resp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewDraftsPublishWithResponse(ctx, tc.owner, "widget", 1,
 				generated.PublishReviewDraftsInputBody{Event: tc.event})
 			require.NoError(t, err)
-			Assert.Equal(t, http.StatusBadRequest, resp.StatusCode())
+			Assert.Equal(t, tc.want, resp.StatusCode())
 		})
 	}
 }

@@ -142,9 +142,6 @@ func (s *Server) sendDraftMessage(ctx context.Context, input *sendDraftMessageIn
 	if s.aiReview == nil {
 		return nil, huma.Error503ServiceUnavailable("Claude chat is not available: clone manager or worktree dir not configured")
 	}
-	if isLocalSource(input.Owner) {
-		return nil, huma.Error400BadRequest("chat on local drafts arrives with local Review with Claude")
-	}
 	text := strings.TrimSpace(input.Body.Body)
 	if text == "" {
 		return nil, huma.Error400BadRequest("message is required")
@@ -159,13 +156,25 @@ func (s *Server) sendDraftMessage(ctx context.Context, input *sendDraftMessageIn
 	if d.State == "discarded" {
 		return nil, huma.Error409Conflict("this suggestion was discarded")
 	}
-	shas, err := s.db.GetDiffSHAs(ctx, input.Owner, input.Name, input.Number)
-	if err != nil || shas == nil || shas.DiffHeadSHA == "" {
-		return nil, huma.Error409Conflict("PR's diff SHAs aren't synced yet; try refreshing the PR first")
-	}
-	pr, err := s.db.GetMergeRequest(ctx, input.Owner, input.Name, input.Number)
-	if err != nil || pr == nil {
-		return nil, huma.Error404NotFound("pull request not found")
+	local := isLocalSource(input.Owner)
+	var (
+		shas   *db.DiffSHAs
+		pr     *db.MergeRequest
+		localW *db.Worktree
+	)
+	if local {
+		if localW, err = s.resolveLocalWorktree(ctx, input.Name, input.Number); err != nil {
+			return nil, huma.Error404NotFound("worktree not found")
+		}
+	} else {
+		shas, err = s.db.GetDiffSHAs(ctx, input.Owner, input.Name, input.Number)
+		if err != nil || shas == nil || shas.DiffHeadSHA == "" {
+			return nil, huma.Error409Conflict("PR's diff SHAs aren't synced yet; try refreshing the PR first")
+		}
+		pr, err = s.db.GetMergeRequest(ctx, input.Owner, input.Name, input.Number)
+		if err != nil || pr == nil {
+			return nil, huma.Error404NotFound("pull request not found")
+		}
 	}
 	exe, err := os.Executable()
 	if err != nil || exe == "" {
@@ -189,25 +198,43 @@ func (s *Server) sendDraftMessage(ctx context.Context, input *sendDraftMessageIn
 		DraftID: d.ID, Owner: input.Owner, Name: input.Name, Number: input.Number,
 		MCP: aireview.MCPConfig{Binary: exe, BaseURL: s.selfBaseURL(), Owner: input.Owner, Name: input.Name, Number: input.Number, DraftID: d.ID},
 	}
+	// A run's checkout holds what Claude read (read_sha: the PR head, or a
+	// local snapshot) and is added from the run's repo.
+	inRunPath := func(path string) bool { return run != nil && path == s.aiReview.ReviewRunPath(run.ID) }
+	useRun := func() {
+		turn.CheckoutSHA = run.ReadSHA
+		turn.RepoDir = run.LocalWorktreePath
+	}
 	switch {
 	case d.ClaudeSessionID != "" && d.ChatWorktreePath != "":
 		turn.Mode, turn.ParentSessionID, turn.WorktreePath = aireview.DraftChatResume, d.ClaudeSessionID, d.ChatWorktreePath
 		turn.CheckoutSHA = d.CommitSHA
-		if run != nil && d.ChatWorktreePath == s.aiReview.ReviewRunPath(run.ID) {
-			turn.CheckoutSHA = run.HeadSHA
+		switch {
+		case inRunPath(d.ChatWorktreePath):
+			useRun()
+		case local:
+			turn.UseExistingDir = true // a fresh local chat runs in the reviewer's worktree
 		}
 	case !input.Body.Fresh && run != nil && run.ClaudeSessionID != "":
 		turn.Mode, turn.ParentSessionID = aireview.DraftChatFork, run.ClaudeSessionID
-		turn.WorktreePath, turn.CheckoutSHA = s.aiReview.ReviewRunPath(run.ID), run.HeadSHA
+		turn.WorktreePath = s.aiReview.ReviewRunPath(run.ID)
+		useRun()
+	case local:
+		turn.Mode, turn.WorktreePath, turn.UseExistingDir = aireview.DraftChatFresh, localW.Path, true
 	default:
 		turn.Mode, turn.WorktreePath, turn.CheckoutSHA = aireview.DraftChatFresh, s.aiReview.DraftChatWorktreePath(d.ID), d.CommitSHA
 	}
-	if turn.CheckoutSHA == "" {
+	if turn.CheckoutSHA == "" && shas != nil {
 		turn.CheckoutSHA = shas.DiffHeadSHA
 	}
 	prContext := ""
 	if turn.Mode == aireview.DraftChatFresh {
-		prContext = s.prContextBlock(ctx, input.Owner, input.Name, mrID, shas, pr)
+		if local {
+			prContext = fmt.Sprintf("Local worktree: %s on branch %s. You are in the reviewer's working copy.\n",
+				input.Name, s.currentWorktreeBranch(ctx, localW))
+		} else {
+			prContext = s.prContextBlock(ctx, input.Owner, input.Name, mrID, shas, pr)
+		}
 	}
 	// Built when the turn starts: the reviewer may edit the comment, or an
 	// earlier turn may revise it, while this one waits in the queue.
