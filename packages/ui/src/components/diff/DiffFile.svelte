@@ -28,6 +28,7 @@
   import CollapsedRegion from "./CollapsedRegion.svelte";
   import DiffComposer from "./DiffComposer.svelte";
   import PendingCommentCard from "./PendingCommentCard.svelte";
+  import SuggestionCard from "./SuggestionCard.svelte";
   import AIAskComposer from "./AIAskComposer.svelte";
   import AIThreadCard from "./AIThreadCard.svelte";
   import ReviewThreadCard from "./ReviewThreadCard.svelte";
@@ -106,6 +107,19 @@
   const pendingComments = $derived<DraftComment[]>(
     diffStore.getDraftCommentsForPath(file.path),
   );
+
+  // Claude suggestions for this file, grouped the same way as drafts so
+  // they render under the line they anchor to.
+  const suggestionsByAnchor = $derived.by(() => {
+    const map = new Map<string, DraftComment[]>();
+    for (const c of diffStore.getSuggestionsForPath(file.path)) {
+      const key = `${c.line}:${c.side}`;
+      const arr = map.get(key) ?? [];
+      arr.push(c);
+      map.set(key, arr);
+    }
+    return map;
+  });
 
   // Map of pending comments grouped by anchor key for fast lookup while
   // rendering lines.
@@ -1200,6 +1214,9 @@
                       ondelete={() => diffStore.removeDraftComment(p.id)}
                     />
                   {/each}
+                  {#each suggestionsByAnchor.get(leftKey) ?? [] as sg (sg.id)}
+                    <SuggestionCard suggestion={sg} currentHeadSha={currentCommitSha()} />
+                  {/each}
                   {#if leftAnchor}
                     {#each getAIThreadsAtAnchor(leftAnchor.line, leftAnchor.side) as thread (thread.id)}
                       <AIThreadCard {thread} repoOwner={owner} repoName={name} />
@@ -1226,6 +1243,9 @@
                       currentHeadSha={currentCommitSha()}
                       ondelete={() => diffStore.removeDraftComment(p.id)}
                     />
+                  {/each}
+                  {#each suggestionsByAnchor.get(rightKey) ?? [] as sg (sg.id)}
+                    <SuggestionCard suggestion={sg} currentHeadSha={currentCommitSha()} />
                   {/each}
                   {#if rightAnchor}
                     {#each getAIThreadsAtAnchor(rightAnchor.line, rightAnchor.side) as thread (thread.id)}
@@ -1326,6 +1346,9 @@
                       currentHeadSha={currentCommitSha()}
                       ondelete={() => diffStore.removeDraftComment(p.id)}
                     />
+                  {/each}
+                  {#each suggestionsByAnchor.get(anchorKey) ?? [] as sg (sg.id)}
+                    <SuggestionCard suggestion={sg} currentHeadSha={currentCommitSha()} />
                   {/each}
                   {#if anchor}
                     {#each getAIThreadsAtAnchor(anchor.line, anchor.side) as thread (thread.id)}

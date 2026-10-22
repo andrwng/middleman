@@ -95,6 +95,9 @@
     {:else}
       <span class="pending__badge">Pending</span>
     {/if}
+    {#if comment.origin === "claude"}
+      <span class="pending__from-claude" title="Started as a Claude suggestion">Claude</span>
+    {/if}
     {#if !comment.inReplyTo}
       <span
         class="pending__commit"
@@ -213,6 +216,17 @@
   .pending--drifted .pending__badge {
     background: var(--accent-amber);
     color: #000;
+  }
+
+  .pending__from-claude {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 1px 6px;
+    border-radius: 999px;
+    border: 1px solid var(--accent-claude);
+    color: var(--accent-claude);
   }
 
   .pending__badge--reply {

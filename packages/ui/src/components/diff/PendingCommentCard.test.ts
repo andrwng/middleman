@@ -41,4 +41,14 @@ describe("PendingCommentCard publish error", () => {
     expect(alert.textContent).toContain("Not saved");
     expect(alert.textContent).toContain("database is locked");
   });
+
+  it("marks drafts that came from Claude", () => {
+    const claude = render(PendingCommentCard, {
+      props: { comment: { ...base, origin: "claude" }, currentHeadSha: "abc", ondelete: vi.fn() },
+    });
+    expect(claude.getByText("Claude")).toBeTruthy();
+    claude.unmount();
+    const user = render(PendingCommentCard, { props: { comment: base, currentHeadSha: "abc", ondelete: vi.fn() } });
+    expect(user.queryByText("Claude")).toBeNull();
+  });
 });
