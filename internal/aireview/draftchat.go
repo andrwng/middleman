@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -136,16 +135,12 @@ func (r *Runner) runDraftTurn(in DraftTurnInput) {
 		r.mu.Unlock()
 	}()
 
-	if _, err := os.Stat(in.WorktreePath); err != nil {
-		if _, err := r.provisionWorktreeAt(bg, in.Owner, in.Name, in.CheckoutSHA, in.WorktreePath); err != nil {
-			_ = r.db.MarkDraftMessageFailed(bg, in.MessageID,
-				fmt.Sprintf("cannot check out %s for this conversation: %v", shortSHA(in.CheckoutSHA), err), "")
-			return
-		}
+	if err := r.acquireWorktree(bg, in.Owner, in.Name, in.CheckoutSHA, in.WorktreePath); err != nil {
+		_ = r.db.MarkDraftMessageFailed(bg, in.MessageID,
+			fmt.Sprintf("cannot check out %s for this conversation: %v", shortSHA(in.CheckoutSHA), err), "")
+		return
 	}
-	// The session lives outside the worktree, keyed by its path; the
-	// checkout is recreated at the same path for the next turn.
-	defer r.cleanWorktreePath(bg, r.cloneDirFor(in.Owner, in.Name), in.WorktreePath)
+	defer r.releaseWorktree(in.Owner, in.Name, in.WorktreePath)
 
 	args := []string{
 		"-p", in.Prompt,

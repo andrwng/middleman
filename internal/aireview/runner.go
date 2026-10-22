@@ -92,6 +92,12 @@ type Runner struct {
 	draftSem          chan struct{}
 	draftTurnsRunning map[int64]context.CancelFunc
 	draftTurnTimeout  time.Duration
+
+	// worktreeLeases counts the users of a shared checkout (a review run
+	// and any chat turns forking its session all use the run's path), so
+	// the first user creates it and the last one removes it.
+	leaseMu        sync.Mutex
+	worktreeLeases map[string]int
 }
 
 // RunnerConfig holds dependencies for a Runner.
@@ -146,6 +152,7 @@ func New(cfg RunnerConfig) *Runner {
 		draftSem:              make(chan struct{}, chatSlots),
 		draftTurnsRunning:     make(map[int64]context.CancelFunc),
 		draftTurnTimeout:      turnTimeout,
+		worktreeLeases:        make(map[string]int),
 	}
 }
 
@@ -523,6 +530,34 @@ func (r *Runner) provisionWorktreeAt(ctx context.Context, owner, name, commitSHA
 		return "", fmt.Errorf("git worktree add: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return worktreePath, nil
+}
+
+// acquireWorktree takes a lease on the checkout at path, creating it at
+// sha when nobody else holds one.
+func (r *Runner) acquireWorktree(ctx context.Context, owner, name, sha, path string) error {
+	r.leaseMu.Lock()
+	defer r.leaseMu.Unlock()
+	if r.worktreeLeases[path] == 0 {
+		if _, err := r.provisionWorktreeAt(ctx, owner, name, sha, path); err != nil {
+			return err
+		}
+	}
+	r.worktreeLeases[path]++
+	return nil
+}
+
+// releaseWorktree drops a lease and removes the checkout when it was the
+// last one. Claude's sessions live outside the checkout, keyed by its
+// path, so it can be recreated there later.
+func (r *Runner) releaseWorktree(owner, name, path string) {
+	r.leaseMu.Lock()
+	defer r.leaseMu.Unlock()
+	r.worktreeLeases[path]--
+	if r.worktreeLeases[path] > 0 {
+		return
+	}
+	delete(r.worktreeLeases, path)
+	r.cleanWorktreePath(context.Background(), r.cloneDirFor(owner, name), path)
 }
 
 // cloneDirFor returns the bare clone directory for owner/name.

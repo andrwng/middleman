@@ -41,8 +41,8 @@ func (r *Runner) StartReviewRun(ctx context.Context, in ReviewRunInput) error {
 	if r.clones == nil {
 		return errors.New("clone manager not configured")
 	}
-	path, err := r.provisionWorktreeAt(ctx, in.Owner, in.Name, in.HeadSHA, ReviewRunWorktreePath(r.rootDir, in.RunID))
-	if err != nil {
+	path := ReviewRunWorktreePath(r.rootDir, in.RunID)
+	if err := r.acquireWorktree(ctx, in.Owner, in.Name, in.HeadSHA, path); err != nil {
 		_ = r.db.MarkAIReviewRunFailed(ctx, in.RunID, "provision worktree: "+err.Error(), "")
 		return fmt.Errorf("provision worktree: %w", err)
 	}
@@ -58,7 +58,7 @@ func (r *Runner) StartReviewRun(ctx context.Context, in ReviewRunInput) error {
 			delete(r.reviewRunsRunning, in.RunID)
 			r.mu.Unlock()
 			cancel()
-			r.cleanWorktreePath(context.Background(), r.cloneDirFor(in.Owner, in.Name), path)
+			r.releaseWorktree(in.Owner, in.Name, path)
 		}()
 		r.runReviewRun(runCtx, in, path, cached)
 	}()

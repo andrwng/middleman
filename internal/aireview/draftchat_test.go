@@ -194,3 +194,50 @@ func TestReconcileFailsActiveDraftMessages(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "failed", got.Status)
 }
+
+// Suggestions from one run fork in the same run path. Concurrent chats on
+// two of them must not delete the checkout out from under each other.
+func TestDraftChatSharedRunPathSurvivesConcurrentTurns(t *testing.T) {
+	require := require.New(t)
+	r, database, mrID, head, _ := newReviewRunFixture(t)
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "claude.sh")
+	// Stagger the two turns so one finishes (and cleans up) while the
+	// other is still reading files in the shared checkout.
+	script := "#!/bin/sh\ncase \"$*\" in *slow*) sleep 1.5;; *) sleep 0.3;; esac\n" +
+		"test -f a.txt || { echo 'checkout vanished' >&2; exit 9; }\n" + forkStream
+	require.NoError(os.WriteFile(fake, []byte(script), 0o755))
+	orig := SetBinaryForTest(fake)
+	t.Cleanup(func() { SetBinaryForTest(orig) })
+	ctx := context.Background()
+	run, err := database.CreateAIReviewRun(ctx, db.NewAIReviewRun{MergeRequestID: mrID, HeadSHA: head, ReadSHA: head})
+	require.NoError(err)
+	require.NoError(database.MarkAIReviewRunDone(ctx, run.ID, "sess-root", "", ""))
+	var msgs []db.ReviewDraftMessage
+	for i, id := range []string{"p1", "p2"} {
+		_, err := database.InsertClaudeSuggestion(ctx, mrID, "", run.ID, db.NewReviewDraft{ID: id, Path: "a.txt", Side: "RIGHT", Line: 1, CommitSHA: head, Body: "b"})
+		require.NoError(err)
+		m := queueReply(t, database, id)
+		msgs = append(msgs, m)
+		prompt := "fast"
+		if i == 0 {
+			prompt = "slow"
+		}
+		r.SubmitDraftTurn(DraftTurnInput{DraftID: id, MessageID: m.ID, Owner: "acme", Name: "widget", Number: 1,
+			Mode: DraftChatFork, ParentSessionID: "sess-root", WorktreePath: r.ReviewRunPath(run.ID), CheckoutSHA: head, Prompt: prompt})
+	}
+	for _, m := range msgs {
+		got := waitMessageTerminal(t, database, m.ID)
+		require.Equal("done", got.Status, got.Error)
+	}
+}
+
+func waitMessageTerminal(t *testing.T, database *db.DB, id int64) *db.ReviewDraftMessage {
+	t.Helper()
+	var got *db.ReviewDraftMessage
+	require.Eventually(t, func() bool {
+		got, _ = database.GetReviewDraftMessage(context.Background(), id)
+		return got != nil && got.Status != "queued" && got.Status != "running"
+	}, 10*time.Second, 20*time.Millisecond)
+	return got
+}
