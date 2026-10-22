@@ -85,6 +85,9 @@
     createAIReviewRunStore,
   } from "./stores/aiReviewRun.svelte.js";
   import {
+    createDraftChatStore,
+  } from "./stores/draftChat.svelte.js";
+  import {
     createAuthorGroupsStore,
   } from "./stores/authorGroups.svelte.js";
   import { createViewerStore } from "./stores/viewer.svelte.js";
@@ -261,6 +264,11 @@
       ...(cfg.basePath != null && { getBasePath: () => cfg.basePath as string }),
       onActivity: () => void diffStore.reloadDrafts(),
     });
+    // A revision changes a draft's body; reload drafts to show it.
+    const draftChatStore = createDraftChatStore({
+      ...(cfg.basePath != null && { getBasePath: () => cfg.basePath as string }),
+      onRevision: () => void diffStore.reloadDrafts(),
+    });
     const commitAnalysisStore = createCommitAnalysisStore({
       ...(cfg.basePath != null && { getBasePath: () => cfg.basePath as string }),
     });
@@ -295,6 +303,7 @@
       fileResolver: fileResolverStore,
       commitAnalysis: commitAnalysisStore,
       aiReviewRun: aiReviewRunStore,
+      draftChat: draftChatStore,
       worktrees: worktreesStore,
       worktreeSession: createWorktreeSessionStore({ client: cl }),
       reviewThreads: reviewThreadsStore,

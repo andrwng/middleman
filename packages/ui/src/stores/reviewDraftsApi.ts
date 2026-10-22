@@ -35,6 +35,20 @@ export interface ServerReviewRun {
   completed_at?: string;
 }
 
+export interface ServerDraftMessage {
+  id: number;
+  author: "user" | "claude";
+  kind: "message" | "revision";
+  body: string;
+  prev_body?: string;
+  applied: boolean;
+  status: "queued" | "running" | "done" | "failed" | "cancelled";
+  error?: string;
+  raw_json?: string;
+  created_at: string;
+  completed_at?: string;
+}
+
 export interface ServerDraftsResponse {
   drafts: ServerDraft[];
   meta: { body: string; event: string };
@@ -140,6 +154,26 @@ export function createReviewDraftsApi(getBasePath: () => string) {
     },
     cancelRun(pr: PRRef, runId: number): Promise<ServerReviewRun> {
       return call(`${prPrefix(pr)}/ai-review-runs/${runId}/cancel`, "POST", {});
+    },
+    async listMessages(pr: PRRef, id: string): Promise<ServerDraftMessage[]> {
+      const data = await call<{ messages?: ServerDraftMessage[] }>(
+        `${prPrefix(pr)}/review-drafts/${encodeURIComponent(id)}/messages`, "GET");
+      return data.messages ?? [];
+    },
+    async sendMessage(pr: PRRef, id: string, body: string, fresh = false): Promise<ServerDraftMessage[]> {
+      const data = await call<{ messages?: ServerDraftMessage[] }>(
+        `${prPrefix(pr)}/review-drafts/${encodeURIComponent(id)}/messages`, "POST",
+        fresh ? { body, fresh: true } : { body });
+      return data.messages ?? [];
+    },
+    cancelMessage(pr: PRRef, id: string, messageId: number): Promise<ServerDraftMessage> {
+      return call(`${prPrefix(pr)}/review-drafts/${encodeURIComponent(id)}/messages/${messageId}/cancel`, "POST", {});
+    },
+    applyRevision(pr: PRRef, id: string, messageId: number): Promise<ServerDraft> {
+      return call(`${prPrefix(pr)}/review-drafts/${encodeURIComponent(id)}/messages/${messageId}/apply`, "POST", {});
+    },
+    revertRevision(pr: PRRef, id: string, messageId: number): Promise<ServerDraft> {
+      return call(`${prPrefix(pr)}/review-drafts/${encodeURIComponent(id)}/messages/${messageId}/revert`, "POST", {});
     },
     async summary(): Promise<DraftSummaryItem[]> {
       const data = await call<{ prs?: DraftSummaryItem[] }>(

@@ -119,6 +119,7 @@ import type { ReviewThreadsStore } from "./stores/reviewThreads.svelte.js";
 import type { SymbolRefsStore } from "./stores/symbolRefs.svelte.js";
 import type { CodeBrowserStore } from "./stores/codeBrowser.svelte.js";
 import type { AIReviewRunStore } from "./stores/aiReviewRun.svelte.js";
+import type { DraftChatStore } from "./stores/draftChat.svelte.js";
 
 export interface StoreInstances {
   pulls: PullsStore;
@@ -139,6 +140,7 @@ export interface StoreInstances {
   fileResolver: FileResolverStore;
   commitAnalysis: CommitAnalysisStore;
   aiReviewRun: AIReviewRunStore;
+  draftChat: DraftChatStore;
   worktrees: WorktreesStore;
   worktreeSession: WorktreeSessionStore;
   reviewThreads: ReviewThreadsStore;
