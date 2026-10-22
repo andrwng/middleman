@@ -32,7 +32,7 @@
 
   // Claude suggestions the reviewer has not added to drafts. They are
   // never published, so say so before the reviewer publishes.
-  const unaddedSuggestions = $derived(isLocal ? 0 : diffStore.getSuggestions().length);
+  const unaddedSuggestions = $derived(diffStore.getSuggestions().length);
 
   let submitting = $state(false);
   let errorMsg = $state<string | null>(null);
@@ -87,38 +87,24 @@
     errorMsg = null;
 
     if (isLocal) {
-      // Local worktrees persist drafts as review threads (Phase 1b).
-      // Only inline comments become threads; the review summary/event
-      // are not used here (the discuss/apply agent + mode picker land
-      // in Phase 2). Reply-drafts (inReplyTo) are not part of the local
-      // flow — replies are added directly on a thread card.
-      const drafts = scoped
-        .filter((c) => c.inReplyTo == null)
-        .map((c) => ({
-          path: c.path,
-          side: c.side,
-          line: c.line,
-          ...(c.startLine != null ? { startLine: c.startLine } : {}),
-          commitSha: c.commitSha,
-          body: c.body,
-        }));
-      if (drafts.length === 0) {
-        errorMsg = "Add at least one inline comment to create review threads";
-        submitting = false; // outer onSubmit already set submitting = true
-        return;
-      }
+      // Local worktrees publish drafts as review threads, server-side;
+      // the review summary/event are not used here. A doc pane scopes
+      // the publish to its one file.
       try {
-        const ok = await reviewThreadsStore.createThreads(
-          drafts,
-          engageAgent ? "act-immediately" : undefined,
-        );
-        if (!ok) {
-          errorMsg = reviewThreadsStore.getError() ?? "Failed to create review threads";
+        const result = await diffStore.publishDraft({
+          event: "COMMENT",
+          body: "",
+          mode: engageAgent ? "act-immediately" : "persist-only",
+          ...(scopePath ? { path: scopePath } : {}),
+        });
+        if (!result.ok) {
+          errorMsg = result.error;
           return;
         }
-        if (scopePath) diffStore.clearDraftCommentsForPath(scopePath);
-        else diffStore.clearDraft();
+        void reviewThreadsStore.refresh();
         onclose();
+      } catch (err) {
+        errorMsg = err instanceof Error ? err.message : String(err);
       } finally {
         submitting = false;
       }

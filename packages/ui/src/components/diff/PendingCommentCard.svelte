@@ -27,9 +27,8 @@
     const pr = diffStore.getCurrentPR();
     if (pr) draftChat.open(pr, comment.id);
   }
-  // Chat needs a GitHub PR and a top-level comment; replies thread under
-  // someone else's comment and local drafts get chat later.
-  const canChat = $derived(!comment.inReplyTo && diffStore.getCurrentPR()?.owner !== "local");
+  // Replies thread under someone else's comment, so they have no chat.
+  const canChat = $derived(!comment.inReplyTo);
   // draftBody is only meaningful while editing === true; startEdit()
   // seeds it from the current comment.body at entry time.
   let draftBody = $state("");

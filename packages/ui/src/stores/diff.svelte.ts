@@ -1756,6 +1756,10 @@ export function createDiffStore(opts: DiffStoreOptions) {
     event: ReviewEvent;
     body: string;
     commitId?: string;
+    // Local worktrees only: whether the review agent acts on the new
+    // threads, and an optional single-file scope (doc pane).
+    mode?: "act-immediately" | "persist-only";
+    path?: string;
   }): Promise<{ ok: true } | { ok: false; error: string }> {
     const pr = currentPRRef();
     if (!pr) return { ok: false, error: "No pull request selected" };
@@ -1775,10 +1779,17 @@ export function createDiffStore(opts: DiffStoreOptions) {
         event: req.event,
         body: req.body,
         ...(req.commitId ? { commit_id: req.commitId } : {}),
+        ...(req.mode ? { mode: req.mode } : {}),
+        ...(req.path ? { path: req.path } : {}),
       });
-      const next = { ...draftReviews };
-      delete next[draftKeyFor(pr)];
-      draftReviews = next;
+      const key = draftKeyFor(pr);
+      if (req.path) {
+        // Only that file's drafts were published; suggestions stay too.
+        updateBucket(key, (d) => ({ ...d, comments: d.comments.filter((c) => c.path !== req.path) }));
+      } else {
+        // Drafts are gone; unadded suggestions stay where they were.
+        updateBucket(key, (d) => ({ ...emptyDraft(), suggestions: d.suggestions }));
+      }
       forgetSummaryFor(draftKeyFor(pr));
       return { ok: true };
     } catch (err) {

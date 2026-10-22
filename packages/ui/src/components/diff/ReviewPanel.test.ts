@@ -15,6 +15,7 @@ const publishDraft = vi.fn<
   (req: { event: string; body: string; commitId?: string }) => Promise<{ ok: true } | { ok: false; error: string }>
 >(async () => ({ ok: true }));
 const loadPulls = vi.fn();
+const threadsRefresh = vi.fn(async () => {});
 let suggestionList: Array<{ id: string }> = [];
 const clientPOST = vi.fn();
 
@@ -49,7 +50,7 @@ vi.mock("../../context.js", () => ({
       getSuggestions: () => suggestionList,
     },
     pulls: { loadPulls },
-    reviewThreads: { createThreads, getError: () => null },
+    reviewThreads: { createThreads, getError: () => null, refresh: threadsRefresh },
   }),
   getClient: () => ({ POST: clientPOST }),
 }));
@@ -63,22 +64,24 @@ afterEach(() => {
 });
 
 describe("ReviewPanel agent checkbox (local)", () => {
-  it("defaults the agent checkbox ticked and submits act-immediately", async () => {
+  it("defaults the agent checkbox ticked and publishes act-immediately", async () => {
     const { getByText, getByRole } = render(ReviewPanel, {
       props: { owner: "local", name: "demo", number: 7, onclose: vi.fn() },
     });
     expect((getByRole("checkbox") as HTMLInputElement).checked).toBe(true);
     await fireEvent.click(getByText("Create & apply"));
-    expect(createThreads).toHaveBeenCalledWith(expect.any(Array), "act-immediately");
+    expect(publishDraft).toHaveBeenCalledWith({ event: "COMMENT", body: "", mode: "act-immediately" });
+    expect(createThreads).not.toHaveBeenCalled();
+    expect(threadsRefresh).toHaveBeenCalled();
   });
 
-  it("submits persist-only when the agent checkbox is unticked", async () => {
+  it("publishes persist-only when the agent checkbox is unticked", async () => {
     const { getByText, getByRole } = render(ReviewPanel, {
       props: { owner: "local", name: "demo", number: 7, onclose: vi.fn() },
     });
     await fireEvent.click(getByRole("checkbox"));
     await fireEvent.click(getByText("Create review threads"));
-    expect(createThreads).toHaveBeenCalledWith(expect.any(Array), undefined);
+    expect(publishDraft).toHaveBeenCalledWith({ event: "COMMENT", body: "", mode: "persist-only" });
   });
 
   it("does not offer a discuss-first option in the UI", () => {
@@ -91,28 +94,24 @@ describe("ReviewPanel agent checkbox (local)", () => {
 });
 
 describe("ReviewPanel scopePath (local)", () => {
-  it("with scopePath submits only that path's comments and clears only those", async () => {
+  it("with scopePath publishes only that path", async () => {
     draft = twoPathDraft;
     const { getByText } = render(ReviewPanel, {
       props: { owner: "local", name: "demo", number: 7, scopePath: "a.md", onclose: vi.fn() },
     });
     await fireEvent.click(getByText("Create & apply"));
-    expect(createThreads).toHaveBeenCalledTimes(1);
-    expect(createThreads.mock.calls[0]![0].map((d) => d.path)).toEqual(["a.md"]);
-    expect(clearDraftCommentsForPath).toHaveBeenCalledWith("a.md");
-    expect(clearDraft).not.toHaveBeenCalled();
+    expect(publishDraft).toHaveBeenCalledWith({ event: "COMMENT", body: "", mode: "act-immediately", path: "a.md" });
   });
 
-  it("with no scopePath submits all comments and clears the whole draft", async () => {
-    draft = twoPathDraft;
-    const { getByText } = render(ReviewPanel, {
-      props: { owner: "local", name: "demo", number: 7, onclose: vi.fn() },
+  it("shows the server's error and keeps the panel open", async () => {
+    publishDraft.mockResolvedValueOnce({ ok: false, error: "add at least one inline comment to create review threads" });
+    const onclose = vi.fn();
+    const { getByText, findByText } = render(ReviewPanel, {
+      props: { owner: "local", name: "demo", number: 7, onclose },
     });
     await fireEvent.click(getByText("Create & apply"));
-    expect(createThreads).toHaveBeenCalledTimes(1);
-    expect(createThreads.mock.calls[0]![0].map((d) => d.path)).toEqual(["a.md", "b.md"]);
-    expect(clearDraft).toHaveBeenCalledTimes(1);
-    expect(clearDraftCommentsForPath).not.toHaveBeenCalled();
+    expect(await findByText(/at least one inline comment/)).toBeTruthy();
+    expect(onclose).not.toHaveBeenCalled();
   });
 });
 

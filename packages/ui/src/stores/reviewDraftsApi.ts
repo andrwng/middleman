@@ -130,7 +130,7 @@ export function createReviewDraftsApi(getBasePath: () => string) {
     },
     publish(
       pr: PRRef,
-      req: { event: string; body: string; commit_id?: string },
+      req: { event: string; body: string; commit_id?: string; mode?: string; path?: string },
     ): Promise<{ review_id: number; state: string; published: number }> {
       return call(`${prPrefix(pr)}/review-drafts/publish`, "POST", req);
     },

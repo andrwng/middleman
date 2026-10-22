@@ -12,9 +12,7 @@
 
   const { diff, detail: detailStore, reviewThreads, aiReviewRun } = getStores();
 
-  // Review with Claude is GitHub-only for now; local worktrees have
-  // their own review-thread flow.
-  const canReviewWithClaude = $derived(diff.getCurrentPR()?.owner !== "local");
+  const canReviewWithClaude = $derived(diff.getCurrentPR() !== null);
   let claudeFormOpen = $state(false);
   const suggestionCount = $derived(diff.getSuggestions().length);
   const tabOptions = [1, 2, 4, 8] as const;

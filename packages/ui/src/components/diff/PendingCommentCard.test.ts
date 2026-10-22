@@ -62,7 +62,7 @@ describe("PendingCommentCard publish error", () => {
     expect(user.queryByText("Claude")).toBeNull();
   });
 
-  it("offers Ask Claude on GitHub drafts but not on replies or local drafts", () => {
+  it("offers Ask Claude on GitHub and local drafts but not on replies", () => {
     const gh = render(PendingCommentCard, { props: { comment: base, currentHeadSha: "abc", ondelete: vi.fn() } });
     expect(gh.getByText("Ask Claude")).toBeTruthy();
     gh.unmount();
@@ -71,7 +71,7 @@ describe("PendingCommentCard publish error", () => {
     reply.unmount();
     prState.owner = "local";
     const local = render(PendingCommentCard, { props: { comment: base, currentHeadSha: "abc", ondelete: vi.fn() } });
-    expect(local.queryByText("Ask Claude")).toBeNull();
+    expect(local.getByText("Ask Claude")).toBeTruthy();
     prState.owner = "acme";
   });
 

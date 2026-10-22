@@ -20,7 +20,7 @@ vi.mock("../../context.js", () => ({
       setLayout: vi.fn(),
       setTabWidth: vi.fn(),
       setHideWhitespace: vi.fn(),
-      getCurrentPR: () => ({ owner: state.owner, name: "demo", number: 7 }),
+      getCurrentPR: () => (state.owner ? { owner: state.owner, name: "demo", number: 7 } : null),
       refresh: diffRefresh,
       isRefreshing: () => false,
       getRefreshError: () => null,
@@ -143,8 +143,14 @@ describe("DiffToolbar Review with Claude", () => {
     expect(startRun).toHaveBeenCalledWith("focus on tests");
   });
 
-  it("is not offered on a local worktree", () => {
+  it("is offered on a local worktree too", () => {
     state.owner = "local";
+    const { getByRole } = render(DiffToolbar, { props: {} });
+    expect(getByRole("button", { name: "Review with Claude" })).toBeTruthy();
+  });
+
+  it("is hidden when no pull request is selected", () => {
+    state.owner = "";
     const { queryByRole } = render(DiffToolbar, { props: {} });
     expect(queryByRole("button", { name: "Review with Claude" })).toBeNull();
   });

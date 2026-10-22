@@ -103,4 +103,17 @@ describe("suggestions in the diff store", () => {
     await store.whenDraftsSettled();
     expect(store.getSuggestions().map((s) => s.id)).toEqual(["s1"]);
   });
+
+  it("a path-scoped publish keeps other files' drafts and all suggestions", async () => {
+    const server = installDraftServer();
+    const draftRow = (id: string, path: string) => ({ ...sug(id, path), origin: "user", state: "draft", rationale: undefined });
+    server.drafts.set("acme/widget#1", [draftRow("d1", "a.md"), draftRow("d2", "b.md"), sug("s1", "a.md")]);
+    const store = createDiffStore({ client: stubClient() });
+    store.setActivePR("acme", "widget", 1);
+    await store.whenDraftsSettled();
+    const result = await store.publishDraft({ event: "COMMENT", body: "", mode: "persist-only", path: "a.md" });
+    expect(result.ok).toBe(true);
+    expect(store.getDraft().comments.map((c) => c.id)).toEqual(["d2"]);
+    expect(store.getSuggestions().map((c) => c.id)).toEqual(["s1"]);
+  });
 });
