@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strings"
 )
 
 // wholeIntArg reads an integer argument, rejecting fractional numbers.
@@ -75,6 +76,51 @@ func reviewRunTools() map[string]toolDef {
 			inputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
 			call: func(s *Server, _ map[string]any) (string, error) {
 				return s.restJSON("GET", prPath(s)+"/review-drafts", nil)
+			},
+		},
+		"get_pull": builtinTools()["get_pull"],
+	}
+}
+
+func draftPath(s *Server) string {
+	return prPath(s) + "/review-drafts/" + url.PathEscape(s.cfg.DraftID)
+}
+
+// draftChatTools is the tool set Claude gets while discussing one review
+// comment with the reviewer. Revisions follow the server's rules: text
+// the reviewer already accepted is never overwritten.
+func draftChatTools() map[string]toolDef {
+	return map[string]toolDef{
+		"get_draft": {
+			name:        "get_draft",
+			description: "Get the review comment under discussion: path, line, side, current body, and state (suggestion or draft).",
+			inputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+			call: func(s *Server, _ map[string]any) (string, error) {
+				return s.restJSON("GET", draftPath(s), nil)
+			},
+		},
+		"revise_comment": {
+			name: "revise_comment",
+			description: "Replace the comment's text. Use only when the reviewer asks for a change; " +
+				"body is the complete new comment text. If the reviewer already accepted or edited the comment, " +
+				"your text is offered to them instead of replacing theirs.",
+			inputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"body": map[string]any{"type": "string", "description": "The complete new comment text, Markdown."},
+				},
+				"required": []string{"body"},
+			},
+			call: func(s *Server, args map[string]any) (string, error) {
+				body, _ := args["body"].(string)
+				if strings.TrimSpace(body) == "" {
+					return "", fmt.Errorf("body is required")
+				}
+				b, err := json.Marshal(map[string]any{"body": body})
+				if err != nil {
+					return "", err
+				}
+				return s.restJSON("POST", draftPath(s)+"/revisions", b)
 			},
 		},
 		"get_pull": builtinTools()["get_pull"],

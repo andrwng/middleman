@@ -102,3 +102,52 @@ func TestListDraftsGetsReviewDrafts(t *testing.T) {
 	require.Len(t, *reqs, 1)
 	assert.Equal(t, "/api/v1/repos/acme/widgets/pulls/1/review-drafts", (*reqs)[0].path)
 }
+
+func draftModeServer(baseURL string) *Server {
+	return New(Config{ServerName: "middleman", BaseURL: baseURL, ReviewOwner: "acme", ReviewName: "widgets", ReviewNumber: 1, DraftID: "d 1"})
+}
+
+func TestDraftModeListsOnlyDraftTools(t *testing.T) {
+	s := draftModeServer("http://x")
+	names := []string{}
+	for _, td := range s.toolList() {
+		names = append(names, td["name"].(string))
+	}
+	sort.Strings(names)
+	require.Equal(t, []string{"get_draft", "get_pull", "revise_comment"}, names)
+}
+
+func TestReviseCommentPostsRevision(t *testing.T) {
+	require := require.New(t)
+	srv, reqs := reviewToolServer(t, http.StatusOK, `{"id":3,"kind":"revision","applied":true}`)
+	s := draftModeServer(srv.URL)
+	out, err := s.tools["revise_comment"].call(s, map[string]any{"body": "Return the error."})
+	require.NoError(err)
+	require.Contains(out, "revision")
+	require.Len(*reqs, 1)
+	require.Equal("POST", (*reqs)[0].method)
+	require.Equal("/api/v1/repos/acme/widgets/pulls/1/review-drafts/d 1/revisions", (*reqs)[0].path)
+	var body map[string]any
+	require.NoError(json.Unmarshal((*reqs)[0].body, &body))
+	require.Equal("Return the error.", body["body"])
+}
+
+func TestReviseCommentRejectsEmptyAndSurfacesConflict(t *testing.T) {
+	srv, reqs := reviewToolServer(t, http.StatusConflict, `{"detail":"draft is not in a state that allows this"}`)
+	s := draftModeServer(srv.URL)
+	_, err := s.tools["revise_comment"].call(s, map[string]any{"body": "  "})
+	require.Error(t, err)
+	require.Empty(t, *reqs)
+	_, err = s.tools["revise_comment"].call(s, map[string]any{"body": "x"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not in a state")
+}
+
+func TestGetDraftFetchesOneDraft(t *testing.T) {
+	srv, reqs := reviewToolServer(t, http.StatusOK, `{"id":"d 1","state":"suggestion"}`)
+	s := draftModeServer(srv.URL)
+	_, err := s.tools["get_draft"].call(s, map[string]any{})
+	require.NoError(t, err)
+	require.Len(t, *reqs, 1)
+	assert.Equal(t, "/api/v1/repos/acme/widgets/pulls/1/review-drafts/d 1", (*reqs)[0].path)
+}

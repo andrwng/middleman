@@ -29,6 +29,9 @@ type Config struct {
 	// RunID > 0 serves the review-run tool set Claude uses during a
 	// Review with Claude run instead of the review-thread tools.
 	RunID int64
+	// DraftID non-empty serves the draft-chat tool set Claude uses while
+	// discussing one review comment.
+	DraftID string
 	// httpDoer is the REST client; defaults to http.DefaultClient in New.
 	httpDoer HTTPDoer
 }
@@ -57,9 +60,12 @@ func New(cfg Config) *Server {
 		cfg.httpDoer = defaultHTTPDoer()
 	}
 	s := &Server{cfg: cfg}
-	if cfg.RunID > 0 {
+	switch {
+	case cfg.DraftID != "":
+		s.tools = draftChatTools() // defined in review_tools.go
+	case cfg.RunID > 0:
 		s.tools = reviewRunTools() // defined in review_tools.go
-	} else {
+	default:
 		s.tools = builtinTools() // defined in tools.go
 	}
 	return s

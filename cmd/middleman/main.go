@@ -131,6 +131,7 @@ func runMCP(args []string, in io.Reader, out io.Writer) error {
 	name := fs.String("name", "", "review repo name")
 	number := fs.Int("number", 0, "review number (worktree id; 0 = unset, a real id is >= 1)")
 	run := fs.Int64("run", 0, "review run id: serve the Review with Claude tool set")
+	draft := fs.String("draft", "", "review draft id: serve the draft-chat tool set")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -142,12 +143,13 @@ func runMCP(args []string, in io.Reader, out io.Writer) error {
 		ReviewName:   *name,
 		ReviewNumber: *number,
 		RunID:        *run,
+		DraftID:      *draft,
 	}
 
 	// cwd-default mode: no explicit handle → resolve from the current
 	// directory. A resolution failure here is non-fatal; we leave the
 	// (empty) handle so tool calls return a clear isError result.
-	if *run == 0 && *owner == "" && *name == "" && *number == 0 {
+	if *run == 0 && *draft == "" && *owner == "" && *name == "" && *number == 0 {
 		cwd, err := os.Getwd()
 		if err == nil {
 			if ro, rn, rnum, rerr := resolveCwdHandle(*baseURL, cwd); rerr == nil {
