@@ -1915,7 +1915,9 @@ export function createDiffStore(opts: DiffStoreOptions) {
   // are optimistic like drafts: the bucket changes immediately, and a
   // failed request puts the suggestion back and reports the error.
 
-  let lastDiscarded = $state<DraftComment[]>([]);
+  // Last discard batch per PR, so Undo only ever restores into the PR
+  // the suggestions came from.
+  let lastDiscardedByKey = $state<Record<string, DraftComment[]>>({});
   // Discard requests in flight by suggestion id, so an undo can wait
   // for the matching discard to land before restoring.
   const pendingDiscards = new Map<string, Promise<unknown>>();
@@ -1929,7 +1931,11 @@ export function createDiffStore(opts: DiffStoreOptions) {
   }
 
   function getLastDiscarded(): DraftComment[] {
-    return lastDiscarded;
+    return lastDiscardedByKey[draftKey()] ?? [];
+  }
+
+  function setLastDiscarded(key: string, list: DraftComment[]): void {
+    lastDiscardedByKey = { ...lastDiscardedByKey, [key]: list };
   }
 
   // updateBucket applies fn to the current PR's bucket.
@@ -1974,7 +1980,7 @@ export function createDiffStore(opts: DiffStoreOptions) {
     const removed = (draftReviews[key]?.suggestions ?? []).filter((c) => idSet.has(c.id));
     if (removed.length === 0) return;
     updateBucket(key, (d) => ({ ...d, suggestions: d.suggestions.filter((c) => !idSet.has(c.id)) }));
-    lastDiscarded = removed;
+    setLastDiscarded(key, removed);
     bumpDrafts(key);
     for (const s of removed) {
       const p = trackWrite(
@@ -1983,7 +1989,7 @@ export function createDiffStore(opts: DiffStoreOptions) {
             ...d,
             suggestions: d.suggestions.some((c) => c.id === s.id) ? d.suggestions : [...d.suggestions, s],
           }));
-          lastDiscarded = lastDiscarded.filter((c) => c.id !== s.id);
+          setLastDiscarded(key, (lastDiscardedByKey[key] ?? []).filter((c) => c.id !== s.id));
           syncFailed(err);
         }),
       );
@@ -2004,10 +2010,11 @@ export function createDiffStore(opts: DiffStoreOptions) {
 
   function undoDiscard(): void {
     const pr = currentPRRef();
-    if (!pr || lastDiscarded.length === 0) return;
+    if (!pr) return;
     const key = draftKeyFor(pr);
-    const restored = lastDiscarded;
-    lastDiscarded = [];
+    const restored = lastDiscardedByKey[key] ?? [];
+    if (restored.length === 0) return;
+    setLastDiscarded(key, []);
     updateBucket(key, (d) => {
       const have = new Set(d.suggestions.map((c) => c.id));
       return { ...d, suggestions: [...d.suggestions, ...restored.filter((c) => !have.has(c.id))] };

@@ -78,4 +78,29 @@ describe("suggestions in the diff store", () => {
     expect(server.drafts.get("acme/widget#1")![0]!.state).toBe("suggestion");
     expect(server.drafts.get("acme/widget#1")![0]!.body).toBe("better wording");
   });
+
+  it("undo belongs to the PR the suggestions were discarded on", async () => {
+    const server = installDraftServer();
+    server.drafts.set("acme/widget#1", [sug("s1")]);
+    server.drafts.set("acme/widget#2", [sug("t1")]);
+    const store = createDiffStore({ client: stubClient() });
+    store.setActivePR("acme", "widget", 1);
+    await store.whenDraftsSettled();
+    store.discardSuggestion("s1");
+    await store.whenDraftsSettled();
+
+    store.setActivePR("acme", "widget", 2);
+    await store.whenDraftsSettled();
+    expect(store.getLastDiscarded()).toHaveLength(0);
+    store.undoDiscard(); // nothing to undo here
+    await store.whenDraftsSettled();
+    expect(store.getSuggestions().map((s) => s.id)).toEqual(["t1"]);
+
+    store.setActivePR("acme", "widget", 1);
+    await store.whenDraftsSettled();
+    expect(store.getLastDiscarded().map((s) => s.id)).toEqual(["s1"]);
+    store.undoDiscard();
+    await store.whenDraftsSettled();
+    expect(store.getSuggestions().map((s) => s.id)).toEqual(["s1"]);
+  });
 });
