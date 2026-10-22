@@ -133,14 +133,15 @@ func TestReviseCommentPostsRevision(t *testing.T) {
 }
 
 func TestReviseCommentRejectsEmptyAndSurfacesConflict(t *testing.T) {
+	require := require.New(t)
 	srv, reqs := reviewToolServer(t, http.StatusConflict, `{"detail":"draft is not in a state that allows this"}`)
 	s := draftModeServer(srv.URL)
 	_, err := s.tools["revise_comment"].call(s, map[string]any{"body": "  "})
-	require.Error(t, err)
-	require.Empty(t, *reqs)
+	require.Error(err)
+	require.Empty(*reqs)
 	_, err = s.tools["revise_comment"].call(s, map[string]any{"body": "x"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not in a state")
+	require.Error(err)
+	require.Contains(err.Error(), "not in a state")
 }
 
 func TestGetDraftFetchesOneDraft(t *testing.T) {
