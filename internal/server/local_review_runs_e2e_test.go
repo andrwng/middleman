@@ -232,3 +232,28 @@ func TestAPISnapshotRefsPrunedWhenUnused(t *testing.T) {
 }
 
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }
+
+// Untracked files are part of the snapshot so Claude can read them, but
+// the local diff doesn't show them, so comments can't anchor there.
+func TestAPILocalReviewRunRejectsUntrackedAnchors(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+	ctx := context.Background()
+	client, _, num, dir, _ := setupLocalReviewServer(t, "sleep 2\n"+okStream)
+	require.NoError(os.WriteFile(filepath.Join(dir, "new.go"), []byte("package x\n"), 0o644))
+	start, err := client.HTTP.PostReposByOwnerByNamePullsByNumberAiReviewRunsWithResponse(ctx, "local", "demo", num, generated.StartAIReviewRunInputBody{})
+	require.NoError(err)
+	require.Equal(http.StatusOK, start.StatusCode(), string(start.Body))
+	resp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberAiReviewRunsByRunIdProposalsWithResponse(ctx, "local", "demo", num, start.JSON200.Id,
+		generated.ProposeCommentInputBody{Path: "new.go", Side: "RIGHT", Line: 1, Body: "x", Rationale: "y"})
+	require.NoError(err)
+	assert.Equal(http.StatusBadRequest, resp.StatusCode())
+	assert.Contains(string(resp.Body), "untracked")
+	// Once staged, the same file is commentable.
+	runGit(t, dir, "add", "-N", "new.go")
+	resp, err = client.HTTP.PostReposByOwnerByNamePullsByNumberAiReviewRunsByRunIdProposalsWithResponse(ctx, "local", "demo", num, start.JSON200.Id,
+		generated.ProposeCommentInputBody{Path: "new.go", Side: "RIGHT", Line: 1, Body: "x", Rationale: "y"})
+	require.NoError(err)
+	assert.Equal(http.StatusOK, resp.StatusCode(), string(resp.Body))
+}
+

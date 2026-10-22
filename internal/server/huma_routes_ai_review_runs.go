@@ -429,9 +429,16 @@ func (s *Server) runAnchorFile(
 			return nil, huma.Error500InternalServerError("load diff: " + err.Error())
 		}
 		for i := range files {
-			if files[i].Path == path {
-				return &files[i], nil
+			if files[i].Path != path {
+				continue
 			}
+			// The snapshot includes untracked files so Claude can read
+			// them, but the local diff only shows files git tracks.
+			if untracked, err := worktrees.IsUntracked(ctx, run.LocalWorktreePath, path); err == nil && untracked {
+				return nil, huma.Error400BadRequest(fmt.Sprintf(
+					"%s is untracked in the reviewer's worktree; comments can only anchor to files git tracks", path))
+			}
+			return &files[i], nil
 		}
 		return nil, nil
 	}
@@ -508,6 +515,13 @@ func (s *Server) startAIReviewRunLocal(ctx context.Context, input *startAIReview
 		pc.WriteString("\nCommits since base (oldest first):\n" + gitLog + "\n")
 	}
 	pc.WriteString(changedFilesContext(files))
+	if untracked, err := worktrees.ListUntracked(ctx, w.Path); err == nil && len(untracked) > 0 {
+		if len(untracked) > maxPromptFiles {
+			untracked = untracked[:maxPromptFiles]
+		}
+		pc.WriteString("\nUntracked files (included above so you can read them, but not commentable until the reviewer adds them):\n- " +
+			strings.Join(untracked, "\n- ") + "\n")
+	}
 	exe, err := os.Executable()
 	if err != nil || exe == "" {
 		return fail("cannot resolve middleman executable for the MCP server")

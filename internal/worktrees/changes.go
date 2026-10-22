@@ -451,3 +451,31 @@ func rawStatusToString(s string) (status string, isRenameOrCopy bool) {
 		return "modified", false
 	}
 }
+
+// IsUntracked reports whether path exists in neither HEAD nor the index
+// of the worktree: a new file the reviewer has not added. The local diff
+// view doesn't show such files.
+func IsUntracked(ctx context.Context, worktreePath, path string) (bool, error) {
+	if _, err := gitCmd(ctx, worktreePath, "ls-files", "--error-unmatch", "--", path); err == nil {
+		return false, nil
+	}
+	if _, err := gitCmd(ctx, worktreePath, "cat-file", "-e", "HEAD:"+path); err == nil {
+		return false, nil
+	}
+	return true, nil
+}
+
+// ListUntracked returns the worktree's untracked, non-ignored files.
+func ListUntracked(ctx context.Context, worktreePath string) ([]string, error) {
+	out, err := gitCmd(ctx, worktreePath, "ls-files", "--others", "--exclude-standard", "-z")
+	if err != nil {
+		return nil, err
+	}
+	var files []string
+	for _, f := range strings.Split(string(out), "\x00") {
+		if f != "" {
+			files = append(files, f)
+		}
+	}
+	return files, nil
+}
