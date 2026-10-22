@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	gh "github.com/google/go-github/v84/github"
@@ -483,6 +484,9 @@ func parseRateLimitHeaders(resp *http.Response) gh.Rate {
 type GraphQLFetcher struct {
 	client      *githubv4.Client
 	rateTracker *RateTracker
+	// forbiddenChecksNoticed holds repos already told that check runs
+	// aren't readable with this token (see noteForbiddenCheckRuns).
+	forbiddenChecksNoticed sync.Map
 }
 
 // RateTracker returns the GraphQL rate tracker, or nil if none
@@ -506,7 +510,7 @@ func NewGraphQLFetcher(
 	)
 	tc := oauth2.NewClient(context.Background(), ts)
 
-	base := tc.Transport
+	var base http.RoundTripper = &graphqlErrorTransport{base: tc.Transport}
 	if rateTracker != nil {
 		base = &graphqlRateTransport{
 			base:        base,
@@ -590,8 +594,14 @@ func (g *GraphQLFetcher) fetchRepoPRsWithPageSize(
 			"pageSize": githubv4.Int(pageSize),
 			"cursor":   cursorVar(cursor),
 		}
-		if err := g.client.Query(ctx, &q, vars); err != nil {
-			return nil, err
+		qctx, rec := withGQLErrorRecorder(ctx)
+		if err := g.client.Query(qctx, &q, vars); err != nil {
+			// A token without the Checks permission gets the full page
+			// with its CheckRun nodes nulled out; keep the rest.
+			if !onlyForbiddenCheckContexts(rec.errors()) {
+				return nil, err
+			}
+			g.noteForbiddenCheckRuns(owner, name)
 		}
 		nodes := q.Repository.PullRequests.Nodes
 		pi := q.Repository.PullRequests.PageInfo
