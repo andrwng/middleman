@@ -1,6 +1,7 @@
 <script lang="ts">
   import { getStores } from "../../context.js";
   import type { DraftComment } from "../../stores/diff.svelte.js";
+  import DraftChat from "./DraftChat.svelte";
 
   interface Props {
     suggestion: DraftComment;
@@ -13,6 +14,7 @@
   const { diff: diffStore } = getStores();
 
   let editing = $state(false);
+  let chatOpen = $state(false);
   let draftBody = $state("");
   let textareaEl: HTMLTextAreaElement | undefined = $state();
 
@@ -84,7 +86,8 @@
     <div class="suggestion__body">{suggestion.body}</div>
   {/if}
 
-  {#if suggestion.rationale}
+  <!-- The chat starts with the rationale, so hide it here while open. -->
+  {#if suggestion.rationale && !chatOpen}
     <div class="suggestion__rationale">
       <span class="suggestion__rationale-label">Claude</span>
       <p class="suggestion__rationale-text">{suggestion.rationale}</p>
@@ -101,10 +104,20 @@
       <button type="button" class="suggestion__btn" onclick={startEdit}>Edit</button>
       <button
         type="button"
+        class="suggestion__btn"
+        aria-expanded={chatOpen}
+        onclick={() => (chatOpen = !chatOpen)}
+      >Ask Claude</button>
+      <button
+        type="button"
         class="suggestion__btn suggestion__btn--discard"
         onclick={() => diffStore.discardSuggestion(suggestion.id)}
       >Discard</button>
     </div>
+  {/if}
+
+  {#if chatOpen}
+    <DraftChat draftId={suggestion.id} onclose={() => (chatOpen = false)} />
   {/if}
 </div>
 

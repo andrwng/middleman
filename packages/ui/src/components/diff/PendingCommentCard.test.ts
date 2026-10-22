@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render } from "@testing-library/svelte";
 
+const prState = { owner: "acme" };
+
 vi.mock("../../context.js", () => ({
   getStores: () => ({
     diff: {
@@ -8,6 +10,11 @@ vi.mock("../../context.js", () => ({
       ackEditRequest: vi.fn(),
       updateDraftCommentBody: vi.fn(),
       getCommits: () => [{ sha: "abc" }],
+      getCurrentPR: () => ({ owner: prState.owner, name: "widget", number: 1 }),
+    },
+    draftChat: {
+      open: vi.fn(), close: vi.fn(), send: vi.fn(), cancel: vi.fn(), apply: vi.fn(), revert: vi.fn(),
+      getMessages: () => [], isBusy: () => false, isSending: () => false, getError: () => null,
     },
   }),
 }));
@@ -50,5 +57,18 @@ describe("PendingCommentCard publish error", () => {
     claude.unmount();
     const user = render(PendingCommentCard, { props: { comment: base, currentHeadSha: "abc", ondelete: vi.fn() } });
     expect(user.queryByText("Claude")).toBeNull();
+  });
+
+  it("offers Ask Claude on GitHub drafts but not on replies or local drafts", () => {
+    const gh = render(PendingCommentCard, { props: { comment: base, currentHeadSha: "abc", ondelete: vi.fn() } });
+    expect(gh.getByText("Ask Claude")).toBeTruthy();
+    gh.unmount();
+    const reply = render(PendingCommentCard, { props: { comment: { ...base, inReplyTo: 9 }, currentHeadSha: "abc", ondelete: vi.fn() } });
+    expect(reply.queryByText("Ask Claude")).toBeNull();
+    reply.unmount();
+    prState.owner = "local";
+    const local = render(PendingCommentCard, { props: { comment: base, currentHeadSha: "abc", ondelete: vi.fn() } });
+    expect(local.queryByText("Ask Claude")).toBeNull();
+    prState.owner = "acme";
   });
 });

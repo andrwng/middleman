@@ -1,6 +1,7 @@
 <script lang="ts">
   import { getStores } from "../../context.js";
   import type { DraftComment } from "../../stores/diff.svelte.js";
+  import DraftChat from "./DraftChat.svelte";
 
   interface Props {
     comment: DraftComment;
@@ -15,6 +16,10 @@
   const { diff: diffStore } = getStores();
 
   let editing = $state(false);
+  let chatOpen = $state(false);
+  // Chat needs a GitHub PR and a top-level comment; replies thread under
+  // someone else's comment and local drafts get chat later.
+  const canChat = $derived(!comment.inReplyTo && diffStore.getCurrentPR()?.owner !== "local");
   // draftBody is only meaningful while editing === true; startEdit()
   // seeds it from the current comment.body at entry time.
   let draftBody = $state("");
@@ -112,6 +117,15 @@
         ? `${comment.startLine}–${comment.line}`
         : comment.line}
     </span>
+    {#if !editing && canChat}
+      <button
+        type="button"
+        class="pending__ask"
+        aria-expanded={chatOpen}
+        onclick={() => (chatOpen = !chatOpen)}
+        title="Discuss this comment with Claude"
+      >Ask Claude</button>
+    {/if}
     {#if !editing}
       <button
         type="button"
@@ -166,6 +180,9 @@
       title="Double-click to edit"
     >{comment.body}</div>
   {/if}
+  {#if chatOpen}
+    <DraftChat draftId={comment.id} onclose={() => (chatOpen = false)} />
+  {/if}
   {#if comment.syncError}
     <p class="pending__submit-error" role="alert">
       Not saved to the server: {comment.syncError}. Kept here; it is saved again when you publish.
@@ -216,6 +233,17 @@
   .pending--drifted .pending__badge {
     background: var(--accent-amber);
     color: #000;
+  }
+
+  .pending__ask {
+    margin-left: auto;
+    font-size: 11px;
+    padding: 1px 8px;
+    border: 1px solid var(--accent-claude);
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--accent-claude);
+    cursor: pointer;
   }
 
   .pending__from-claude {

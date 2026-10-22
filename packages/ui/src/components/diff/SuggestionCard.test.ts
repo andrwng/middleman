@@ -5,7 +5,13 @@ const acceptSuggestion = vi.fn();
 const discardSuggestion = vi.fn();
 const updateSuggestionBody = vi.fn();
 vi.mock("../../context.js", () => ({
-  getStores: () => ({ diff: { acceptSuggestion, discardSuggestion, updateSuggestionBody } }),
+  getStores: () => ({
+    diff: { acceptSuggestion, discardSuggestion, updateSuggestionBody, getCurrentPR: () => ({ owner: "acme", name: "widget", number: 1 }) },
+    draftChat: {
+      open: vi.fn(), close: vi.fn(), send: vi.fn(), cancel: vi.fn(), apply: vi.fn(), revert: vi.fn(),
+      getMessages: () => [], isBusy: () => false, isSending: () => false, getError: () => null,
+    },
+  }),
 }));
 
 import SuggestionCard from "./SuggestionCard.svelte";
@@ -47,5 +53,11 @@ describe("SuggestionCard", () => {
     await fireEvent.input(box, { target: { value: "Return the error." } });
     await fireEvent.keyDown(box, { key: "Enter", ctrlKey: true });
     expect(updateSuggestionBody).toHaveBeenCalledWith("s1", "Return the error.");
+  });
+
+  it("opens the chat with Ask Claude", async () => {
+    const { getByText, getByPlaceholderText } = render(SuggestionCard, { props: { suggestion: s, currentHeadSha: "abc" } });
+    await fireEvent.click(getByText("Ask Claude"));
+    expect(getByPlaceholderText(/Ask about this comment/)).toBeTruthy();
   });
 });
