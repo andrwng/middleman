@@ -26,6 +26,9 @@ type Config struct {
 	// Every tools/call returns it as a clear isError result (tools/list
 	// still works, so the client sees the tools and learns why calls fail).
 	Unresolved string
+	// RunID > 0 serves the review-run tool set Claude uses during a
+	// Review with Claude run instead of the review-thread tools.
+	RunID int64
 	// httpDoer is the REST client; defaults to http.DefaultClient in New.
 	httpDoer HTTPDoer
 }
@@ -54,7 +57,11 @@ func New(cfg Config) *Server {
 		cfg.httpDoer = defaultHTTPDoer()
 	}
 	s := &Server{cfg: cfg}
-	s.tools = builtinTools() // defined in tools.go
+	if cfg.RunID > 0 {
+		s.tools = reviewRunTools() // defined in review_tools.go
+	} else {
+		s.tools = builtinTools() // defined in tools.go
+	}
 	return s
 }
 
