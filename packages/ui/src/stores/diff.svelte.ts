@@ -160,16 +160,23 @@ export interface DraftComment {
   // Set when the server never accepted this draft. The draft is kept
   // locally and saved again before publish.
   syncError?: string;
+  // "claude" for comments that started as a Claude suggestion.
+  origin?: "user" | "claude";
+  // Claude's reasoning when it proposed the comment (never published).
+  rationale?: string;
+  runId?: number;
 }
 
 export interface DraftReview {
   body: string;
   event: ReviewEvent;
   comments: DraftComment[];
+  // Claude suggestions not yet added to drafts. Never published.
+  suggestions: DraftComment[];
 }
 
 function emptyDraft(): DraftReview {
-  return { body: "", event: "COMMENT", comments: [] };
+  return { body: "", event: "COMMENT", comments: [], suggestions: [] };
 }
 
 function loadDraftReviews(): Record<string, DraftReview> {
@@ -190,6 +197,7 @@ function loadDraftReviews(): Record<string, DraftReview> {
       result[key] = {
         body: typeof v.body === "string" ? v.body : "",
         event,
+        suggestions: [],
         comments: v.comments.filter(
           (c): c is DraftComment =>
             !!c &&
@@ -219,6 +227,9 @@ function fromServerDraft(d: ServerDraft): DraftComment {
     createdAt: d.created_at,
     ...(d.in_reply_to != null ? { inReplyTo: d.in_reply_to } : {}),
     ...(d.submit_error ? { submitError: d.submit_error } : {}),
+    origin: d.origin,
+    ...(d.rationale ? { rationale: d.rationale } : {}),
+    ...(d.run_id != null ? { runId: d.run_id } : {}),
   };
 }
 
@@ -567,6 +578,7 @@ export function createDiffStore(opts: DiffStoreOptions) {
           return;
         }
         const server = res.drafts.filter((d) => d.state === "draft").map(fromServerDraft);
+        const suggestions = res.drafts.filter((d) => d.state === "suggestion").map(fromServerDraft);
         const local = draftReviews[key]?.comments ?? [];
         const pendingLocal = local.filter(
           (c) => (pendingCreates.has(c.id) || c.syncError) && !server.some((sd) => sd.id === c.id),
@@ -581,7 +593,12 @@ export function createDiffStore(opts: DiffStoreOptions) {
             : "COMMENT";
         draftReviews = {
           ...draftReviews,
-          [key]: { body: localMeta ? localMeta.body : res.meta.body, event, comments: [...server, ...pendingLocal] },
+          [key]: {
+            body: localMeta ? localMeta.body : res.meta.body,
+            event,
+            comments: [...server, ...pendingLocal],
+            suggestions,
+          },
         };
       } catch (err) {
         if (gen === draftsGen) syncFailed(err);
@@ -1892,6 +1909,143 @@ export function createDiffStore(opts: DiffStoreOptions) {
     if (editingDraftId === id) editingDraftId = null;
   }
 
+  // --- Claude suggestions ---
+  //
+  // Suggestions live beside drafts in the same per-PR bucket. Actions
+  // are optimistic like drafts: the bucket changes immediately, and a
+  // failed request puts the suggestion back and reports the error.
+
+  let lastDiscarded = $state<DraftComment[]>([]);
+  // Discard requests in flight by suggestion id, so an undo can wait
+  // for the matching discard to land before restoring.
+  const pendingDiscards = new Map<string, Promise<unknown>>();
+
+  function getSuggestions(): DraftComment[] {
+    return getDraft().suggestions;
+  }
+
+  function getSuggestionsForPath(path: string): DraftComment[] {
+    return getDraft().suggestions.filter((c) => c.path === path);
+  }
+
+  function getLastDiscarded(): DraftComment[] {
+    return lastDiscarded;
+  }
+
+  // updateBucket applies fn to the current PR's bucket.
+  function updateBucket(key: string, fn: (d: DraftReview) => DraftReview): void {
+    draftReviews = { ...draftReviews, [key]: fn(draftReviews[key] ?? emptyDraft()) };
+  }
+
+  function acceptSuggestion(id: string): void {
+    const pr = currentPRRef();
+    if (!pr) return;
+    const key = draftKeyFor(pr);
+    const s = draftReviews[key]?.suggestions.find((c) => c.id === id);
+    if (!s) return;
+    const accepted: DraftComment = { ...s, origin: "claude" };
+    updateBucket(key, (d) => ({
+      ...d,
+      suggestions: d.suggestions.filter((c) => c.id !== id),
+      comments: [...d.comments, accepted],
+    }));
+    bumpDrafts(key);
+    trackWrite(
+      draftsApi.accept(pr, id).catch((err: unknown) => {
+        updateBucket(key, (d) => ({
+          ...d,
+          comments: d.comments.filter((c) => c.id !== id),
+          suggestions: d.suggestions.some((c) => c.id === id) ? d.suggestions : [...d.suggestions, s],
+        }));
+        syncFailed(err);
+      }),
+    );
+  }
+
+  function acceptAllSuggestions(): void {
+    for (const s of [...getSuggestions()]) acceptSuggestion(s.id);
+  }
+
+  function discardSuggestions(ids: string[]): void {
+    const pr = currentPRRef();
+    if (!pr) return;
+    const key = draftKeyFor(pr);
+    const idSet = new Set(ids);
+    const removed = (draftReviews[key]?.suggestions ?? []).filter((c) => idSet.has(c.id));
+    if (removed.length === 0) return;
+    updateBucket(key, (d) => ({ ...d, suggestions: d.suggestions.filter((c) => !idSet.has(c.id)) }));
+    lastDiscarded = removed;
+    bumpDrafts(key);
+    for (const s of removed) {
+      const p = trackWrite(
+        draftsApi.discard(pr, s.id).catch((err: unknown) => {
+          updateBucket(key, (d) => ({
+            ...d,
+            suggestions: d.suggestions.some((c) => c.id === s.id) ? d.suggestions : [...d.suggestions, s],
+          }));
+          lastDiscarded = lastDiscarded.filter((c) => c.id !== s.id);
+          syncFailed(err);
+        }),
+      );
+      pendingDiscards.set(s.id, p);
+      void p.finally(() => {
+        if (pendingDiscards.get(s.id) === p) pendingDiscards.delete(s.id);
+      });
+    }
+  }
+
+  function discardSuggestion(id: string): void {
+    discardSuggestions([id]);
+  }
+
+  function discardAllSuggestions(): void {
+    discardSuggestions(getSuggestions().map((c) => c.id));
+  }
+
+  function undoDiscard(): void {
+    const pr = currentPRRef();
+    if (!pr || lastDiscarded.length === 0) return;
+    const key = draftKeyFor(pr);
+    const restored = lastDiscarded;
+    lastDiscarded = [];
+    updateBucket(key, (d) => {
+      const have = new Set(d.suggestions.map((c) => c.id));
+      return { ...d, suggestions: [...d.suggestions, ...restored.filter((c) => !have.has(c.id))] };
+    });
+    bumpDrafts(key);
+    for (const s of restored) {
+      trackWrite(
+        (async () => {
+          // The discard may still be in flight; restore only after it lands.
+          await pendingDiscards.get(s.id);
+          await draftsApi.restore(pr, s.id);
+        })().catch((err: unknown) => {
+          updateBucket(key, (d) => ({ ...d, suggestions: d.suggestions.filter((c) => c.id !== s.id) }));
+          syncFailed(err);
+        }),
+      );
+    }
+  }
+
+  function updateSuggestionBody(id: string, body: string): void {
+    const trimmed = body.trim();
+    if (trimmed === "") {
+      discardSuggestion(id);
+      return;
+    }
+    const pr = currentPRRef();
+    if (!pr) return;
+    const key = draftKeyFor(pr);
+    const cur = draftReviews[key]?.suggestions.find((c) => c.id === id);
+    if (!cur || cur.body === trimmed) return;
+    updateBucket(key, (d) => ({
+      ...d,
+      suggestions: d.suggestions.map((c) => (c.id === id ? { ...c, body: trimmed } : c)),
+    }));
+    bumpDrafts(key);
+    trackWrite(draftsApi.updateBody(pr, id, trimmed).catch(syncFailed));
+  }
+
   function getDraftCommentsForPath(path: string): DraftComment[] {
     return getDraft().comments.filter((c) => c.path === path);
   }
@@ -2197,6 +2351,15 @@ export function createDiffStore(opts: DiffStoreOptions) {
     clearDraft,
     clearDraftCommentsForPath,
     getDraftSyncError: (): string | null => draftSyncError,
+    getSuggestions,
+    getSuggestionsForPath,
+    getLastDiscarded,
+    acceptSuggestion,
+    acceptAllSuggestions,
+    discardSuggestion,
+    discardAllSuggestions,
+    undoDiscard,
+    updateSuggestionBody,
     reloadDrafts,
     publishDraft,
     whenDraftsSettled,

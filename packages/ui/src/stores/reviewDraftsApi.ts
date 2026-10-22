@@ -14,9 +14,25 @@ export interface ServerDraft {
   body: string;
   origin: "user" | "claude";
   state: "suggestion" | "draft" | "discarded";
+  run_id?: number;
+  rationale?: string;
   submit_error?: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface ServerReviewRun {
+  id: number;
+  status: "queued" | "running" | "done" | "failed" | "cancelled";
+  head_sha: string;
+  instructions: string;
+  summary: string;
+  error?: string;
+  raw_json: string;
+  suggestion_count: number;
+  created_at: string;
+  started_at?: string;
+  completed_at?: string;
 }
 
 export interface ServerDraftsResponse {
@@ -103,6 +119,27 @@ export function createReviewDraftsApi(getBasePath: () => string) {
       req: { event: string; body: string; commit_id?: string },
     ): Promise<{ review_id: number; state: string; published: number }> {
       return call(`${prPrefix(pr)}/review-drafts/publish`, "POST", req);
+    },
+    // Transitions send an empty JSON body so the server's CSRF
+    // content-type check passes.
+    accept(pr: PRRef, id: string): Promise<ServerDraft> {
+      return call(`${prPrefix(pr)}/review-drafts/${encodeURIComponent(id)}/accept`, "POST", {});
+    },
+    discard(pr: PRRef, id: string): Promise<ServerDraft> {
+      return call(`${prPrefix(pr)}/review-drafts/${encodeURIComponent(id)}/discard`, "POST", {});
+    },
+    restore(pr: PRRef, id: string): Promise<ServerDraft> {
+      return call(`${prPrefix(pr)}/review-drafts/${encodeURIComponent(id)}/restore`, "POST", {});
+    },
+    startRun(pr: PRRef, instructions: string): Promise<ServerReviewRun> {
+      return call(`${prPrefix(pr)}/ai-review-runs`, "POST", { instructions });
+    },
+    async latestRun(pr: PRRef): Promise<ServerReviewRun | null> {
+      const data = await call<{ run?: ServerReviewRun | null }>(`${prPrefix(pr)}/ai-review-runs/latest`, "GET");
+      return data.run && data.run.id ? data.run : null;
+    },
+    cancelRun(pr: PRRef, runId: number): Promise<ServerReviewRun> {
+      return call(`${prPrefix(pr)}/ai-review-runs/${runId}/cancel`, "POST", {});
     },
     async summary(): Promise<DraftSummaryItem[]> {
       const data = await call<{ prs?: DraftSummaryItem[] }>(

@@ -53,4 +53,20 @@ describe("reviewDraftsApi", () => {
     const api = createReviewDraftsApi(() => "/base/");
     expect(await api.summary()).toEqual([{ owner: "acme", name: "widget", number: 1, count: 2 }]);
   });
+
+  it("posts transitions to the draft action routes", async () => {
+    const fn = mockFetch(200, { id: "s1", state: "draft" });
+    const api = createReviewDraftsApi(() => "/");
+    await api.accept(pr, "s 1");
+    const [url, init] = fn.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("/api/v1/repos/acme/wid%20get/pulls/7/review-drafts/s%201/accept");
+    expect(init.method).toBe("POST");
+    expect((init.headers as Record<string, string>)["content-type"]).toBe("application/json");
+  });
+
+  it("returns null when there is no review run yet", async () => {
+    mockFetch(200, { run: null });
+    const api = createReviewDraftsApi(() => "/");
+    expect(await api.latestRun(pr)).toBeNull();
+  });
 });
