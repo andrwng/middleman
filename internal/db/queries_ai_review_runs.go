@@ -148,6 +148,14 @@ func (d *DB) UpdateAIReviewRunStream(ctx context.Context, id int64, rawJSON stri
 	return err
 }
 
+// SetAIReviewRunSession records Claude's session id as soon as it is
+// known, so a run that fails later still has a session to fork from.
+func (d *DB) SetAIReviewRunSession(ctx context.Context, id int64, sessionID string) error {
+	_, err := d.rw.ExecContext(ctx,
+		`UPDATE middleman_ai_review_runs SET claude_session_id = ? WHERE id = ?`, sessionID, id)
+	return err
+}
+
 func (d *DB) MarkAIReviewRunDone(ctx context.Context, id int64, sessionID, summary, rawJSON string) error {
 	_, err := d.rw.ExecContext(ctx,
 		`UPDATE middleman_ai_review_runs

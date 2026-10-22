@@ -213,3 +213,21 @@ func TestReconcileMarksActiveReviewRunsFailed(t *testing.T) {
 	require.Equal("failed", got.Status)
 	require.Contains(got.Error, "restart")
 }
+
+// A run that fails after Claude started still records its session, so
+// the suggestions it already made can be discussed (forked) later.
+func TestReviewRunFailureKeepsSessionID(t *testing.T) {
+	r, database, mrID, head, base := newReviewRunFixture(t)
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "claude.sh")
+	writeFakeReviewClaude(t, fake, filepath.Join(dir, "args.txt"),
+		"echo '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"sess-early\"}'\nexit 3\n")
+	orig := SetBinaryForTest(fake)
+	t.Cleanup(func() { SetBinaryForTest(orig) })
+	ctx := context.Background()
+	run, err := database.CreateAIReviewRun(ctx, db.NewAIReviewRun{MergeRequestID: mrID, HeadSHA: head, ReadSHA: head})
+	require.NoError(t, err)
+	require.NoError(t, r.StartReviewRun(ctx, ReviewRunInput{RunID: run.ID, Owner: "acme", Name: "widget", Number: 1, HeadSHA: head, MergeBaseSHA: base}))
+	got := waitRunStatus(t, database, run.ID, "failed")
+	assert.Equal(t, "sess-early", got.ClaudeSessionID)
+}

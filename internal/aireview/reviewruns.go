@@ -121,6 +121,7 @@ func (r *Runner) runReviewRun(ctx context.Context, in ReviewRunInput, worktreePa
 
 	state := &streamState{Events: []streamEvent{}}
 	var summary string
+	savedSession := false
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
 	for scanner.Scan() {
@@ -131,6 +132,12 @@ func (r *Runner) runReviewRun(ctx context.Context, in ReviewRunInput, worktreePa
 		text, isResult, dirty := applyStreamMessage(state, line)
 		if isResult {
 			summary = text
+		}
+		if !savedSession && state.SessionID != "" {
+			savedSession = true
+			if err := r.db.SetAIReviewRunSession(bg, in.RunID, state.SessionID); err != nil {
+				slog.Warn("save review run session failed", "run_id", in.RunID, "err", err)
+			}
 		}
 		if dirty {
 			if raw, err := json.Marshal(state); err == nil {
