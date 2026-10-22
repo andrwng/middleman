@@ -77,7 +77,7 @@ CREATE TABLE middleman_ai_review_runs (
 );
 
 CREATE TABLE middleman_review_drafts (
-    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                TEXT PRIMARY KEY,                -- client-generated UUID
     merge_request_id  INTEGER  NOT NULL,
     branch            TEXT     NOT NULL DEFAULT '',  -- local only
     path              TEXT     NOT NULL,
@@ -114,7 +114,7 @@ CREATE TABLE middleman_review_draft_meta (
 
 CREATE TABLE middleman_review_draft_messages (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    draft_id     INTEGER  NOT NULL,
+    draft_id     TEXT     NOT NULL,
     author       TEXT     NOT NULL,                 -- user|claude
     kind         TEXT     NOT NULL,                 -- message|revision
     body         TEXT     NOT NULL DEFAULT '',      -- message text, or revision's new body
@@ -155,7 +155,7 @@ Routes (`owner=local` handled by the same routes, as review threads are):
 | DELETE | `.../review-drafts/{id}` | hard delete (user drafts only; suggestions are discarded) |
 | PUT | `.../review-draft-meta` | review body and event |
 
-`submitReview` (`internal/server/huma_routes.go:1208`) reads `state=draft` rows from the DB instead of the request body. On partial failure, drafts that posted are deleted; the rest stay with `submit_error` set. The local submit path (drafts to review threads, `ReviewPanel.svelte:87-122`) moves server-side the same way and keeps its `discuss-first` / `act-immediately` / persist-only modes.
+A new `POST .../review-drafts/publish {event, body, commit_id?}` reads `state=draft` rows from the DB and posts them using the same inline-comment core as `submitReview` (`internal/server/huma_routes.go:1208`), which stays for compatibility. Each draft is deleted as soon as GitHub accepts it, so on partial failure only unposted drafts remain, the failing one with `submit_error` set. Local publish stays frontend-driven until PR 4 (drafts to review threads, `ReviewPanel.svelte:87-122`, keeping its `discuss-first` / `act-immediately` / persist-only modes).
 
 Frontend: new `reviewDrafts.svelte.ts` store, API-backed with optimistic updates. The draft functions in `diff.svelte.ts` (`addDraftComment`, `removeDraftComment`, `updateDraftCommentBody`, `setDraftBody`, `setDraftEvent`) delegate to it so callers do not change. On first load per PR the store posts any localStorage drafts as a batch, then deletes the key.
 
