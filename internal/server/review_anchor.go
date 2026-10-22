@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -98,4 +99,39 @@ func validateAnchor(f *gitclone.DiffFile, side string, line int, startLine *int)
 		return fmt.Errorf("start_line %d and line %d must be in the same hunk", *startLine, line)
 	}
 	return nil
+}
+
+// anchorFileDiff loads one file's diff between base and head for anchor
+// validation. Returns nil when the file is not changed. Filtering a diff
+// by the new path alone hides a rename (git sees a brand-new file), so
+// the old path is looked up first and both are passed.
+func anchorFileDiff(
+	ctx context.Context, clones *gitclone.Manager, host, owner, name, base, head, path string,
+) (*gitclone.DiffFile, error) {
+	files, err := clones.DiffFiles(ctx, host, owner, name, base, head)
+	if err != nil {
+		return nil, err
+	}
+	paths := []string{}
+	for _, f := range files {
+		if f.Path == path {
+			paths = append(paths, path)
+			if f.OldPath != "" && f.OldPath != path {
+				paths = append(paths, f.OldPath)
+			}
+		}
+	}
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	diff, err := clones.DiffPaths(ctx, host, owner, name, base, head, false, paths)
+	if err != nil {
+		return nil, err
+	}
+	for i := range diff.Files {
+		if diff.Files[i].Path == path {
+			return &diff.Files[i], nil
+		}
+	}
+	return nil, nil
 }

@@ -13,7 +13,6 @@ import (
 
 	"github.com/wesm/middleman/internal/aireview"
 	"github.com/wesm/middleman/internal/db"
-	"github.com/wesm/middleman/internal/gitclone"
 )
 
 const reviewInstructionsMaxBytes = 8192
@@ -278,15 +277,9 @@ func (s *Server) proposeComment(ctx context.Context, input *proposeCommentInput)
 		return nil, huma.Error409Conflict("PR's diff SHAs aren't synced yet")
 	}
 	host := s.syncer.HostForRepo(input.Owner, input.Name)
-	diff, err := s.clones.DiffPaths(ctx, host, input.Owner, input.Name, shas.MergeBaseSHA, run.ReadSHA, false, []string{in.Path})
+	file, err := anchorFileDiff(ctx, s.clones, host, input.Owner, input.Name, shas.MergeBaseSHA, run.ReadSHA, in.Path)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("load diff: " + err.Error())
-	}
-	var file *gitclone.DiffFile
-	for i := range diff.Files {
-		if diff.Files[i].Path == in.Path {
-			file = &diff.Files[i]
-		}
 	}
 	if file == nil {
 		return nil, huma.Error400BadRequest(fmt.Sprintf("%s is not changed in this pull request", in.Path))
