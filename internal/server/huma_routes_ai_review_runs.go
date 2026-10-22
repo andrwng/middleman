@@ -158,20 +158,7 @@ func (s *Server) startAIReviewRun(ctx context.Context, input *startAIReviewRunIn
 		return nil, huma.Error404NotFound("pull request not found")
 	}
 
-	host := s.syncer.HostForRepo(input.Owner, input.Name)
-	gitLog, _ := runGitLogForBrief(ctx, s.clones.ClonePath(host, input.Owner, input.Name), shas.MergeBaseSHA, shas.DiffHeadSHA)
-	var pc strings.Builder
-	fmt.Fprintf(&pc, "Repo: %s/%s\nPR #%d: %s\nBranch: %s -> %s\n", input.Owner, input.Name, pr.Number, pr.Title, pr.HeadBranch, pr.BaseBranch)
-	if strings.TrimSpace(pr.Body) != "" {
-		pc.WriteString("\nAuthor's description:\n" + strings.TrimSpace(pr.Body) + "\n")
-	}
-	if gitLog != "" {
-		pc.WriteString("\nCommit log (oldest first):\n" + gitLog + "\n")
-	}
-	if diff, err := s.clones.Diff(ctx, host, input.Owner, input.Name, shas.MergeBaseSHA, shas.DiffHeadSHA, false); err == nil {
-		pc.WriteString(changedFilesContext(diff.Files))
-	}
-	pc.WriteString(s.reviewCommentsContext(ctx, mrID))
+	promptContext := s.prContextBlock(ctx, input.Owner, input.Name, mrID, shas, pr)
 
 	run, err := s.db.CreateAIReviewRun(ctx, db.NewAIReviewRun{
 		MergeRequestID: mrID, HeadSHA: shas.DiffHeadSHA, ReadSHA: shas.DiffHeadSHA,
@@ -191,7 +178,7 @@ func (s *Server) startAIReviewRun(ctx context.Context, input *startAIReviewRunIn
 	if err := s.aiReview.StartReviewRun(ctx, aireview.ReviewRunInput{
 		RunID: run.ID, Owner: input.Owner, Name: input.Name, Number: input.Number,
 		HeadSHA: shas.DiffHeadSHA, MergeBaseSHA: shas.MergeBaseSHA,
-		Instructions: run.Instructions, PromptContext: pc.String(),
+		Instructions: run.Instructions, PromptContext: promptContext,
 		MCP: aireview.MCPConfig{Binary: exe, BaseURL: s.selfBaseURL(), Owner: input.Owner, Name: input.Name, Number: input.Number, RunID: run.ID},
 	}); err != nil {
 		return nil, huma.Error502BadGateway("start review run: " + err.Error())
@@ -372,4 +359,27 @@ func changedFilesContext(files []gitclone.DiffFile) string {
 			describeRanges(f, "RIGHT"), describeRanges(f, "LEFT"))
 	}
 	return b.String()
+}
+
+// prContextBlock renders what Claude needs to orient itself in a PR: the
+// title, branches, description, commit log, changed files with their
+// commentable ranges, and published review comments.
+func (s *Server) prContextBlock(
+	ctx context.Context, owner, name string, mrID int64, shas *db.DiffSHAs, pr *db.MergeRequest,
+) string {
+	host := s.syncer.HostForRepo(owner, name)
+	gitLog, _ := runGitLogForBrief(ctx, s.clones.ClonePath(host, owner, name), shas.MergeBaseSHA, shas.DiffHeadSHA)
+	var pc strings.Builder
+	fmt.Fprintf(&pc, "Repo: %s/%s\nPR #%d: %s\nBranch: %s -> %s\n", owner, name, pr.Number, pr.Title, pr.HeadBranch, pr.BaseBranch)
+	if strings.TrimSpace(pr.Body) != "" {
+		pc.WriteString("\nAuthor's description:\n" + strings.TrimSpace(pr.Body) + "\n")
+	}
+	if gitLog != "" {
+		pc.WriteString("\nCommit log (oldest first):\n" + gitLog + "\n")
+	}
+	if diff, err := s.clones.Diff(ctx, host, owner, name, shas.MergeBaseSHA, shas.DiffHeadSHA, false); err == nil {
+		pc.WriteString(changedFilesContext(diff.Files))
+	}
+	pc.WriteString(s.reviewCommentsContext(ctx, mrID))
+	return pc.String()
 }

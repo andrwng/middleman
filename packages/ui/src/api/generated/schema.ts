@@ -913,7 +913,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** Get repos by owner by name pulls by number review drafts by draft ID */
+        get: operations["get-repos-by-owner-by-name-pulls-by-number-review-drafts-by-draft-id"];
         put?: never;
         post?: never;
         delete?: never;
@@ -957,6 +958,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/repos/{owner}/{name}/pulls/{number}/review-drafts/{draft_id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get repos by owner by name pulls by number review drafts by draft ID messages */
+        get: operations["get-repos-by-owner-by-name-pulls-by-number-review-drafts-by-draft-id-messages"];
+        put?: never;
+        /** Post repos by owner by name pulls by number review drafts by draft ID messages */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-review-drafts-by-draft-id-messages"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{owner}/{name}/pulls/{number}/review-drafts/{draft_id}/messages/{message_id}/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post repos by owner by name pulls by number review drafts by draft ID messages by message ID apply */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-review-drafts-by-draft-id-messages-by-message-id-apply"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{owner}/{name}/pulls/{number}/review-drafts/{draft_id}/messages/{message_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post repos by owner by name pulls by number review drafts by draft ID messages by message ID cancel */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-review-drafts-by-draft-id-messages-by-message-id-cancel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{owner}/{name}/pulls/{number}/review-drafts/{draft_id}/messages/{message_id}/revert": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post repos by owner by name pulls by number review drafts by draft ID messages by message ID revert */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-review-drafts-by-draft-id-messages-by-message-id-revert"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/repos/{owner}/{name}/pulls/{number}/review-drafts/{draft_id}/restore": {
         parameters: {
             query?: never;
@@ -968,6 +1038,23 @@ export interface paths {
         put?: never;
         /** Post repos by owner by name pulls by number review drafts by draft ID restore */
         post: operations["post-repos-by-owner-by-name-pulls-by-number-review-drafts-by-draft-id-restore"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{owner}/{name}/pulls/{number}/review-drafts/{draft_id}/revisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post repos by owner by name pulls by number review drafts by draft ID revisions */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-review-drafts-by-draft-id-revisions"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2123,6 +2210,35 @@ export interface components {
             /** Format: int64 */
             whitespace_only_count: number;
         };
+        DraftMessageResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/DraftMessageResponse.json
+             */
+            readonly $schema?: string;
+            applied: boolean;
+            author: string;
+            body: string;
+            completed_at?: string;
+            created_at: string;
+            error?: string;
+            /** Format: int64 */
+            id: number;
+            kind: string;
+            prev_body?: string;
+            raw_json?: string;
+            status: string;
+        };
+        DraftMessagesOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/DraftMessagesOutputBody.json
+             */
+            readonly $schema?: string;
+            messages: components["schemas"]["DraftMessageResponse"][] | null;
+        };
         EditPRContentInputBody: {
             /**
              * Format: uri
@@ -3031,6 +3147,15 @@ export interface components {
             /** @description true when the agent may edit files in steer turns scoped to this thread (equivalent to status=='applied' today) */
             writes_allowed: boolean;
         };
+        ReviseDraftInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/ReviseDraftInputBody.json
+             */
+            readonly $schema?: string;
+            body: string;
+        };
         RunningTurnsResponse: {
             /**
              * Format: uri
@@ -3040,6 +3165,17 @@ export interface components {
             readonly $schema?: string;
             /** @description Worktree ids that currently have an active Claude session with a queued or running response turn. Suitable for fast polling (~3s). */
             worktree_ids: number[] | null;
+        };
+        SendDraftMessageInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/SendDraftMessageInputBody.json
+             */
+            readonly $schema?: string;
+            body: string;
+            /** @description Start a new Claude session instead of continuing the existing one */
+            fresh?: boolean;
         };
         SessionResponse: {
             claude_session_id?: string;
@@ -5699,6 +5835,40 @@ export interface operations {
             };
         };
     };
+    "get-repos-by-owner-by-name-pulls-by-number-review-drafts-by-draft-id": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+                draft_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewDraftResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     "patch-repos-by-owner-by-name-pulls-by-number-review-drafts-by-draft-id": {
         parameters: {
             query?: never;
@@ -5805,6 +5975,183 @@ export interface operations {
             };
         };
     };
+    "get-repos-by-owner-by-name-pulls-by-number-review-drafts-by-draft-id-messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+                draft_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DraftMessagesOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-review-drafts-by-draft-id-messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+                draft_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SendDraftMessageInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DraftMessagesOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-review-drafts-by-draft-id-messages-by-message-id-apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+                draft_id: string;
+                message_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewDraftResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-review-drafts-by-draft-id-messages-by-message-id-cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+                draft_id: string;
+                message_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DraftMessageResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-review-drafts-by-draft-id-messages-by-message-id-revert": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+                draft_id: string;
+                message_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewDraftResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     "post-repos-by-owner-by-name-pulls-by-number-review-drafts-by-draft-id-restore": {
         parameters: {
             query?: never;
@@ -5826,6 +6173,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReviewDraftResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-review-drafts-by-draft-id-revisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+                draft_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviseDraftInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DraftMessageResponse"];
                 };
             };
             /** @description Error */

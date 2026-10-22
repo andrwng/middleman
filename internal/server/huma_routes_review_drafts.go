@@ -128,6 +128,7 @@ func (s *Server) registerReviewDraftRoutes(api huma.API) {
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review-drafts/publish", s.publishReviewDrafts)
 	huma.Get(api, "/review-drafts/summary", s.reviewDraftSummary)
 	s.registerAIReviewRunRoutes(api)
+	s.registerDraftChatRoutes(api)
 }
 
 // resolveDraftScope maps a PR-shaped path to (mrID, branch). branch is
