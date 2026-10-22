@@ -18,6 +18,9 @@ export function createAIReviewRunStore(opts?: AIReviewRunStoreOptions) {
   let run = $state<ServerReviewRun | null>(null);
   let starting = $state(false);
   let errorMsg = $state<string | null>(null);
+  // Whether the floating Claude review panel is open. Shared so the
+  // toolbar pill and the panel's own toggle drive the same panel.
+  let panelOpen = $state(false);
   let pollHandle: ReturnType<typeof setInterval> | null = null;
   // Bumped on PR change so a late response for the old PR is dropped.
   let gen = 0;
@@ -54,6 +57,7 @@ export function createAIReviewRunStore(opts?: AIReviewRunStoreOptions) {
       gen++;
       run = null;
       errorMsg = null;
+      panelOpen = false;
     }
     pr = { owner, name, number };
     void refresh();
@@ -67,6 +71,7 @@ export function createAIReviewRunStore(opts?: AIReviewRunStoreOptions) {
     pr = null;
     run = null;
     errorMsg = null;
+    panelOpen = false;
   }
 
   async function startRun(instructions: string): Promise<boolean> {
@@ -76,6 +81,7 @@ export function createAIReviewRunStore(opts?: AIReviewRunStoreOptions) {
     errorMsg = null;
     try {
       run = await api.startRun(cur, instructions.trim());
+      panelOpen = true; // show progress right away
       opts?.onActivity?.();
       return true;
     } catch (err) {
@@ -107,6 +113,16 @@ export function createAIReviewRunStore(opts?: AIReviewRunStoreOptions) {
     isActive: (): boolean => active(run),
     isStarting: (): boolean => starting,
     getError: (): string | null => errorMsg,
+    isPanelOpen: (): boolean => panelOpen,
+    openPanel: (): void => {
+      panelOpen = true;
+    },
+    closePanel: (): void => {
+      panelOpen = false;
+    },
+    togglePanel: (): void => {
+      panelOpen = !panelOpen;
+    },
   };
 }
 

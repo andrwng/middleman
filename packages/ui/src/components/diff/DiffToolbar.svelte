@@ -178,9 +178,14 @@
   {#if canReviewWithClaude}
     <div class="toolbar-group claude-entry">
       {#if aiReviewRun.isActive()}
-        <span class="claude-pill" role="status">
+        <button
+          type="button"
+          class="claude-pill"
+          onclick={() => aiReviewRun.openPanel()}
+          title="Show the Claude review"
+        >
           Claude is reviewing · {suggestionCount} suggestion{suggestionCount === 1 ? "" : "s"}
-        </span>
+        </button>
         <button type="button" class="claude-pill__stop" onclick={() => void aiReviewRun.cancel()}>Stop</button>
       {:else}
         <button
@@ -262,6 +267,8 @@
   .claude-pill {
     font-size: 12px;
     padding: 3px 10px;
+    border: none;
+    cursor: pointer;
     border-radius: 999px;
     background: color-mix(in srgb, var(--accent-claude) 14%, var(--bg-surface));
     color: var(--accent-claude);

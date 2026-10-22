@@ -137,11 +137,9 @@
 {/if}
 
 <style>
+  /* Positioned by the floating dock in ReviewSurface, beside the Claude
+     review toggle. */
   .notes-toggle {
-    position: fixed;
-    right: 16px;
-    bottom: 16px;
-    z-index: 40;
     display: inline-flex;
     align-items: center;
     gap: 6px;
@@ -173,10 +171,6 @@
   }
 
   .notes-panel {
-    position: fixed;
-    right: 16px;
-    bottom: 16px;
-    z-index: 40;
     display: flex;
     flex-direction: column;
     width: min(420px, calc(100vw - 32px));

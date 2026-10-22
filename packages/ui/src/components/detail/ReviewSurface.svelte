@@ -6,6 +6,7 @@
   import ReviewCoverBanner from "./ReviewCoverBanner.svelte";
   import ReviewBriefCard from "./ReviewBriefCard.svelte";
   import PRNotesPanel from "./PRNotesPanel.svelte";
+  import ClaudeReviewPanel from "./ClaudeReviewPanel.svelte";
   import TopSectionsStrip from "./TopSectionsStrip.svelte";
   import SectionResizeHandle from "../diff/SectionResizeHandle.svelte";
   import {
@@ -205,12 +206,37 @@
       label="Resize the review sections"
       reserveBelow={DIFF_RESERVE_BELOW}
     />
-    <PRNotesPanel />
+    <!-- Notes and the Claude review share the bottom-right corner; when
+         both are open and there isn't room side by side, they stack. -->
+    <div class="floating-dock">
+      <PRNotesPanel />
+      <ClaudeReviewPanel />
+    </div>
     <DiffView {owner} {name} {number} />
   </div>
 </div>
 
 <style>
+  .floating-dock {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 40;
+    display: flex;
+    flex-direction: row-reverse;
+    flex-wrap: wrap-reverse;
+    align-items: flex-end;
+    justify-content: flex-start;
+    gap: 8px;
+    max-width: calc(100vw - 32px);
+    /* The dock spans empty space between its children; only they take clicks. */
+    pointer-events: none;
+  }
+
+  .floating-dock > :global(*) {
+    pointer-events: auto;
+  }
+
   .review-layout {
     display: flex;
     flex: 1;

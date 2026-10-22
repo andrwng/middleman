@@ -38,7 +38,6 @@ vi.mock("../../context.js", () => ({
 }));
 
 import ReviewWithClaudeForm from "./ReviewWithClaudeForm.svelte";
-import ClaudeReviewSection from "./ClaudeReviewSection.svelte";
 import SuggestionsSection from "./SuggestionsSection.svelte";
 
 afterEach(() => {
@@ -50,10 +49,6 @@ afterEach(() => {
   suggestions.list = [];
   suggestions.discarded = [];
 });
-
-function doneRun(extra: Record<string, unknown> = {}) {
-  return { id: 1, status: "done", head_sha: "h", instructions: "focus on errors", summary: "Two findings.", raw_json: "", suggestion_count: 2, created_at: "2026-01-01T00:00:00Z", ...extra };
-}
 
 describe("ReviewWithClaudeForm", () => {
   it("starts a run with the typed instructions", async () => {
@@ -72,42 +67,6 @@ describe("ReviewWithClaudeForm", () => {
     const { getByText, findByText } = render(ReviewWithClaudeForm, { props: { oncancel: vi.fn() } });
     await fireEvent.click(getByText("Start review"));
     expect(await findByText(/already in progress/)).toBeTruthy();
-  });
-});
-
-describe("ClaudeReviewSection", () => {
-  it("is hidden when there is no run", () => {
-    const { container } = render(ClaudeReviewSection);
-    expect(container.textContent?.trim()).toBe("");
-  });
-
-  it("shows the summary and instructions of a finished run", () => {
-    run.current = doneRun();
-    const { getByText } = render(ClaudeReviewSection);
-    expect(getByText("Two findings.")).toBeTruthy();
-    expect(getByText(/focus on errors/)).toBeTruthy();
-  });
-
-  it("shows the error and partial count of a failed run", () => {
-    run.current = doneRun({ status: "failed", error: "claude exited: 1", summary: "" });
-    const { getByText } = render(ClaudeReviewSection);
-    expect(getByText(/claude exited: 1/)).toBeTruthy();
-    expect(getByText(/2 suggestions were kept/)).toBeTruthy();
-  });
-
-  it("re-runs with the previous instructions prefilled", async () => {
-    run.current = doneRun();
-    const { getByText, getByRole } = render(ClaudeReviewSection);
-    await fireEvent.click(getByText("Re-run"));
-    expect((getByRole("textbox") as HTMLTextAreaElement).value).toBe("focus on errors");
-  });
-
-  it("offers Stop while the run is active", async () => {
-    run.current = doneRun({ status: "running", summary: "" });
-    run.active = true;
-    const { getByText } = render(ClaudeReviewSection);
-    await fireEvent.click(getByText("Stop"));
-    expect(cancel).toHaveBeenCalled();
   });
 });
 

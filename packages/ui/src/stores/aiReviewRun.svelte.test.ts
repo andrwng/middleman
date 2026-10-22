@@ -43,4 +43,23 @@ describe("aiReviewRun store", () => {
     expect(store.getError()).toContain("already in progress");
     store.stop();
   });
+
+  it("owns the panel's open state and opens it when a run starts", async () => {
+    globalThis.fetch = vi.fn(async (_u: unknown, init?: RequestInit) =>
+      init?.method === "POST"
+        ? new Response(JSON.stringify(run("queued")), { status: 200 })
+        : new Response(JSON.stringify({ run: null }), { status: 200 }),
+    ) as unknown as typeof fetch;
+    const store = createAIReviewRunStore();
+    store.start("acme", "widget", 1);
+    expect(store.isPanelOpen()).toBe(false);
+    store.togglePanel();
+    expect(store.isPanelOpen()).toBe(true);
+    store.closePanel();
+    expect(store.isPanelOpen()).toBe(false);
+    expect(await store.startRun("focus")).toBe(true);
+    expect(store.isPanelOpen()).toBe(true);
+    store.stop();
+    expect(store.isPanelOpen()).toBe(false);
+  });
 });

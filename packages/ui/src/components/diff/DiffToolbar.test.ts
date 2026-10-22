@@ -9,6 +9,7 @@ const shaState = { sha: "abc123" };
 const runState = { active: false };
 const startRun = vi.fn(async () => true);
 const cancelRun = vi.fn(async () => {});
+const openPanel = vi.fn();
 
 vi.mock("../../context.js", () => ({
   getStores: () => ({
@@ -34,6 +35,7 @@ vi.mock("../../context.js", () => ({
       getRun: () => null,
       startRun,
       cancel: cancelRun,
+      openPanel,
     },
     detail: {
       getHiddenThreadCount: () => 0,
@@ -163,5 +165,14 @@ describe("DiffToolbar Review with Claude", () => {
     expect(queryByRole("button", { name: "Review with Claude" })).toBeNull();
     await fireEvent.click(getByText("Stop"));
     expect(cancelRun).toHaveBeenCalled();
+  });
+
+  it("opens the Claude review panel from the progress pill", async () => {
+    state.owner = "acme";
+    runState.active = true;
+    const { getByRole } = render(DiffToolbar, { props: {} });
+    await fireEvent.click(getByRole("button", { name: /Claude is reviewing/ }));
+    expect(openPanel).toHaveBeenCalled();
+    expect(cancelRun).not.toHaveBeenCalled();
   });
 });
