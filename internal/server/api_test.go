@@ -52,6 +52,9 @@ type mockGH struct {
 	lastCreateReviewOpts      *ghclient.CreateReviewOpts
 	createInlineCommentFn     func(context.Context, string, string, int, ghclient.InlineCommentOpts) (*gh.PullRequestComment, error)
 	lastInlineComments        []ghclient.InlineCommentOpts
+
+	// restCIFetches counts REST CI lookups (combined status, check runs).
+	restCIFetches atomic.Int32
 }
 
 func (m *mockGH) ListOpenPullRequests(ctx context.Context, owner, repo string) ([]*gh.PullRequest, error) {
@@ -137,12 +140,14 @@ func (m *mockGH) ListForcePushEvents(
 func (m *mockGH) GetCombinedStatus(
 	_ context.Context, _, _, _ string,
 ) (*gh.CombinedStatus, error) {
+	m.restCIFetches.Add(1)
 	return nil, nil
 }
 
 func (m *mockGH) ListCheckRunsForRef(
 	_ context.Context, _, _, _ string,
 ) ([]*gh.CheckRun, error) {
+	m.restCIFetches.Add(1)
 	return nil, nil
 }
 
