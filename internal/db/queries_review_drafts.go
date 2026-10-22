@@ -26,10 +26,14 @@ type ReviewDraft struct {
 	Origin         string
 	State          string
 	RunID          *int64
-	SubmitError    string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	BodyEditedAt   *time.Time
+	// ClaudeSessionID and ChatWorktreePath identify this draft's chat
+	// session with Claude and the directory it must resume in.
+	ClaudeSessionID  string
+	ChatWorktreePath string
+	SubmitError      string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	BodyEditedAt     *time.Time
 }
 
 // NewReviewDraft is a reviewer-authored draft. ID is client-generated
@@ -64,7 +68,7 @@ type ReviewDraftCount struct {
 
 const reviewDraftColumns = `id, merge_request_id, branch, path, side, line, start_line,
 	commit_sha, in_reply_to, body, origin, state, submit_error,
-	created_at, updated_at, body_edited_at, run_id`
+	created_at, updated_at, body_edited_at, run_id, claude_session_id, chat_worktree_path`
 
 func scanReviewDraft(sc interface{ Scan(...any) error }) (ReviewDraft, error) {
 	var (
@@ -76,7 +80,8 @@ func scanReviewDraft(sc interface{ Scan(...any) error }) (ReviewDraft, error) {
 	)
 	err := sc.Scan(&r.ID, &r.MergeRequestID, &r.Branch, &r.Path, &r.Side, &r.Line,
 		&startLine, &r.CommitSHA, &inReplyTo, &r.Body, &r.Origin, &r.State,
-		&r.SubmitError, &r.CreatedAt, &r.UpdatedAt, &editedAt, &runID)
+		&r.SubmitError, &r.CreatedAt, &r.UpdatedAt, &editedAt, &runID,
+		&r.ClaudeSessionID, &r.ChatWorktreePath)
 	if err != nil {
 		return r, err
 	}
