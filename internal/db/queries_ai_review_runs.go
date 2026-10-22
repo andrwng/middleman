@@ -267,11 +267,20 @@ func (d *DB) ListLocalRunsWithoutLiveDrafts(ctx context.Context) ([]AIReviewRun,
 	return d.listRuns(ctx,
 		`SELECT `+aiReviewRunColumns+` FROM middleman_ai_review_runs r
 		  WHERE r.local_worktree_path != ''
+		    AND r.snapshot_pruned = 0
 		    AND r.status NOT IN ('queued', 'running')
 		    AND NOT EXISTS (
 		        SELECT 1 FROM middleman_review_drafts rd
 		         WHERE rd.run_id = r.id AND rd.state IN ('suggestion', 'draft'))
 		  ORDER BY r.id`)
+}
+
+// MarkAIReviewRunSnapshotPruned records that a run's snapshot ref was
+// deleted, so later prune passes skip it.
+func (d *DB) MarkAIReviewRunSnapshotPruned(ctx context.Context, id int64) error {
+	_, err := d.rw.ExecContext(ctx,
+		`UPDATE middleman_ai_review_runs SET snapshot_pruned = 1 WHERE id = ?`, id)
+	return err
 }
 
 // ListFinishedLocalRuns returns local runs that are no longer active.

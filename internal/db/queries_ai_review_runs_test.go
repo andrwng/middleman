@@ -147,3 +147,22 @@ func TestAIReviewRunLocalFieldsAndCleanupQueries(t *testing.T) {
 	require.NoError(err)
 	require.Len(prunable, 1)
 }
+
+// A run's snapshot is pruned once; later prune passes skip it, so the
+// work per pass doesn't grow with history.
+func TestPrunedSnapshotRunsAreNotListedAgain(t *testing.T) {
+	require := require.New(t)
+	d := openTestDB(t)
+	ctx := context.Background()
+	mrID := seedAIQuestionTestMR(t, d)
+	run, err := d.CreateAIReviewRun(ctx, NewAIReviewRun{MergeRequestID: mrID, Branch: "feat/a", HeadSHA: "h", ReadSHA: "h", LocalWorktreePath: "/w"})
+	require.NoError(err)
+	require.NoError(d.MarkAIReviewRunDone(ctx, run.ID, "s", "", ""))
+	list, err := d.ListLocalRunsWithoutLiveDrafts(ctx)
+	require.NoError(err)
+	require.Len(list, 1)
+	require.NoError(d.MarkAIReviewRunSnapshotPruned(ctx, run.ID))
+	list, err = d.ListLocalRunsWithoutLiveDrafts(ctx)
+	require.NoError(err)
+	require.Empty(list)
+}

@@ -256,4 +256,3 @@ func TestAPILocalReviewRunRejectsUntrackedAnchors(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(http.StatusOK, resp.StatusCode(), string(resp.Body))
 }
-

@@ -354,7 +354,10 @@ func (s *Server) pruneSnapshotRefs(ctx context.Context) {
 		return
 	}
 	for _, r := range runs {
+		// Marked even when the delete fails (worktree removed since): a
+		// retry on every request would never succeed and only cost time.
 		_ = aireview.DeleteSnapshotRef(ctx, r.LocalWorktreePath, r.ID)
+		_ = s.db.MarkAIReviewRunSnapshotPruned(ctx, r.ID)
 	}
 }
 func (s *Server) restoreReviewDraft(ctx context.Context, input *draftTransitionInput) (*reviewDraftOutput, error) {
