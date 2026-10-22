@@ -205,16 +205,28 @@ func (s *Server) sendDraftMessage(ctx context.Context, input *sendDraftMessageIn
 	if turn.CheckoutSHA == "" {
 		turn.CheckoutSHA = shas.DiffHeadSHA
 	}
-	lastReply, err := s.db.LastCompletedClaudeMessageAt(ctx, d.ID)
-	if err != nil {
-		return nil, huma.Error500InternalServerError("load chat: " + err.Error())
-	}
-	editedSince := lastReply != nil && d.BodyEditedAt != nil && d.BodyEditedAt.After(*lastReply)
 	prContext := ""
 	if turn.Mode == aireview.DraftChatFresh {
 		prContext = s.prContextBlock(ctx, input.Owner, input.Name, mrID, shas, pr)
 	}
-	turn.Prompt = buildDraftChatPrompt(*d, text, editedSince, prContext)
+	// Built when the turn starts: the reviewer may edit the comment, or an
+	// earlier turn may revise it, while this one waits in the queue.
+	draftID := d.ID
+	turn.PromptFor = func(ctx context.Context) (string, error) {
+		cur, err := s.db.GetReviewDraftByID(ctx, draftID)
+		if err != nil {
+			return "", err
+		}
+		if cur == nil {
+			return "", errors.New("draft no longer exists")
+		}
+		lastReply, err := s.db.LastCompletedClaudeMessageAt(ctx, draftID)
+		if err != nil {
+			return "", err
+		}
+		editedSince := lastReply != nil && cur.BodyEditedAt != nil && cur.BodyEditedAt.After(*lastReply)
+		return buildDraftChatPrompt(*cur, text, editedSince, prContext), nil
+	}
 
 	if _, err := s.db.InsertReviewDraftMessage(ctx, db.NewReviewDraftMessage{
 		DraftID: d.ID, Author: "user", Kind: "message", Body: text, Status: "done",
@@ -335,10 +347,12 @@ func (s *Server) reviseDraft(ctx context.Context, input *reviseDraftInput) (*dra
 	if err != nil {
 		return nil, huma.Error500InternalServerError("load chat: " + err.Error())
 	}
-	if running == nil || running.StartedAt == nil {
+	if running == nil {
 		return nil, huma.Error409Conflict("no conversation turn is in progress for this draft")
 	}
-	m, err := s.db.ApplyClaudeRevision(ctx, mrID, branch, input.DraftID, input.Body.Body, *running.StartedAt)
+	// The turn counts from when the reviewer sent the message: an edit made
+	// while it waited in the queue is still an edit "during the turn".
+	m, err := s.db.ApplyClaudeRevision(ctx, mrID, branch, input.DraftID, input.Body.Body, running.CreatedAt)
 	switch {
 	case errors.Is(err, db.ErrInvalidDraftTransition):
 		return nil, huma.Error409Conflict("draft is not in a state that allows this")

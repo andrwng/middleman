@@ -37,7 +37,11 @@ type DraftTurnInput struct {
 	WorktreePath    string // fixed cwd: Claude Code keys sessions by cwd
 	CheckoutSHA     string // checked out at WorktreePath when missing
 	Prompt          string
-	MCP             MCPConfig
+	// PromptFor, when set, builds the prompt when the turn actually
+	// starts, so it shows the comment as it is then rather than when the
+	// message was queued. Takes precedence over Prompt.
+	PromptFor func(ctx context.Context) (string, error)
+	MCP       MCPConfig
 }
 
 // DraftChatWorktreePath is where fresh draft conversations run.
@@ -142,8 +146,17 @@ func (r *Runner) runDraftTurn(in DraftTurnInput) {
 	}
 	defer r.releaseWorktree(in.Owner, in.Name, in.WorktreePath)
 
+	prompt := in.Prompt
+	if in.PromptFor != nil {
+		p, err := in.PromptFor(bg)
+		if err != nil {
+			_ = r.db.MarkDraftMessageFailed(bg, in.MessageID, "build prompt: "+err.Error(), "")
+			return
+		}
+		prompt = p
+	}
 	args := []string{
-		"-p", in.Prompt,
+		"-p", prompt,
 		"--output-format", "stream-json",
 		"--verbose",
 		"--permission-mode", "bypassPermissions",

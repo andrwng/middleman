@@ -258,3 +258,33 @@ func TestAPIDraftChatRejects(t *testing.T) {
 		})
 	}
 }
+
+// An edit made while a turn is still queued counts as "during the turn":
+// Claude's revision must be offered, and its prompt must show the edit.
+func TestAPIDraftChatEditWhileQueued(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+	ctx := context.Background()
+	client, fake := setupChatServer(t, "sleep 2\n"+chatOK)
+	draftID := seedSuggestion(t, client)
+
+	sendChat(t, client, draftID, "first question", false)
+	waitLastClaude(t, client, draftID, "running")
+	sendChat(t, client, draftID, "make it shorter", false) // queued behind the first
+	_, err := client.HTTP.PatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdWithResponse(ctx, "acme", "widgets", 1, draftID,
+		generated.UpdateReviewDraftInputBody{Body: "reviewer text"})
+	require.NoError(err)
+
+	require.Eventually(func() bool { return len(chatCalls(t, fake)) == 2 }, 15*time.Second, 50*time.Millisecond)
+	waitLastClaude(t, client, draftID, "running")
+	rev, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdRevisionsWithResponse(ctx, "acme", "widgets", 1, draftID,
+		generated.ReviseDraftInputBody{Body: "revised"})
+	require.NoError(err)
+	require.Equal(http.StatusOK, rev.StatusCode(), string(rev.Body))
+	assert.False(rev.JSON200.Applied)
+	d, err := client.HTTP.GetReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdWithResponse(ctx, "acme", "widgets", 1, draftID)
+	require.NoError(err)
+	assert.Equal("reviewer text", d.JSON200.Body)
+	assert.Contains(chatCalls(t, fake)[1], "reviewer text")
+	waitLastClaude(t, client, draftID, "done")
+}
