@@ -442,6 +442,7 @@ func (s *Server) registerAPI(api huma.API) {
 	huma.Post(api, "/repos/{owner}/{name}/resolve-files", s.resolveFiles)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/notes", s.getPRNotes)
 	huma.Put(api, "/repos/{owner}/{name}/pulls/{number}/notes", s.putPRNotes)
+	s.registerReviewDraftRoutes(api)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/code-browser-state", s.getCodeBrowserState)
 	huma.Put(api, "/repos/{owner}/{name}/pulls/{number}/code-browser-state", s.putCodeBrowserState)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/diff-collapse-globs", s.getDiffCollapseGlobs)

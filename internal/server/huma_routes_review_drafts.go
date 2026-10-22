@@ -1,0 +1,320 @@
+package server
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/danielgtaylor/huma/v2"
+
+	"github.com/wesm/middleman/internal/db"
+)
+
+const reviewDraftBodyMaxBytes = 65536
+
+var reviewDraftIDPattern = regexp.MustCompile(`^[A-Za-z0-9-]{1,64}$`)
+
+type reviewDraftInput struct {
+	ID        string `json:"id,omitempty"          doc:"Client-generated id; the server generates one when empty"`
+	Path      string `json:"path"                  doc:"File path (may be empty only for replies)"`
+	Side      string `json:"side"                  doc:"LEFT or RIGHT"`
+	Line      int    `json:"line"                  doc:"1-based line"`
+	StartLine *int   `json:"start_line,omitempty"  doc:"First line of a multi-line range"`
+	CommitSHA string `json:"commit_sha"            doc:"Commit the comment was written against"`
+	InReplyTo *int64 `json:"in_reply_to,omitempty" doc:"Upstream comment id this reply threads under"`
+	Body      string `json:"body"                  doc:"Comment body (markdown)"`
+	CreatedAt string `json:"created_at,omitempty"  doc:"RFC3339; kept by the localStorage import"`
+}
+
+type reviewDraftResponse struct {
+	ID          string `json:"id"`
+	Path        string `json:"path"`
+	Side        string `json:"side"`
+	Line        int    `json:"line"`
+	StartLine   *int   `json:"start_line,omitempty"`
+	CommitSHA   string `json:"commit_sha"`
+	InReplyTo   *int64 `json:"in_reply_to,omitempty"`
+	Body        string `json:"body"`
+	Origin      string `json:"origin"`
+	State       string `json:"state"`
+	SubmitError string `json:"submit_error,omitempty"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
+type reviewDraftMetaResponse struct {
+	Body  string `json:"body"`
+	Event string `json:"event"`
+}
+
+type reviewDraftsResponse struct {
+	Drafts []reviewDraftResponse   `json:"drafts"`
+	Meta   reviewDraftMetaResponse `json:"meta"`
+}
+
+type reviewDraftsOutput struct{ Body reviewDraftsResponse }
+type reviewDraftOutput struct{ Body reviewDraftResponse }
+type reviewDraftMetaOutput struct{ Body reviewDraftMetaResponse }
+
+type createReviewDraftsInput struct {
+	Owner  string `path:"owner"`
+	Name   string `path:"name"`
+	Number int    `path:"number"`
+	Body   struct {
+		Drafts []reviewDraftInput `json:"drafts" minItems:"1" maxItems:"500"`
+	}
+}
+
+type updateReviewDraftInput struct {
+	Owner   string `path:"owner"`
+	Name    string `path:"name"`
+	Number  int    `path:"number"`
+	DraftID string `path:"draft_id"`
+	Body    struct {
+		Body string `json:"body"`
+	}
+}
+
+type deleteReviewDraftsInput struct {
+	Owner  string `path:"owner"`
+	Name   string `path:"name"`
+	Number int    `path:"number"`
+	Body   struct {
+		IDs []string `json:"ids" minItems:"1" maxItems:"500"`
+	}
+}
+
+type deleteReviewDraftsOutput struct {
+	Body struct {
+		Deleted int64 `json:"deleted"`
+	}
+}
+
+type putReviewDraftMetaInput struct {
+	Owner  string `path:"owner"`
+	Name   string `path:"name"`
+	Number int    `path:"number"`
+	Body   struct {
+		Body  string `json:"body"`
+		Event string `json:"event" doc:"APPROVE, COMMENT, REQUEST_CHANGES, or empty"`
+	}
+}
+
+type reviewDraftSummaryItem struct {
+	Owner  string `json:"owner"`
+	Name   string `json:"name"`
+	Number int    `json:"number"`
+	Count  int    `json:"count"`
+}
+
+type reviewDraftSummaryOutput struct {
+	Body struct {
+		PRs []reviewDraftSummaryItem `json:"prs"`
+	}
+}
+
+func (s *Server) registerReviewDraftRoutes(api huma.API) {
+	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/review-drafts", s.listReviewDrafts)
+	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review-drafts", s.createReviewDrafts)
+	huma.Patch(api, "/repos/{owner}/{name}/pulls/{number}/review-drafts/{draft_id}", s.updateReviewDraft)
+	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review-drafts/delete", s.deleteReviewDrafts)
+	huma.Put(api, "/repos/{owner}/{name}/pulls/{number}/review-draft-meta", s.putReviewDraftMeta)
+	huma.Get(api, "/review-drafts/summary", s.reviewDraftSummary)
+}
+
+// resolveDraftScope maps a PR-shaped path to (mrID, branch). branch is
+// "" for GitHub and the worktree's current branch for local, so local
+// drafts follow the branch the way review threads do.
+func (s *Server) resolveDraftScope(
+	ctx context.Context, owner, name string, number int,
+) (int64, string, error) {
+	mrID, err := s.resolveOrEnsureMRID(ctx, owner, name, number)
+	if err != nil {
+		return 0, "", err
+	}
+	if !isLocalSource(owner) {
+		return mrID, "", nil
+	}
+	w, err := s.resolveLocalWorktree(ctx, name, number)
+	if err != nil {
+		return 0, "", err
+	}
+	return mrID, s.currentWorktreeBranch(ctx, w), nil
+}
+
+func toReviewDraftResponse(r db.ReviewDraft) reviewDraftResponse {
+	return reviewDraftResponse{
+		ID: r.ID, Path: r.Path, Side: r.Side, Line: r.Line, StartLine: r.StartLine,
+		CommitSHA: r.CommitSHA, InReplyTo: r.InReplyTo, Body: r.Body,
+		Origin: r.Origin, State: r.State, SubmitError: r.SubmitError,
+		CreatedAt: r.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt: r.UpdatedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+func (s *Server) loadReviewDrafts(ctx context.Context, mrID int64, branch string) (*reviewDraftsOutput, error) {
+	rows, err := s.db.ListReviewDrafts(ctx, mrID, branch)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("list review drafts: " + err.Error())
+	}
+	meta, err := s.db.GetReviewDraftMeta(ctx, mrID, branch)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("load review draft meta: " + err.Error())
+	}
+	out := &reviewDraftsOutput{}
+	out.Body.Drafts = make([]reviewDraftResponse, 0, len(rows))
+	for _, r := range rows {
+		out.Body.Drafts = append(out.Body.Drafts, toReviewDraftResponse(r))
+	}
+	out.Body.Meta = reviewDraftMetaResponse{Body: meta.Body, Event: meta.Event}
+	return out, nil
+}
+
+func (s *Server) listReviewDrafts(ctx context.Context, input *repoNumberInput) (*reviewDraftsOutput, error) {
+	mrID, branch, err := s.resolveDraftScope(ctx, input.Owner, input.Name, input.Number)
+	if err != nil {
+		return nil, huma.Error404NotFound("pull request not found")
+	}
+	return s.loadReviewDrafts(ctx, mrID, branch)
+}
+
+func validateDraftBody(body string) error {
+	if strings.TrimSpace(body) == "" {
+		return fmt.Errorf("body is required")
+	}
+	if len(body) > reviewDraftBodyMaxBytes {
+		return fmt.Errorf("body too large: %d bytes (max %d)", len(body), reviewDraftBodyMaxBytes)
+	}
+	return nil
+}
+
+func newReviewDraftID() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}
+
+func toNewReviewDraft(i int, in reviewDraftInput) (db.NewReviewDraft, error) {
+	fail := func(msg string) (db.NewReviewDraft, error) {
+		return db.NewReviewDraft{}, fmt.Errorf("drafts[%d]: %s", i, msg)
+	}
+	id := in.ID
+	if id == "" {
+		id = newReviewDraftID()
+	}
+	if !reviewDraftIDPattern.MatchString(id) {
+		return fail("id must match " + reviewDraftIDPattern.String())
+	}
+	if in.Side != "LEFT" && in.Side != "RIGHT" {
+		return fail("side must be LEFT or RIGHT")
+	}
+	if in.Line < 1 {
+		return fail("line must be positive")
+	}
+	if in.Path == "" && (in.InReplyTo == nil || *in.InReplyTo <= 0) {
+		return fail("path is required")
+	}
+	if err := validateDraftBody(in.Body); err != nil {
+		return fail(err.Error())
+	}
+	var created time.Time
+	if in.CreatedAt != "" {
+		t, err := time.Parse(time.RFC3339, in.CreatedAt)
+		if err != nil {
+			return fail("created_at must be RFC3339")
+		}
+		created = t.UTC()
+	}
+	return db.NewReviewDraft{
+		ID: id, Path: in.Path, Side: in.Side, Line: in.Line, StartLine: in.StartLine,
+		CommitSHA: in.CommitSHA, InReplyTo: in.InReplyTo, Body: in.Body, CreatedAt: created,
+	}, nil
+}
+
+func (s *Server) createReviewDrafts(ctx context.Context, input *createReviewDraftsInput) (*reviewDraftsOutput, error) {
+	news := make([]db.NewReviewDraft, 0, len(input.Body.Drafts))
+	for i, d := range input.Body.Drafts {
+		n, err := toNewReviewDraft(i, d)
+		if err != nil {
+			return nil, huma.Error400BadRequest(err.Error())
+		}
+		news = append(news, n)
+	}
+	mrID, branch, err := s.resolveDraftScope(ctx, input.Owner, input.Name, input.Number)
+	if err != nil {
+		return nil, huma.Error404NotFound("pull request not found")
+	}
+	if _, err := s.db.InsertUserReviewDrafts(ctx, mrID, branch, news); err != nil {
+		return nil, huma.Error500InternalServerError("create review drafts: " + err.Error())
+	}
+	return s.loadReviewDrafts(ctx, mrID, branch)
+}
+
+func (s *Server) updateReviewDraft(ctx context.Context, input *updateReviewDraftInput) (*reviewDraftOutput, error) {
+	if err := validateDraftBody(input.Body.Body); err != nil {
+		return nil, huma.Error400BadRequest(err.Error())
+	}
+	mrID, branch, err := s.resolveDraftScope(ctx, input.Owner, input.Name, input.Number)
+	if err != nil {
+		return nil, huma.Error404NotFound("pull request not found")
+	}
+	r, err := s.db.UpdateReviewDraftBody(ctx, mrID, branch, input.DraftID, input.Body.Body)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("update review draft: " + err.Error())
+	}
+	if r == nil {
+		return nil, huma.Error404NotFound("draft not found")
+	}
+	return &reviewDraftOutput{Body: toReviewDraftResponse(*r)}, nil
+}
+
+func (s *Server) deleteReviewDrafts(ctx context.Context, input *deleteReviewDraftsInput) (*deleteReviewDraftsOutput, error) {
+	mrID, branch, err := s.resolveDraftScope(ctx, input.Owner, input.Name, input.Number)
+	if err != nil {
+		return nil, huma.Error404NotFound("pull request not found")
+	}
+	n, err := s.db.DeleteReviewDrafts(ctx, mrID, branch, input.Body.IDs)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("delete review drafts: " + err.Error())
+	}
+	out := &deleteReviewDraftsOutput{}
+	out.Body.Deleted = n
+	return out, nil
+}
+
+func (s *Server) putReviewDraftMeta(ctx context.Context, input *putReviewDraftMetaInput) (*reviewDraftMetaOutput, error) {
+	switch input.Body.Event {
+	case "", "APPROVE", "COMMENT", "REQUEST_CHANGES":
+	default:
+		return nil, huma.Error400BadRequest("event must be APPROVE, COMMENT, REQUEST_CHANGES, or empty")
+	}
+	if len(input.Body.Body) > reviewDraftBodyMaxBytes {
+		return nil, huma.Error400BadRequest("body too large")
+	}
+	mrID, branch, err := s.resolveDraftScope(ctx, input.Owner, input.Name, input.Number)
+	if err != nil {
+		return nil, huma.Error404NotFound("pull request not found")
+	}
+	m, err := s.db.UpsertReviewDraftMeta(ctx, mrID, branch, input.Body.Body, input.Body.Event)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("save review draft meta: " + err.Error())
+	}
+	return &reviewDraftMetaOutput{Body: reviewDraftMetaResponse{Body: m.Body, Event: m.Event}}, nil
+}
+
+func (s *Server) reviewDraftSummary(ctx context.Context, _ *struct{}) (*reviewDraftSummaryOutput, error) {
+	counts, err := s.db.ListReviewDraftCounts(ctx)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("review draft summary: " + err.Error())
+	}
+	out := &reviewDraftSummaryOutput{}
+	out.Body.PRs = make([]reviewDraftSummaryItem, 0, len(counts))
+	for _, c := range counts {
+		out.Body.PRs = append(out.Body.PRs, reviewDraftSummaryItem{Owner: c.Owner, Name: c.Name, Number: c.Number, Count: c.Count})
+	}
+	return out, nil
+}

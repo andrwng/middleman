@@ -371,6 +371,13 @@ type CreateBriefInputBody struct {
 	Depth *string `json:"depth,omitempty"`
 }
 
+// CreateReviewDraftsInputBody defines model for CreateReviewDraftsInputBody.
+type CreateReviewDraftsInputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string             `json:"$schema,omitempty"`
+	Drafts *[]ReviewDraftInput `json:"drafts"`
+}
+
 // CreateReviewThreadsInputBody defines model for CreateReviewThreadsInputBody.
 type CreateReviewThreadsInputBody struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -398,6 +405,20 @@ type CreateWorkspaceInputBody struct {
 	Name         string  `json:"name"`
 	Owner        string  `json:"owner"`
 	PlatformHost string  `json:"platform_host"`
+}
+
+// DeleteReviewDraftsInputBody defines model for DeleteReviewDraftsInputBody.
+type DeleteReviewDraftsInputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string   `json:"$schema,omitempty"`
+	Ids    *[]string `json:"ids"`
+}
+
+// DeleteReviewDraftsOutputBody defines model for DeleteReviewDraftsOutputBody.
+type DeleteReviewDraftsOutputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema  *string `json:"$schema,omitempty"`
+	Deleted int64   `json:"deleted"`
 }
 
 // DiffCollapseGlobsResponse defines model for DiffCollapseGlobsResponse.
@@ -887,6 +908,16 @@ type PutPRNotesInputBody struct {
 	Content string  `json:"content"`
 }
 
+// PutReviewDraftMetaInputBody defines model for PutReviewDraftMetaInputBody.
+type PutReviewDraftMetaInputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+	Body   string  `json:"body"`
+
+	// Event APPROVE, COMMENT, REQUEST_CHANGES, or empty
+	Event string `json:"event"`
+}
+
 // RateLimitHostStatus defines model for RateLimitHostStatus.
 type RateLimitHostStatus struct {
 	BudgetLimit        int64  `json:"budget_limit"`
@@ -1005,6 +1036,86 @@ type ReviewCommentAnchorsResponse struct {
 
 	// At Revision the anchors were resolved against; empty when none was available
 	At string `json:"at"`
+}
+
+// ReviewDraftInput defines model for ReviewDraftInput.
+type ReviewDraftInput struct {
+	// Body Comment body (markdown)
+	Body string `json:"body"`
+
+	// CommitSha Commit the comment was written against
+	CommitSha string `json:"commit_sha"`
+
+	// CreatedAt RFC3339; kept by the localStorage import
+	CreatedAt *string `json:"created_at,omitempty"`
+
+	// Id Client-generated id; the server generates one when empty
+	Id *string `json:"id,omitempty"`
+
+	// InReplyTo Upstream comment id this reply threads under
+	InReplyTo *int64 `json:"in_reply_to,omitempty"`
+
+	// Line 1-based line
+	Line int64 `json:"line"`
+
+	// Path File path (may be empty only for replies)
+	Path string `json:"path"`
+
+	// Side LEFT or RIGHT
+	Side string `json:"side"`
+
+	// StartLine First line of a multi-line range
+	StartLine *int64 `json:"start_line,omitempty"`
+}
+
+// ReviewDraftMetaResponse defines model for ReviewDraftMetaResponse.
+type ReviewDraftMetaResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+	Body   string  `json:"body"`
+	Event  string  `json:"event"`
+}
+
+// ReviewDraftResponse defines model for ReviewDraftResponse.
+type ReviewDraftResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema      *string `json:"$schema,omitempty"`
+	Body        string  `json:"body"`
+	CommitSha   string  `json:"commit_sha"`
+	CreatedAt   string  `json:"created_at"`
+	Id          string  `json:"id"`
+	InReplyTo   *int64  `json:"in_reply_to,omitempty"`
+	Line        int64   `json:"line"`
+	Origin      string  `json:"origin"`
+	Path        string  `json:"path"`
+	Side        string  `json:"side"`
+	StartLine   *int64  `json:"start_line,omitempty"`
+	State       string  `json:"state"`
+	SubmitError *string `json:"submit_error,omitempty"`
+	UpdatedAt   string  `json:"updated_at"`
+}
+
+// ReviewDraftSummaryItem defines model for ReviewDraftSummaryItem.
+type ReviewDraftSummaryItem struct {
+	Count  int64  `json:"count"`
+	Name   string `json:"name"`
+	Number int64  `json:"number"`
+	Owner  string `json:"owner"`
+}
+
+// ReviewDraftSummaryOutputBody defines model for ReviewDraftSummaryOutputBody.
+type ReviewDraftSummaryOutputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string                   `json:"$schema,omitempty"`
+	Prs    *[]ReviewDraftSummaryItem `json:"prs"`
+}
+
+// ReviewDraftsResponse defines model for ReviewDraftsResponse.
+type ReviewDraftsResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string                 `json:"$schema,omitempty"`
+	Drafts *[]ReviewDraftResponse  `json:"drafts"`
+	Meta   ReviewDraftMetaResponse `json:"meta"`
 }
 
 // ReviewThreadCommentResponse defines model for ReviewThreadCommentResponse.
@@ -1299,6 +1410,13 @@ type UpdateAuthorGroupInputBody struct {
 	Schema  *string   `json:"$schema,omitempty"`
 	Members *[]string `json:"members"`
 	Name    string    `json:"name"`
+}
+
+// UpdateReviewDraftInputBody defines model for UpdateReviewDraftInputBody.
+type UpdateReviewDraftInputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+	Body   string  `json:"body"`
 }
 
 // ViewerResponse defines model for ViewerResponse.
@@ -1612,6 +1730,18 @@ type PutReposByOwnerByNamePullsByNumberNotesJSONRequestBody = PutPRNotesInputBod
 // PostReposByOwnerByNamePullsByNumberReviewJSONRequestBody defines body for PostReposByOwnerByNamePullsByNumberReview for application/json ContentType.
 type PostReposByOwnerByNamePullsByNumberReviewJSONRequestBody = SubmitReviewInputBody
 
+// PutReposByOwnerByNamePullsByNumberReviewDraftMetaJSONRequestBody defines body for PutReposByOwnerByNamePullsByNumberReviewDraftMeta for application/json ContentType.
+type PutReposByOwnerByNamePullsByNumberReviewDraftMetaJSONRequestBody = PutReviewDraftMetaInputBody
+
+// PostReposByOwnerByNamePullsByNumberReviewDraftsJSONRequestBody defines body for PostReposByOwnerByNamePullsByNumberReviewDrafts for application/json ContentType.
+type PostReposByOwnerByNamePullsByNumberReviewDraftsJSONRequestBody = CreateReviewDraftsInputBody
+
+// PostReposByOwnerByNamePullsByNumberReviewDraftsDeleteJSONRequestBody defines body for PostReposByOwnerByNamePullsByNumberReviewDraftsDelete for application/json ContentType.
+type PostReposByOwnerByNamePullsByNumberReviewDraftsDeleteJSONRequestBody = DeleteReviewDraftsInputBody
+
+// PatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdJSONRequestBody defines body for PatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftId for application/json ContentType.
+type PatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdJSONRequestBody = UpdateReviewDraftInputBody
+
 // PostReposByOwnerByNamePullsByNumberReviewThreadsJSONRequestBody defines body for PostReposByOwnerByNamePullsByNumberReviewThreads for application/json ContentType.
 type PostReposByOwnerByNamePullsByNumberReviewThreadsJSONRequestBody = CreateReviewThreadsInputBody
 
@@ -1922,6 +2052,29 @@ type ClientInterface interface {
 	// GetReposByOwnerByNamePullsByNumberReviewCommentAnchors request
 	GetReposByOwnerByNamePullsByNumberReviewCommentAnchors(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberReviewCommentAnchorsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// PutReposByOwnerByNamePullsByNumberReviewDraftMetaWithBody request with any body
+	PutReposByOwnerByNamePullsByNumberReviewDraftMetaWithBody(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	PutReposByOwnerByNamePullsByNumberReviewDraftMeta(ctx context.Context, owner string, name string, number int64, body PutReposByOwnerByNamePullsByNumberReviewDraftMetaJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetReposByOwnerByNamePullsByNumberReviewDrafts request
+	GetReposByOwnerByNamePullsByNumberReviewDrafts(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PostReposByOwnerByNamePullsByNumberReviewDraftsWithBody request with any body
+	PostReposByOwnerByNamePullsByNumberReviewDraftsWithBody(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	PostReposByOwnerByNamePullsByNumberReviewDrafts(ctx context.Context, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberReviewDraftsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PostReposByOwnerByNamePullsByNumberReviewDraftsDeleteWithBody request with any body
+	PostReposByOwnerByNamePullsByNumberReviewDraftsDeleteWithBody(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	PostReposByOwnerByNamePullsByNumberReviewDraftsDelete(ctx context.Context, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberReviewDraftsDeleteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdWithBody request with any body
+	PatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdWithBody(ctx context.Context, owner string, name string, number int64, draftId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	PatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftId(ctx context.Context, owner string, name string, number int64, draftId string, body PatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetReposByOwnerByNamePullsByNumberReviewThreads request
 	GetReposByOwnerByNamePullsByNumberReviewThreads(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberReviewThreadsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -2007,6 +2160,9 @@ type ClientInterface interface {
 
 	// SyncRepo request
 	SyncRepo(ctx context.Context, owner string, name string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetReviewDraftsSummary request
+	GetReviewDraftsSummary(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListStacks request
 	ListStacks(ctx context.Context, params *ListStacksParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2957,6 +3113,114 @@ func (c *Client) GetReposByOwnerByNamePullsByNumberReviewCommentAnchors(ctx cont
 	return c.Client.Do(req)
 }
 
+func (c *Client) PutReposByOwnerByNamePullsByNumberReviewDraftMetaWithBody(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutReposByOwnerByNamePullsByNumberReviewDraftMetaRequestWithBody(c.Server, owner, name, number, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PutReposByOwnerByNamePullsByNumberReviewDraftMeta(ctx context.Context, owner string, name string, number int64, body PutReposByOwnerByNamePullsByNumberReviewDraftMetaJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutReposByOwnerByNamePullsByNumberReviewDraftMetaRequest(c.Server, owner, name, number, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetReposByOwnerByNamePullsByNumberReviewDrafts(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetReposByOwnerByNamePullsByNumberReviewDraftsRequest(c.Server, owner, name, number)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PostReposByOwnerByNamePullsByNumberReviewDraftsWithBody(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostReposByOwnerByNamePullsByNumberReviewDraftsRequestWithBody(c.Server, owner, name, number, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PostReposByOwnerByNamePullsByNumberReviewDrafts(ctx context.Context, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberReviewDraftsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostReposByOwnerByNamePullsByNumberReviewDraftsRequest(c.Server, owner, name, number, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PostReposByOwnerByNamePullsByNumberReviewDraftsDeleteWithBody(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostReposByOwnerByNamePullsByNumberReviewDraftsDeleteRequestWithBody(c.Server, owner, name, number, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PostReposByOwnerByNamePullsByNumberReviewDraftsDelete(ctx context.Context, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberReviewDraftsDeleteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostReposByOwnerByNamePullsByNumberReviewDraftsDeleteRequest(c.Server, owner, name, number, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdWithBody(ctx context.Context, owner string, name string, number int64, draftId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdRequestWithBody(c.Server, owner, name, number, draftId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftId(ctx context.Context, owner string, name string, number int64, draftId string, body PatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdRequest(c.Server, owner, name, number, draftId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) GetReposByOwnerByNamePullsByNumberReviewThreads(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberReviewThreadsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetReposByOwnerByNamePullsByNumberReviewThreadsRequest(c.Server, owner, name, number, params)
 	if err != nil {
@@ -3319,6 +3583,18 @@ func (c *Client) PostReposByOwnerByNameResolveFiles(ctx context.Context, owner s
 
 func (c *Client) SyncRepo(ctx context.Context, owner string, name string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSyncRepoRequest(c.Server, owner, name)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetReviewDraftsSummary(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetReviewDraftsSummaryRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -7020,6 +7296,305 @@ func NewGetReposByOwnerByNamePullsByNumberReviewCommentAnchorsRequest(server str
 	return req, nil
 }
 
+// NewPutReposByOwnerByNamePullsByNumberReviewDraftMetaRequest calls the generic PutReposByOwnerByNamePullsByNumberReviewDraftMeta builder with application/json body
+func NewPutReposByOwnerByNamePullsByNumberReviewDraftMetaRequest(server string, owner string, name string, number int64, body PutReposByOwnerByNamePullsByNumberReviewDraftMetaJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPutReposByOwnerByNamePullsByNumberReviewDraftMetaRequestWithBody(server, owner, name, number, "application/json", bodyReader)
+}
+
+// NewPutReposByOwnerByNamePullsByNumberReviewDraftMetaRequestWithBody generates requests for PutReposByOwnerByNamePullsByNumberReviewDraftMeta with any type of body
+func NewPutReposByOwnerByNamePullsByNumberReviewDraftMetaRequestWithBody(server string, owner string, name string, number int64, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s/review-draft-meta", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetReposByOwnerByNamePullsByNumberReviewDraftsRequest generates requests for GetReposByOwnerByNamePullsByNumberReviewDrafts
+func NewGetReposByOwnerByNamePullsByNumberReviewDraftsRequest(server string, owner string, name string, number int64) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s/review-drafts", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPostReposByOwnerByNamePullsByNumberReviewDraftsRequest calls the generic PostReposByOwnerByNamePullsByNumberReviewDrafts builder with application/json body
+func NewPostReposByOwnerByNamePullsByNumberReviewDraftsRequest(server string, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberReviewDraftsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPostReposByOwnerByNamePullsByNumberReviewDraftsRequestWithBody(server, owner, name, number, "application/json", bodyReader)
+}
+
+// NewPostReposByOwnerByNamePullsByNumberReviewDraftsRequestWithBody generates requests for PostReposByOwnerByNamePullsByNumberReviewDrafts with any type of body
+func NewPostReposByOwnerByNamePullsByNumberReviewDraftsRequestWithBody(server string, owner string, name string, number int64, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s/review-drafts", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewPostReposByOwnerByNamePullsByNumberReviewDraftsDeleteRequest calls the generic PostReposByOwnerByNamePullsByNumberReviewDraftsDelete builder with application/json body
+func NewPostReposByOwnerByNamePullsByNumberReviewDraftsDeleteRequest(server string, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberReviewDraftsDeleteJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPostReposByOwnerByNamePullsByNumberReviewDraftsDeleteRequestWithBody(server, owner, name, number, "application/json", bodyReader)
+}
+
+// NewPostReposByOwnerByNamePullsByNumberReviewDraftsDeleteRequestWithBody generates requests for PostReposByOwnerByNamePullsByNumberReviewDraftsDelete with any type of body
+func NewPostReposByOwnerByNamePullsByNumberReviewDraftsDeleteRequestWithBody(server string, owner string, name string, number int64, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s/review-drafts/delete", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewPatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdRequest calls the generic PatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftId builder with application/json body
+func NewPatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdRequest(server string, owner string, name string, number int64, draftId string, body PatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdRequestWithBody(server, owner, name, number, draftId, "application/json", bodyReader)
+}
+
+// NewPatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdRequestWithBody generates requests for PatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftId with any type of body
+func NewPatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdRequestWithBody(server string, owner string, name string, number int64, draftId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam3 string
+
+	pathParam3, err = runtime.StyleParamWithOptions("simple", false, "draft_id", draftId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s/review-drafts/%s", pathParam0, pathParam1, pathParam2, pathParam3)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PATCH", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGetReposByOwnerByNamePullsByNumberReviewThreadsRequest generates requests for GetReposByOwnerByNamePullsByNumberReviewThreads
 func NewGetReposByOwnerByNamePullsByNumberReviewThreadsRequest(server string, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberReviewThreadsParams) (*http.Request, error) {
 	var err error
@@ -8447,6 +9022,33 @@ func NewSyncRepoRequest(server string, owner string, name string) (*http.Request
 	return req, nil
 }
 
+// NewGetReviewDraftsSummaryRequest generates requests for GetReviewDraftsSummary
+func NewGetReviewDraftsSummaryRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/review-drafts/summary")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListStacksRequest generates requests for ListStacks
 func NewListStacksRequest(server string, params *ListStacksParams) (*http.Request, error) {
 	var err error
@@ -9193,6 +9795,29 @@ type ClientWithResponsesInterface interface {
 	// GetReposByOwnerByNamePullsByNumberReviewCommentAnchorsWithResponse request
 	GetReposByOwnerByNamePullsByNumberReviewCommentAnchorsWithResponse(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberReviewCommentAnchorsParams, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberReviewCommentAnchorsResponse, error)
 
+	// PutReposByOwnerByNamePullsByNumberReviewDraftMetaWithBodyWithResponse request with any body
+	PutReposByOwnerByNamePullsByNumberReviewDraftMetaWithBodyWithResponse(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutReposByOwnerByNamePullsByNumberReviewDraftMetaResponse, error)
+
+	PutReposByOwnerByNamePullsByNumberReviewDraftMetaWithResponse(ctx context.Context, owner string, name string, number int64, body PutReposByOwnerByNamePullsByNumberReviewDraftMetaJSONRequestBody, reqEditors ...RequestEditorFn) (*PutReposByOwnerByNamePullsByNumberReviewDraftMetaResponse, error)
+
+	// GetReposByOwnerByNamePullsByNumberReviewDraftsWithResponse request
+	GetReposByOwnerByNamePullsByNumberReviewDraftsWithResponse(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberReviewDraftsResponse, error)
+
+	// PostReposByOwnerByNamePullsByNumberReviewDraftsWithBodyWithResponse request with any body
+	PostReposByOwnerByNamePullsByNumberReviewDraftsWithBodyWithResponse(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberReviewDraftsResponse, error)
+
+	PostReposByOwnerByNamePullsByNumberReviewDraftsWithResponse(ctx context.Context, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberReviewDraftsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberReviewDraftsResponse, error)
+
+	// PostReposByOwnerByNamePullsByNumberReviewDraftsDeleteWithBodyWithResponse request with any body
+	PostReposByOwnerByNamePullsByNumberReviewDraftsDeleteWithBodyWithResponse(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberReviewDraftsDeleteResponse, error)
+
+	PostReposByOwnerByNamePullsByNumberReviewDraftsDeleteWithResponse(ctx context.Context, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberReviewDraftsDeleteJSONRequestBody, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberReviewDraftsDeleteResponse, error)
+
+	// PatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdWithBodyWithResponse request with any body
+	PatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdWithBodyWithResponse(ctx context.Context, owner string, name string, number int64, draftId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdResponse, error)
+
+	PatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdWithResponse(ctx context.Context, owner string, name string, number int64, draftId string, body PatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdResponse, error)
+
 	// GetReposByOwnerByNamePullsByNumberReviewThreadsWithResponse request
 	GetReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberReviewThreadsParams, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberReviewThreadsResponse, error)
 
@@ -9278,6 +9903,9 @@ type ClientWithResponsesInterface interface {
 
 	// SyncRepoWithResponse request
 	SyncRepoWithResponse(ctx context.Context, owner string, name string, reqEditors ...RequestEditorFn) (*SyncRepoResponse, error)
+
+	// GetReviewDraftsSummaryWithResponse request
+	GetReviewDraftsSummaryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetReviewDraftsSummaryResponse, error)
 
 	// ListStacksWithResponse request
 	ListStacksWithResponse(ctx context.Context, params *ListStacksParams, reqEditors ...RequestEditorFn) (*ListStacksResponse, error)
@@ -10632,6 +11260,121 @@ func (r GetReposByOwnerByNamePullsByNumberReviewCommentAnchorsResponse) StatusCo
 	return 0
 }
 
+type PutReposByOwnerByNamePullsByNumberReviewDraftMetaResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *ReviewDraftMetaResponse
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r PutReposByOwnerByNamePullsByNumberReviewDraftMetaResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PutReposByOwnerByNamePullsByNumberReviewDraftMetaResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetReposByOwnerByNamePullsByNumberReviewDraftsResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *ReviewDraftsResponse
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r GetReposByOwnerByNamePullsByNumberReviewDraftsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetReposByOwnerByNamePullsByNumberReviewDraftsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type PostReposByOwnerByNamePullsByNumberReviewDraftsResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *ReviewDraftsResponse
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r PostReposByOwnerByNamePullsByNumberReviewDraftsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PostReposByOwnerByNamePullsByNumberReviewDraftsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type PostReposByOwnerByNamePullsByNumberReviewDraftsDeleteResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *DeleteReviewDraftsOutputBody
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r PostReposByOwnerByNamePullsByNumberReviewDraftsDeleteResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PostReposByOwnerByNamePullsByNumberReviewDraftsDeleteResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type PatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *ReviewDraftResponse
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r PatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type GetReposByOwnerByNamePullsByNumberReviewThreadsResponse struct {
 	Body                          []byte
 	HTTPResponse                  *http.Response
@@ -11174,6 +11917,29 @@ func (r SyncRepoResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r SyncRepoResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetReviewDraftsSummaryResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *ReviewDraftSummaryOutputBody
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r GetReviewDraftsSummaryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetReviewDraftsSummaryResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -12155,6 +12921,83 @@ func (c *ClientWithResponses) GetReposByOwnerByNamePullsByNumberReviewCommentAnc
 	return ParseGetReposByOwnerByNamePullsByNumberReviewCommentAnchorsResponse(rsp)
 }
 
+// PutReposByOwnerByNamePullsByNumberReviewDraftMetaWithBodyWithResponse request with arbitrary body returning *PutReposByOwnerByNamePullsByNumberReviewDraftMetaResponse
+func (c *ClientWithResponses) PutReposByOwnerByNamePullsByNumberReviewDraftMetaWithBodyWithResponse(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutReposByOwnerByNamePullsByNumberReviewDraftMetaResponse, error) {
+	rsp, err := c.PutReposByOwnerByNamePullsByNumberReviewDraftMetaWithBody(ctx, owner, name, number, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutReposByOwnerByNamePullsByNumberReviewDraftMetaResponse(rsp)
+}
+
+func (c *ClientWithResponses) PutReposByOwnerByNamePullsByNumberReviewDraftMetaWithResponse(ctx context.Context, owner string, name string, number int64, body PutReposByOwnerByNamePullsByNumberReviewDraftMetaJSONRequestBody, reqEditors ...RequestEditorFn) (*PutReposByOwnerByNamePullsByNumberReviewDraftMetaResponse, error) {
+	rsp, err := c.PutReposByOwnerByNamePullsByNumberReviewDraftMeta(ctx, owner, name, number, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutReposByOwnerByNamePullsByNumberReviewDraftMetaResponse(rsp)
+}
+
+// GetReposByOwnerByNamePullsByNumberReviewDraftsWithResponse request returning *GetReposByOwnerByNamePullsByNumberReviewDraftsResponse
+func (c *ClientWithResponses) GetReposByOwnerByNamePullsByNumberReviewDraftsWithResponse(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberReviewDraftsResponse, error) {
+	rsp, err := c.GetReposByOwnerByNamePullsByNumberReviewDrafts(ctx, owner, name, number, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetReposByOwnerByNamePullsByNumberReviewDraftsResponse(rsp)
+}
+
+// PostReposByOwnerByNamePullsByNumberReviewDraftsWithBodyWithResponse request with arbitrary body returning *PostReposByOwnerByNamePullsByNumberReviewDraftsResponse
+func (c *ClientWithResponses) PostReposByOwnerByNamePullsByNumberReviewDraftsWithBodyWithResponse(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberReviewDraftsResponse, error) {
+	rsp, err := c.PostReposByOwnerByNamePullsByNumberReviewDraftsWithBody(ctx, owner, name, number, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostReposByOwnerByNamePullsByNumberReviewDraftsResponse(rsp)
+}
+
+func (c *ClientWithResponses) PostReposByOwnerByNamePullsByNumberReviewDraftsWithResponse(ctx context.Context, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberReviewDraftsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberReviewDraftsResponse, error) {
+	rsp, err := c.PostReposByOwnerByNamePullsByNumberReviewDrafts(ctx, owner, name, number, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostReposByOwnerByNamePullsByNumberReviewDraftsResponse(rsp)
+}
+
+// PostReposByOwnerByNamePullsByNumberReviewDraftsDeleteWithBodyWithResponse request with arbitrary body returning *PostReposByOwnerByNamePullsByNumberReviewDraftsDeleteResponse
+func (c *ClientWithResponses) PostReposByOwnerByNamePullsByNumberReviewDraftsDeleteWithBodyWithResponse(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberReviewDraftsDeleteResponse, error) {
+	rsp, err := c.PostReposByOwnerByNamePullsByNumberReviewDraftsDeleteWithBody(ctx, owner, name, number, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostReposByOwnerByNamePullsByNumberReviewDraftsDeleteResponse(rsp)
+}
+
+func (c *ClientWithResponses) PostReposByOwnerByNamePullsByNumberReviewDraftsDeleteWithResponse(ctx context.Context, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberReviewDraftsDeleteJSONRequestBody, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberReviewDraftsDeleteResponse, error) {
+	rsp, err := c.PostReposByOwnerByNamePullsByNumberReviewDraftsDelete(ctx, owner, name, number, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostReposByOwnerByNamePullsByNumberReviewDraftsDeleteResponse(rsp)
+}
+
+// PatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdWithBodyWithResponse request with arbitrary body returning *PatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdResponse
+func (c *ClientWithResponses) PatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdWithBodyWithResponse(ctx context.Context, owner string, name string, number int64, draftId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdResponse, error) {
+	rsp, err := c.PatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdWithBody(ctx, owner, name, number, draftId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdResponse(rsp)
+}
+
+func (c *ClientWithResponses) PatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdWithResponse(ctx context.Context, owner string, name string, number int64, draftId string, body PatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdResponse, error) {
+	rsp, err := c.PatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftId(ctx, owner, name, number, draftId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdResponse(rsp)
+}
+
 // GetReposByOwnerByNamePullsByNumberReviewThreadsWithResponse request returning *GetReposByOwnerByNamePullsByNumberReviewThreadsResponse
 func (c *ClientWithResponses) GetReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberReviewThreadsParams, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberReviewThreadsResponse, error) {
 	rsp, err := c.GetReposByOwnerByNamePullsByNumberReviewThreads(ctx, owner, name, number, params, reqEditors...)
@@ -12425,6 +13268,15 @@ func (c *ClientWithResponses) SyncRepoWithResponse(ctx context.Context, owner st
 		return nil, err
 	}
 	return ParseSyncRepoResponse(rsp)
+}
+
+// GetReviewDraftsSummaryWithResponse request returning *GetReviewDraftsSummaryResponse
+func (c *ClientWithResponses) GetReviewDraftsSummaryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetReviewDraftsSummaryResponse, error) {
+	rsp, err := c.GetReviewDraftsSummary(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetReviewDraftsSummaryResponse(rsp)
 }
 
 // ListStacksWithResponse request returning *ListStacksResponse
@@ -14409,6 +15261,171 @@ func ParseGetReposByOwnerByNamePullsByNumberReviewCommentAnchorsResponse(rsp *ht
 	return response, nil
 }
 
+// ParsePutReposByOwnerByNamePullsByNumberReviewDraftMetaResponse parses an HTTP response from a PutReposByOwnerByNamePullsByNumberReviewDraftMetaWithResponse call
+func ParsePutReposByOwnerByNamePullsByNumberReviewDraftMetaResponse(rsp *http.Response) (*PutReposByOwnerByNamePullsByNumberReviewDraftMetaResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PutReposByOwnerByNamePullsByNumberReviewDraftMetaResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ReviewDraftMetaResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetReposByOwnerByNamePullsByNumberReviewDraftsResponse parses an HTTP response from a GetReposByOwnerByNamePullsByNumberReviewDraftsWithResponse call
+func ParseGetReposByOwnerByNamePullsByNumberReviewDraftsResponse(rsp *http.Response) (*GetReposByOwnerByNamePullsByNumberReviewDraftsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetReposByOwnerByNamePullsByNumberReviewDraftsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ReviewDraftsResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePostReposByOwnerByNamePullsByNumberReviewDraftsResponse parses an HTTP response from a PostReposByOwnerByNamePullsByNumberReviewDraftsWithResponse call
+func ParsePostReposByOwnerByNamePullsByNumberReviewDraftsResponse(rsp *http.Response) (*PostReposByOwnerByNamePullsByNumberReviewDraftsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PostReposByOwnerByNamePullsByNumberReviewDraftsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ReviewDraftsResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePostReposByOwnerByNamePullsByNumberReviewDraftsDeleteResponse parses an HTTP response from a PostReposByOwnerByNamePullsByNumberReviewDraftsDeleteWithResponse call
+func ParsePostReposByOwnerByNamePullsByNumberReviewDraftsDeleteResponse(rsp *http.Response) (*PostReposByOwnerByNamePullsByNumberReviewDraftsDeleteResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PostReposByOwnerByNamePullsByNumberReviewDraftsDeleteResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DeleteReviewDraftsOutputBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdResponse parses an HTTP response from a PatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdWithResponse call
+func ParsePatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdResponse(rsp *http.Response) (*PatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PatchReposByOwnerByNamePullsByNumberReviewDraftsByDraftIdResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ReviewDraftResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetReposByOwnerByNamePullsByNumberReviewThreadsResponse parses an HTTP response from a GetReposByOwnerByNamePullsByNumberReviewThreadsWithResponse call
 func ParseGetReposByOwnerByNamePullsByNumberReviewThreadsResponse(rsp *http.Response) (*GetReposByOwnerByNamePullsByNumberReviewThreadsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -15161,6 +16178,39 @@ func ParseSyncRepoResponse(rsp *http.Response) (*SyncRepoResponse, error) {
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetReviewDraftsSummaryResponse parses an HTTP response from a GetReviewDraftsSummaryWithResponse call
+func ParseGetReviewDraftsSummaryResponse(rsp *http.Response) (*GetReviewDraftsSummaryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetReviewDraftsSummaryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ReviewDraftSummaryOutputBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest ErrorModel
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {

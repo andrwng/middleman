@@ -769,6 +769,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/repos/{owner}/{name}/pulls/{number}/review-draft-meta": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put repos by owner by name pulls by number review draft meta */
+        put: operations["put-repos-by-owner-by-name-pulls-by-number-review-draft-meta"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{owner}/{name}/pulls/{number}/review-drafts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get repos by owner by name pulls by number review drafts */
+        get: operations["get-repos-by-owner-by-name-pulls-by-number-review-drafts"];
+        put?: never;
+        /** Post repos by owner by name pulls by number review drafts */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-review-drafts"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{owner}/{name}/pulls/{number}/review-drafts/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post repos by owner by name pulls by number review drafts delete */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-review-drafts-delete"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{owner}/{name}/pulls/{number}/review-drafts/{draft_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Patch repos by owner by name pulls by number review drafts by draft ID */
+        patch: operations["patch-repos-by-owner-by-name-pulls-by-number-review-drafts-by-draft-id"];
+        trace?: never;
+    };
     "/repos/{owner}/{name}/pulls/{number}/review-threads": {
         parameters: {
             query?: never;
@@ -1153,6 +1222,23 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["sync-repo"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/review-drafts/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get review drafts summary */
+        get: operations["get-review-drafts-summary"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1759,6 +1845,15 @@ export interface components {
             /** @description quick (default) or deep */
             depth?: string;
         };
+        CreateReviewDraftsInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/CreateReviewDraftsInputBody.json
+             */
+            readonly $schema?: string;
+            drafts: components["schemas"]["ReviewDraftInput"][] | null;
+        };
         CreateReviewThreadsInputBody: {
             /**
              * Format: uri
@@ -1792,6 +1887,25 @@ export interface components {
             name: string;
             owner: string;
             platform_host: string;
+        };
+        DeleteReviewDraftsInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/DeleteReviewDraftsInputBody.json
+             */
+            readonly $schema?: string;
+            ids: string[] | null;
+        };
+        DeleteReviewDraftsOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/DeleteReviewDraftsOutputBody.json
+             */
+            readonly $schema?: string;
+            /** Format: int64 */
+            deleted: number;
         };
         DiffCollapseGlobsResponse: {
             /**
@@ -2393,6 +2507,17 @@ export interface components {
             readonly $schema?: string;
             content: string;
         };
+        PutReviewDraftMetaInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/PutReviewDraftMetaInputBody.json
+             */
+            readonly $schema?: string;
+            body: string;
+            /** @description APPROVE, COMMENT, REQUEST_CHANGES, or empty */
+            event: string;
+        };
         RateLimitHostStatus: {
             /** Format: int64 */
             budget_limit: number;
@@ -2541,6 +2666,96 @@ export interface components {
             anchors: components["schemas"]["ReviewCommentAnchorResponse"][] | null;
             /** @description Revision the anchors were resolved against; empty when none was available */
             at: string;
+        };
+        ReviewDraftInput: {
+            /** @description Comment body (markdown) */
+            body: string;
+            /** @description Commit the comment was written against */
+            commit_sha: string;
+            /** @description RFC3339; kept by the localStorage import */
+            created_at?: string;
+            /** @description Client-generated id; the server generates one when empty */
+            id?: string;
+            /**
+             * Format: int64
+             * @description Upstream comment id this reply threads under
+             */
+            in_reply_to?: number;
+            /**
+             * Format: int64
+             * @description 1-based line
+             */
+            line: number;
+            /** @description File path (may be empty only for replies) */
+            path: string;
+            /** @description LEFT or RIGHT */
+            side: string;
+            /**
+             * Format: int64
+             * @description First line of a multi-line range
+             */
+            start_line?: number;
+        };
+        ReviewDraftMetaResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/ReviewDraftMetaResponse.json
+             */
+            readonly $schema?: string;
+            body: string;
+            event: string;
+        };
+        ReviewDraftResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/ReviewDraftResponse.json
+             */
+            readonly $schema?: string;
+            body: string;
+            commit_sha: string;
+            created_at: string;
+            id: string;
+            /** Format: int64 */
+            in_reply_to?: number;
+            /** Format: int64 */
+            line: number;
+            origin: string;
+            path: string;
+            side: string;
+            /** Format: int64 */
+            start_line?: number;
+            state: string;
+            submit_error?: string;
+            updated_at: string;
+        };
+        ReviewDraftSummaryItem: {
+            /** Format: int64 */
+            count: number;
+            name: string;
+            /** Format: int64 */
+            number: number;
+            owner: string;
+        };
+        ReviewDraftSummaryOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/ReviewDraftSummaryOutputBody.json
+             */
+            readonly $schema?: string;
+            prs: components["schemas"]["ReviewDraftSummaryItem"][] | null;
+        };
+        ReviewDraftsResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/ReviewDraftsResponse.json
+             */
+            readonly $schema?: string;
+            drafts: components["schemas"]["ReviewDraftResponse"][] | null;
+            meta: components["schemas"]["ReviewDraftMetaResponse"];
         };
         ReviewThreadCommentResponse: {
             /** @description user | agent */
@@ -2843,6 +3058,15 @@ export interface components {
             readonly $schema?: string;
             members: string[] | null;
             name: string;
+        };
+        UpdateReviewDraftInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/UpdateReviewDraftInputBody.json
+             */
+            readonly $schema?: string;
+            body: string;
         };
         ViewerResponse: {
             /**
@@ -4930,6 +5154,188 @@ export interface operations {
             };
         };
     };
+    "put-repos-by-owner-by-name-pulls-by-number-review-draft-meta": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutReviewDraftMetaInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewDraftMetaResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-repos-by-owner-by-name-pulls-by-number-review-drafts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewDraftsResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-review-drafts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateReviewDraftsInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewDraftsResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-review-drafts-delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeleteReviewDraftsInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeleteReviewDraftsOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "patch-repos-by-owner-by-name-pulls-by-number-review-drafts-by-draft-id": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+                draft_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateReviewDraftInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewDraftResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     "get-repos-by-owner-by-name-pulls-by-number-review-threads": {
         parameters: {
             query?: {
@@ -5755,6 +6161,35 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-review-drafts-summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewDraftSummaryOutputBody"];
+                };
             };
             /** @description Error */
             default: {
