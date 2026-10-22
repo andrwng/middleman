@@ -23,6 +23,7 @@ import (
 	ghclient "github.com/wesm/middleman/internal/github"
 	"github.com/wesm/middleman/internal/terminal"
 	"github.com/wesm/middleman/internal/workspace"
+	"github.com/wesm/middleman/internal/worktrees"
 )
 
 type EmbedConfig struct {
@@ -339,6 +340,9 @@ func newServer(
 				briefPromptFile = ""
 			}
 		}
+		// Run and chat checkouts are added to reviewers' own repos for
+		// local reviews; keep them out of worktree discovery.
+		worktrees.IgnoreWorktreesUnder(filepath.Join(options.WorktreeDir, "ai-review"))
 		s.aiReview = aireview.New(aireview.RunnerConfig{
 			DB:              database,
 			Clones:          clones,
@@ -359,6 +363,9 @@ func newServer(
 			slog.Warn("ai thread auto-close on startup failed", "err", err)
 		} else if n > 0 {
 			slog.Info("auto-closed AI threads on closed PRs", "count", n, "phase", "startup")
+		}
+		if err := s.aiReview.SweepLocalRunCheckouts(bgCtx); err != nil {
+			slog.Warn("sweep local review checkouts failed", "err", err)
 		}
 		s.CancelReviewRunsForClosedPRs()
 		s.pruneSnapshotRefs(bgCtx)

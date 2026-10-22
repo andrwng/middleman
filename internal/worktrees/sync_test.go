@@ -89,3 +89,32 @@ func insertTestRepo(t *testing.T, d *db.DB, owner, name string) int64 {
 	require.NoError(t, err)
 	return id
 }
+
+// middleman's own checkouts (Claude review runs and chats add detached
+// worktrees to the reviewer's repo) are not the reviewer's worktrees.
+func TestSyncSkipsIgnoredRoots(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on PATH")
+	}
+	require := require.New(t)
+	ctx := context.Background()
+	store := openTestDB(t)
+	repoID := insertTestRepo(t, store, "o", "r")
+	root := t.TempDir()
+	primary := filepath.Join(root, "main")
+	runGit(t, "", "init", "--initial-branch=main", primary)
+	runGit(t, primary, "config", "user.email", "test@example.com")
+	runGit(t, primary, "config", "user.name", "Test")
+	runGit(t, primary, "commit", "--allow-empty", "-m", "init")
+	managed := filepath.Join(t.TempDir(), "ai-review")
+	runGit(t, primary, "worktree", "add", "--detach", filepath.Join(managed, "run-7"))
+
+	restore := IgnoreWorktreesUnder(managed)
+	t.Cleanup(restore)
+	live, err := Sync(ctx, store, repoID, primary)
+	require.NoError(err)
+	require.Len(live, 1)
+	active, err := store.ListWorktreesForRepo(ctx, repoID)
+	require.NoError(err)
+	require.Len(active, 1)
+}

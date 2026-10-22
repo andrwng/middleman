@@ -80,3 +80,23 @@ func DeleteSnapshotRef(ctx context.Context, worktreePath string, runID int64) er
 	}
 	return nil
 }
+
+// SweepLocalRunCheckouts removes run checkouts that a crash left
+// registered in reviewers' repos. Call at startup, before any run or
+// chat can hold a lease; it only stats paths, so finished runs whose
+// checkout is already gone cost nothing.
+func (r *Runner) SweepLocalRunCheckouts(ctx context.Context) error {
+	runs, err := r.db.ListFinishedLocalRuns(ctx)
+	if err != nil {
+		return err
+	}
+	for _, run := range runs {
+		path := r.ReviewRunPath(run.ID)
+		if _, err := os.Stat(path); err != nil {
+			continue
+		}
+		r.cleanWorktreePath(ctx, run.LocalWorktreePath, path)
+	}
+	return nil
+}
+

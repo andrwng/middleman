@@ -3,6 +3,9 @@ package worktrees
 import (
 	"context"
 	"fmt"
+	"path/filepath"
+	"strings"
+	"sync"
 
 	"github.com/wesm/middleman/internal/db"
 )
@@ -28,6 +31,9 @@ func Sync(
 	keepPaths := make([]string, 0, len(scanned))
 	out := make([]db.Worktree, 0, len(scanned))
 	for _, s := range scanned {
+		if isIgnoredWorktree(s.Path) {
+			continue
+		}
 		w, err := store.UpsertWorktree(ctx, repoID, s)
 		if err != nil {
 			return nil, fmt.Errorf("upsert worktree %s: %w", s.Path, err)
@@ -40,4 +46,46 @@ func Sync(
 		return nil, fmt.Errorf("sweep stale worktrees: %w", err)
 	}
 	return out, nil
+}
+
+var (
+	ignoredMu    sync.RWMutex
+	ignoredRoots []string
+)
+
+// IgnoreWorktreesUnder keeps Sync from treating worktrees under root as
+// the reviewer's own. middleman adds detached checkouts there (Claude
+// review runs and chats) to the reviewer's repo. Returns a func that
+// undoes the registration (for tests).
+func IgnoreWorktreesUnder(root string) func() {
+	roots := []string{filepath.Clean(root)}
+	if real, err := filepath.EvalSymlinks(root); err == nil && real != roots[0] {
+		roots = append(roots, real)
+	}
+	ignoredMu.Lock()
+	ignoredRoots = append(ignoredRoots, roots...)
+	ignoredMu.Unlock()
+	return func() {
+		ignoredMu.Lock()
+		defer ignoredMu.Unlock()
+		kept := ignoredRoots[:0]
+		for _, r := range ignoredRoots {
+			if r != roots[0] && (len(roots) < 2 || r != roots[1]) {
+				kept = append(kept, r)
+			}
+		}
+		ignoredRoots = kept
+	}
+}
+
+func isIgnoredWorktree(path string) bool {
+	p := filepath.Clean(path)
+	ignoredMu.RLock()
+	defer ignoredMu.RUnlock()
+	for _, root := range ignoredRoots {
+		if p == root || strings.HasPrefix(p, root+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }

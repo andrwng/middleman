@@ -69,6 +69,7 @@ func TestAPILocalReviewRun(t *testing.T) {
 	client, _, num, dir, _ := setupLocalReviewServer(t, "sleep 2\n"+okStream)
 	statusBefore := gitOut(t, dir, "status", "--porcelain")
 	head := strings.TrimSpace(gitOut(t, dir, "rev-parse", "HEAD"))
+	worktreesBefore := gitOut(t, dir, "worktree", "list", "--porcelain")
 
 	start, err := client.HTTP.PostReposByOwnerByNamePullsByNumberAiReviewRunsWithResponse(ctx, "local", "demo", num, generated.StartAIReviewRunInputBody{})
 	require.NoError(err)
@@ -94,6 +95,10 @@ func TestAPILocalReviewRun(t *testing.T) {
 		return r != nil && r.Status == "done"
 	}, 15*time.Second, 50*time.Millisecond)
 	assert.Equal(statusBefore, gitOut(t, dir, "status", "--porcelain"))
+	// The run's checkout is gone from the reviewer's repo once it's over.
+	require.Eventually(func() bool {
+		return gitOut(t, dir, "worktree", "list", "--porcelain") == worktreesBefore
+	}, 5*time.Second, 50*time.Millisecond)
 }
 
 func TestAPILocalDraftChat(t *testing.T) {

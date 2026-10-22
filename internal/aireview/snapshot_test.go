@@ -192,3 +192,25 @@ func TestLocalRunLeavesReviewersRepoAlone(t *testing.T) {
 	_, statErr := os.Stat(marker)
 	assert.True(os.IsNotExist(statErr), "reviewer's post-checkout hook must not run")
 }
+
+// After a crash, a local run's checkout is still registered in the
+// reviewer's repo; the startup sweep removes it.
+func TestSweepLocalRunCheckouts(t *testing.T) {
+	require := require.New(t)
+	dir := localRepo(t)
+	database := openTestDB(t)
+	mrID := seedMR(t, database)
+	r := New(RunnerConfig{DB: database, WorktreeDir: t.TempDir()})
+	ctx := context.Background()
+	run, err := database.CreateAIReviewRun(ctx, db.NewAIReviewRun{MergeRequestID: mrID, Branch: "feat/a", HeadSHA: "h", ReadSHA: "h", LocalWorktreePath: dir})
+	require.NoError(err)
+	head := strings.TrimSpace(gitIn(t, dir, "rev-parse", "HEAD"))
+	_, err = r.provisionWorktreeIn(ctx, dir, head, r.ReviewRunPath(run.ID))
+	require.NoError(err)
+	require.NoError(database.MarkAIReviewRunFailed(ctx, run.ID, "interrupted by middleman restart", ""))
+
+	require.NoError(r.SweepLocalRunCheckouts(ctx))
+	_, statErr := os.Stat(r.ReviewRunPath(run.ID))
+	require.True(os.IsNotExist(statErr))
+	require.NotContains(gitIn(t, dir, "worktree", "list"), r.ReviewRunPath(run.ID))
+}

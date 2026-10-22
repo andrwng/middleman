@@ -273,3 +273,14 @@ func (d *DB) ListLocalRunsWithoutLiveDrafts(ctx context.Context) ([]AIReviewRun,
 		         WHERE rd.run_id = r.id AND rd.state IN ('suggestion', 'draft'))
 		  ORDER BY r.id`)
 }
+
+// ListFinishedLocalRuns returns local runs that are no longer active.
+// Their checkouts in the reviewer's repo should not exist; the startup
+// sweep removes any a crash left behind.
+func (d *DB) ListFinishedLocalRuns(ctx context.Context) ([]AIReviewRun, error) {
+	return d.listRuns(ctx,
+		`SELECT `+aiReviewRunColumns+` FROM middleman_ai_review_runs
+		  WHERE local_worktree_path != '' AND status NOT IN ('queued', 'running')
+		  ORDER BY id`)
+}
+
