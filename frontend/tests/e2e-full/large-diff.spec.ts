@@ -335,3 +335,32 @@ test.describe("large diff collapse globs", () => {
     await expect(file.locator(".line-wrap")).toHaveCount(400);
   });
 });
+
+// Switching PRs from the list keeps the review pane mounted and loads the
+// next PR into it. Covers both directions between a small (one /diff call)
+// and a large (lazy) diff, which is where the pane once went blank: the
+// file list re-rendered while the previous diff had already been cleared.
+test.describe("switching PRs in the review pane", () => {
+  test("renders each PR's diff when switching between a small and a large PR", async ({ page }) => {
+    const pageErrors: string[] = [];
+    page.on("pageerror", (e) => pageErrors.push(e.message));
+
+    const smallItem = page.locator(".pull-item", { hasText: "Add widget caching layer" });
+    const largeItem = page.locator(".pull-item", { hasText: "Fix race condition in event loop" });
+
+    await page.goto(SMALL_PR);
+    await expect(diffFile(page, "internal/cache.go").locator(".line-wrap").first()).toBeVisible();
+
+    await largeItem.click();
+    await expect(page).toHaveURL(/\/pulls\/acme\/widgets\/2/);
+    await waitForSidebar(page);
+    await expect(page.locator(".diff-file").first()).toBeVisible();
+    await expect(page.locator(".line-wrap").first()).toBeVisible({ timeout: 15_000 });
+
+    await smallItem.click();
+    await expect(page).toHaveURL(/\/pulls\/acme\/widgets\/1/);
+    await expect(diffFile(page, "internal/cache.go").locator(".line-wrap").first()).toBeVisible();
+
+    expect(pageErrors).toEqual([]);
+  });
+});

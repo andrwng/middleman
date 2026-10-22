@@ -42,7 +42,7 @@
   // One viewport window per scroll root: decides which file bodies are
   // mounted (see diffWindow.svelte.ts). Files render only once it exists
   // so none of them mounts its body before the window has measured.
-  let diffWindow: DiffWindow | undefined = $state();
+  let diffWindow: DiffWindow | undefined = $state.raw();
   setDiffWindowContext(() => diffWindow);
   $effect(() => {
     const root = diffArea;
@@ -644,7 +644,7 @@
               style:tab-size={tabWidth}
             >
               {#if diffWindow}
-                {#each diff.files as file (file.path)}
+                {#each diff?.files ?? [] as file (file.path)}
                   <DiffFileComponent
                     {file}
                     {owner}
