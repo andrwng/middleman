@@ -82,6 +82,9 @@
     createCommitAnalysisStore,
   } from "./stores/commitAnalysis.svelte.js";
   import {
+    createAIReviewRunStore,
+  } from "./stores/aiReviewRun.svelte.js";
+  import {
     createAuthorGroupsStore,
   } from "./stores/authorGroups.svelte.js";
   import { createViewerStore } from "./stores/viewer.svelte.js";
@@ -253,6 +256,11 @@
     const fileResolverStore = createFileResolverStore({
       ...(cfg.basePath != null && { getBasePath: () => cfg.basePath as string }),
     });
+    // Suggestions arrive while Claude works; reload drafts on each poll.
+    const aiReviewRunStore = createAIReviewRunStore({
+      ...(cfg.basePath != null && { getBasePath: () => cfg.basePath as string }),
+      onActivity: () => void diffStore.reloadDrafts(),
+    });
     const commitAnalysisStore = createCommitAnalysisStore({
       ...(cfg.basePath != null && { getBasePath: () => cfg.basePath as string }),
     });
@@ -286,6 +294,7 @@
       aiSessions: aiSessionsStore,
       fileResolver: fileResolverStore,
       commitAnalysis: commitAnalysisStore,
+      aiReviewRun: aiReviewRunStore,
       worktrees: worktreesStore,
       worktreeSession: createWorktreeSessionStore({ client: cl }),
       reviewThreads: reviewThreadsStore,

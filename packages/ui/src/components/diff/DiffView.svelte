@@ -8,6 +8,7 @@
     diff: diffStore,
     ai: aiStore,
     brief: briefStore,
+    aiReviewRun: aiReviewRunStore,
     reviewThreads: reviewThreadsStore,
     symbolRefs: symbolRefsStore,
     codeBrowser: codeBrowserStore,
@@ -200,6 +201,7 @@
     // revision arrives or changes.
     void reviewThreadsStore.load(owner, name, number);
     briefStore.start(owner, name, number);
+    aiReviewRunStore.start(owner, name, number);
 
     return () => {
       cancelAnimationFrame(scrollRaf);
@@ -207,6 +209,7 @@
       aiStore.stop();
       reviewThreadsStore.clear();
       briefStore.stop();
+      aiReviewRunStore.stop();
       // Closes any open symbol-references search so a stale result set
       // from this PR doesn't reappear (isActive() still true) the
       // instant a different PR's DiffView mounts — symbolRefsStore is
