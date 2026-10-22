@@ -64,4 +64,19 @@ describe("SuggestionCard", () => {
     expect(chatOpen).toHaveBeenCalledWith({ owner: "acme", name: "widget", number: 1 }, "s1");
     openIds.clear();
   });
+
+  it("renders the comment and its reasoning as markdown, sanitized", () => {
+    const md = { ...s, body: "Use **errors.Is** here <script>alert(1)</script>", rationale: "It's *wrapped*." };
+    const { container } = render(SuggestionCard, { props: { suggestion: md, currentHeadSha: "abc" } });
+    expect(container.querySelector(".suggestion__body strong")?.textContent).toBe("errors.Is");
+    expect(container.querySelector(".suggestion__rationale-text em")?.textContent).toBe("wrapped");
+    expect(container.querySelector("script")).toBeNull();
+  });
+
+  it("edits the raw markdown, not the rendered text", async () => {
+    const md = { ...s, body: "Use **errors.Is**" };
+    const { getByText, getByRole } = render(SuggestionCard, { props: { suggestion: md, currentHeadSha: "abc" } });
+    await fireEvent.click(getByText("Edit"));
+    expect((getByRole("textbox") as HTMLTextAreaElement).value).toBe("Use **errors.Is**");
+  });
 });

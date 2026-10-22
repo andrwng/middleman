@@ -10,7 +10,13 @@
   }
 
   const { draftId, onclose }: Props = $props();
-  const { draftChat } = getStores();
+  const { draftChat, diff: diffStore } = getStores();
+
+  // #123/@user links only make sense for GitHub repos.
+  const repoCtx = $derived.by(() => {
+    const pr = diffStore.getCurrentPR();
+    return pr && pr.owner !== "local" ? { owner: pr.owner, name: pr.name } : undefined;
+  });
 
   let text = $state("");
   let activityOpen = $state<Record<number, boolean>>({});
@@ -99,7 +105,7 @@
         {:else if m.status === "cancelled"}
           <span class="draft-chat__pending">Cancelled</span>
         {:else}
-          <div class="draft-chat__text markdown-body">{@html renderMarkdown(m.body)}</div>
+          <div class="draft-chat__text markdown-body">{@html renderMarkdown(m.body, repoCtx)}</div>
         {/if}
         {#if m.raw_json}
           <button

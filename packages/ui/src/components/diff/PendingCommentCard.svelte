@@ -2,6 +2,7 @@
   import { getStores } from "../../context.js";
   import type { DraftComment } from "../../stores/diff.svelte.js";
   import DraftChat from "./DraftChat.svelte";
+  import { renderMarkdown } from "../../utils/markdown.js";
 
   interface Props {
     comment: DraftComment;
@@ -14,6 +15,13 @@
 
   const { comment, currentHeadSha, ondelete }: Props = $props();
   const { diff: diffStore, draftChat } = getStores();
+
+  // Drafts publish as GitHub Markdown; preview them the way GitHub will,
+  // with #123/@user links. Local worktrees have no GitHub to link to.
+  const repoCtx = $derived.by(() => {
+    const pr = diffStore.getCurrentPR();
+    return pr && pr.owner !== "local" ? { owner: pr.owner, name: pr.name, sha: comment.commitSha } : undefined;
+  });
 
   let editing = $state(false);
   // Owned by the store so it survives this card being re-rendered.
@@ -184,10 +192,10 @@
   {:else}
     <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
     <div
-      class="pending__body"
+      class="pending__body markdown-body"
       ondblclick={startEdit}
       title="Double-click to edit"
-    >{comment.body}</div>
+    >{@html renderMarkdown(comment.body, repoCtx)}</div>
   {/if}
   {#if chatOpen}
     <DraftChat draftId={comment.id} />
@@ -337,7 +345,6 @@
   .pending__body {
     font-size: 13px;
     color: var(--text-primary);
-    white-space: pre-wrap;
     word-break: break-word;
     line-height: 1.5;
     cursor: text;

@@ -81,4 +81,11 @@ describe("DraftChat", () => {
     await fireEvent.click(getByText("Cancel"));
     expect(cancel).toHaveBeenCalledWith("s1", 2);
   });
+
+  it("shows revision text literally so the change stays visible", () => {
+    chat.messages = [m(4, { kind: "revision", body: "**new**", prev_body: "**old**", applied: true })];
+    const { getByText, container } = render(DraftChat, { props: { draftId: "s1" } });
+    expect(getByText("**new**")).toBeTruthy();
+    expect(container.querySelector(".draft-chat__diff strong")).toBeNull();
+  });
 });

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render } from "@testing-library/svelte";
+import { cleanup, fireEvent, render } from "@testing-library/svelte";
 
 const prState = { owner: "acme" };
 const chatState = { open: new Set<string>() };
@@ -80,5 +80,14 @@ describe("PendingCommentCard publish error", () => {
     const { getByPlaceholderText } = render(PendingCommentCard, { props: { comment: base, currentHeadSha: "abc", ondelete: vi.fn() } });
     expect(getByPlaceholderText(/Ask about this comment/)).toBeTruthy();
     chatState.open.clear();
+  });
+
+  it("renders the draft as markdown and edits the raw text", async () => {
+    const md = { ...base, body: "Rename **this** <script>alert(1)</script>" };
+    const { container, getByTitle, getByRole } = render(PendingCommentCard, { props: { comment: md, currentHeadSha: "abc", ondelete: vi.fn() } });
+    expect(container.querySelector(".pending__body strong")?.textContent).toBe("this");
+    expect(container.querySelector("script")).toBeNull();
+    await fireEvent.dblClick(getByTitle("Double-click to edit"));
+    expect((getByRole("textbox") as HTMLTextAreaElement).value).toBe(md.body);
   });
 });

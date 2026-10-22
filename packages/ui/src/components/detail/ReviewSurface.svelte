@@ -210,7 +210,7 @@
          both are open and there isn't room side by side, they stack. -->
     <div class="floating-dock">
       <PRNotesPanel />
-      <ClaudeReviewPanel />
+      <ClaudeReviewPanel {owner} {name} />
     </div>
     <DiffView {owner} {name} {number} />
   </div>

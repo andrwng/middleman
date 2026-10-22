@@ -2,6 +2,14 @@
   import { getStores } from "../../context.js";
   import SessionToolTimeline from "./SessionToolTimeline.svelte";
   import ReviewWithClaudeForm from "../diff/ReviewWithClaudeForm.svelte";
+  import { renderMarkdown } from "../../utils/markdown.js";
+
+  interface Props {
+    owner?: string;
+    name?: string;
+  }
+
+  const { owner = "", name = "" }: Props = $props();
 
   // Floating panel for the latest Review with Claude run, docked beside
   // the Notes toggle. The run store owns whether it is open so the
@@ -11,6 +19,9 @@
   const run = $derived(aiReviewRun.getRun());
   const active = $derived(aiReviewRun.isActive());
   const open = $derived(aiReviewRun.isPanelOpen());
+
+  // #123/@user links only make sense for GitHub repos.
+  const repoCtx = $derived(owner && owner !== "local" ? { owner, name } : undefined);
 
   let showActivity = $state(false);
   let rerunning = $state(false);
@@ -70,7 +81,7 @@
           <p class="claude-panel__instructions">Instructions: {run.instructions}</p>
         {/if}
         {#if run.status === "done" && run.summary}
-          <p class="claude-panel__summary">{run.summary}</p>
+          <div class="claude-panel__summary markdown-body">{@html renderMarkdown(run.summary, repoCtx)}</div>
         {/if}
         {#if run.status === "failed"}
           <p class="claude-panel__error" role="alert">{run.error}</p>
@@ -215,7 +226,6 @@
   .claude-panel__summary {
     margin: 0;
     color: var(--text-primary);
-    white-space: pre-wrap;
   }
 
   .claude-panel__error {

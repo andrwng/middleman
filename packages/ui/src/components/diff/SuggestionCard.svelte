@@ -2,6 +2,7 @@
   import { getStores } from "../../context.js";
   import type { DraftComment } from "../../stores/diff.svelte.js";
   import DraftChat from "./DraftChat.svelte";
+  import { renderMarkdown } from "../../utils/markdown.js";
 
   interface Props {
     suggestion: DraftComment;
@@ -26,6 +27,14 @@
   }
   let draftBody = $state("");
   let textareaEl: HTMLTextAreaElement | undefined = $state();
+
+
+  // Comments publish as GitHub Markdown; render them the way GitHub will,
+  // with #123/@user links. Local worktrees have no GitHub to link to.
+  const repoCtx = $derived.by(() => {
+    const pr = diffStore.getCurrentPR();
+    return pr && pr.owner !== "local" ? { owner: pr.owner, name: pr.name, sha: suggestion.commitSha } : undefined;
+  });
 
   const outdated = $derived(currentHeadSha !== "" && suggestion.commitSha !== currentHeadSha);
 
@@ -92,14 +101,14 @@
       <button type="button" class="suggestion__btn suggestion__btn--primary" onclick={saveEdit}>Save</button>
     </div>
   {:else}
-    <div class="suggestion__body">{suggestion.body}</div>
+    <div class="suggestion__body markdown-body">{@html renderMarkdown(suggestion.body, repoCtx)}</div>
   {/if}
 
   <!-- The chat starts with the rationale, so hide it here while open. -->
   {#if suggestion.rationale && !chatOpen}
     <div class="suggestion__rationale">
       <span class="suggestion__rationale-label">Claude</span>
-      <p class="suggestion__rationale-text">{suggestion.rationale}</p>
+      <div class="suggestion__rationale-text markdown-body">{@html renderMarkdown(suggestion.rationale, repoCtx)}</div>
     </div>
   {/if}
 
@@ -185,7 +194,6 @@
   .suggestion__body {
     font-size: 13px;
     color: var(--text-primary);
-    white-space: pre-wrap;
     word-break: break-word;
     line-height: 1.5;
   }
@@ -219,7 +227,6 @@
   .suggestion__rationale-text {
     margin: 2px 0 0;
     color: var(--text-muted);
-    white-space: pre-wrap;
     word-break: break-word;
   }
 

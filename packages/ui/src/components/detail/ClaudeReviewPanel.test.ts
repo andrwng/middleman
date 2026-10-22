@@ -103,4 +103,11 @@ describe("ClaudeReviewPanel", () => {
     await fireEvent.click(getByRole("button", { name: "Close Claude review" }));
     expect(closePanel).toHaveBeenCalledTimes(2);
   });
+
+  it("renders the summary as markdown", () => {
+    state.run = aRun({ summary: "Found **two** issues." });
+    state.open = true;
+    const { container } = render(ClaudeReviewPanel, { props: { owner: "acme", name: "widget" } });
+    expect(container.querySelector(".claude-panel__summary strong")?.textContent).toBe("two");
+  });
 });
