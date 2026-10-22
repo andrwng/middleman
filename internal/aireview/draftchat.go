@@ -42,6 +42,11 @@ type DraftTurnInput struct {
 	// message was queued. Takes precedence over Prompt.
 	PromptFor func(ctx context.Context) (string, error)
 	MCP       MCPConfig
+	// RepoDir, when set, is the reviewer's local repo to add worktrees from.
+	RepoDir string
+	// UseExistingDir runs in WorktreePath as-is (the reviewer's own
+	// worktree): no checkout is created or removed.
+	UseExistingDir bool
 }
 
 // DraftChatWorktreePath is where fresh draft conversations run.
@@ -139,12 +144,18 @@ func (r *Runner) runDraftTurn(in DraftTurnInput) {
 		r.mu.Unlock()
 	}()
 
-	if err := r.acquireWorktree(bg, in.Owner, in.Name, in.CheckoutSHA, in.WorktreePath); err != nil {
-		_ = r.db.MarkDraftMessageFailed(bg, in.MessageID,
-			fmt.Sprintf("cannot check out %s for this conversation: %v", shortSHA(in.CheckoutSHA), err), "")
-		return
+	if !in.UseExistingDir {
+		repoDir, err := r.repoDirFor(in.RepoDir, in.Owner, in.Name)
+		if err == nil {
+			err = r.acquireWorktree(bg, repoDir, in.CheckoutSHA, in.WorktreePath)
+		}
+		if err != nil {
+			_ = r.db.MarkDraftMessageFailed(bg, in.MessageID,
+				fmt.Sprintf("cannot check out %s for this conversation: %v", shortSHA(in.CheckoutSHA), err), "")
+			return
+		}
+		defer r.releaseWorktree(repoDir, in.WorktreePath)
 	}
-	defer r.releaseWorktree(in.Owner, in.Name, in.WorktreePath)
 
 	prompt := in.Prompt
 	if in.PromptFor != nil {

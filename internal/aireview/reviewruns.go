@@ -26,6 +26,9 @@ type ReviewRunInput struct {
 	Instructions  string
 	PromptContext string
 	MCP           MCPConfig
+	// RepoDir, when set, is the reviewer's local repo to add the run's
+	// worktree from (HeadSHA is then the snapshot commit).
+	RepoDir string
 }
 
 // ReviewRunWorktreePath is fixed per run: Claude Code keys sessions by
@@ -38,15 +41,20 @@ func ReviewRunWorktreePath(root string, runID int64) string {
 // StartReviewRun provisions the run's worktree and spawns Claude in the
 // background. The run row moves running -> done|failed|cancelled.
 func (r *Runner) StartReviewRun(ctx context.Context, in ReviewRunInput) error {
-	if r.clones == nil {
-		return errors.New("clone manager not configured")
+	repoDir, err := r.repoDirFor(in.RepoDir, in.Owner, in.Name)
+	if err != nil {
+		_ = r.db.MarkAIReviewRunFailed(context.Background(), in.RunID, err.Error(), "")
+		return err
 	}
 	path := ReviewRunWorktreePath(r.rootDir, in.RunID)
-	if err := r.acquireWorktree(ctx, in.Owner, in.Name, in.HeadSHA, path); err != nil {
+	if err := r.acquireWorktree(ctx, repoDir, in.HeadSHA, path); err != nil {
 		_ = r.db.MarkAIReviewRunFailed(ctx, in.RunID, "provision worktree: "+err.Error(), "")
 		return fmt.Errorf("provision worktree: %w", err)
 	}
-	cached := r.cachePRCommits(ctx, in.Owner, in.Name, path, in.MergeBaseSHA, in.HeadSHA)
+	var cached []string
+	if in.RepoDir == "" { // local runs skip the per-commit cache, like local briefs
+		cached = r.cachePRCommits(ctx, in.Owner, in.Name, path, in.MergeBaseSHA, in.HeadSHA)
+	}
 
 	runCtx, cancel := context.WithTimeout(context.Background(), r.reviewRunTimeout)
 	r.mu.Lock()
@@ -58,7 +66,7 @@ func (r *Runner) StartReviewRun(ctx context.Context, in ReviewRunInput) error {
 			delete(r.reviewRunsRunning, in.RunID)
 			r.mu.Unlock()
 			cancel()
-			r.releaseWorktree(in.Owner, in.Name, path)
+			r.releaseWorktree(repoDir, path)
 		}()
 		r.runReviewRun(runCtx, in, path, cached)
 	}()

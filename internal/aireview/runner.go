@@ -520,8 +520,12 @@ func (r *Runner) provisionWorktreeAt(ctx context.Context, owner, name, commitSHA
 	if r.hostFor == nil {
 		return "", errors.New("host resolver not configured")
 	}
-	cloneDir := r.cloneDirFor(owner, name)
+	return r.provisionWorktreeIn(ctx, r.cloneDirFor(owner, name), commitSHA, worktreePath)
+}
 
+// provisionWorktreeIn adds a detached worktree at commitSHA from the git
+// repository at cloneDir (the bare clone, or a reviewer's local repo).
+func (r *Runner) provisionWorktreeIn(ctx context.Context, cloneDir, commitSHA, worktreePath string) (string, error) {
 	r.cleanWorktreePath(ctx, cloneDir, worktreePath)
 
 	out, err := exec.CommandContext(ctx, "git", "-C", cloneDir,
@@ -534,11 +538,11 @@ func (r *Runner) provisionWorktreeAt(ctx context.Context, owner, name, commitSHA
 
 // acquireWorktree takes a lease on the checkout at path, creating it at
 // sha when nobody else holds one.
-func (r *Runner) acquireWorktree(ctx context.Context, owner, name, sha, path string) error {
+func (r *Runner) acquireWorktree(ctx context.Context, repoDir, sha, path string) error {
 	r.leaseMu.Lock()
 	defer r.leaseMu.Unlock()
 	if r.worktreeLeases[path] == 0 {
-		if _, err := r.provisionWorktreeAt(ctx, owner, name, sha, path); err != nil {
+		if _, err := r.provisionWorktreeIn(ctx, repoDir, sha, path); err != nil {
 			return err
 		}
 	}
@@ -549,7 +553,7 @@ func (r *Runner) acquireWorktree(ctx context.Context, owner, name, sha, path str
 // releaseWorktree drops a lease and removes the checkout when it was the
 // last one. Claude's sessions live outside the checkout, keyed by its
 // path, so it can be recreated there later.
-func (r *Runner) releaseWorktree(owner, name, path string) {
+func (r *Runner) releaseWorktree(repoDir, path string) {
 	r.leaseMu.Lock()
 	defer r.leaseMu.Unlock()
 	r.worktreeLeases[path]--
@@ -557,7 +561,19 @@ func (r *Runner) releaseWorktree(owner, name, path string) {
 		return
 	}
 	delete(r.worktreeLeases, path)
-	r.cleanWorktreePath(context.Background(), r.cloneDirFor(owner, name), path)
+	r.cleanWorktreePath(context.Background(), repoDir, path)
+}
+
+// repoDirFor is where a run or chat adds its worktree from: the
+// reviewer's repo when given, otherwise the bare clone.
+func (r *Runner) repoDirFor(repoDir, owner, name string) (string, error) {
+	if repoDir != "" {
+		return repoDir, nil
+	}
+	if r.clones == nil {
+		return "", errors.New("clone manager not configured")
+	}
+	return r.cloneDirFor(owner, name), nil
 }
 
 // cloneDirFor returns the bare clone directory for owner/name.
