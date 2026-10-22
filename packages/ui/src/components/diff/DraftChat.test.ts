@@ -39,10 +39,9 @@ afterEach(() => {
 const m = (id: number, over: Record<string, unknown>) => ({ id, author: "claude", kind: "message", body: "", applied: false, status: "done", created_at: "2026-01-01T00:00:00Z", ...over });
 
 describe("DraftChat", () => {
-  it("opens the conversation and renders both sides", () => {
+  it("renders both sides of the conversation", () => {
     chat.messages = [m(1, { body: "err is dropped" }), m(2, { author: "user", body: "why?" }), m(3, { body: "Because." })];
     const { getByText } = render(DraftChat, { props: { draftId: "s1" } });
-    expect(open).toHaveBeenCalledWith({ owner: "acme", name: "widget", number: 1 }, "s1");
     expect(getByText("why?")).toBeTruthy();
     expect(getByText("Because.")).toBeTruthy();
   });

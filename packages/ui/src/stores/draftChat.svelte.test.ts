@@ -95,4 +95,25 @@ describe("draft chat store", () => {
     expect(post.body).toEqual({ body: "why?", fresh: true });
     store.close("s1");
   });
+
+  it("closing while Claude is busy still refreshes the card when it revises", async () => {
+    vi.useFakeTimers();
+    installFetch([
+      [msg(2, { status: "running" })],
+      [msg(2, { status: "running" }), msg(3, { kind: "revision", body: "new", applied: true })],
+      [msg(2), msg(3, { kind: "revision", body: "new", applied: true })],
+    ]);
+    const onRevision = vi.fn();
+    const store = createDraftChatStore({ onRevision });
+    store.open(pr, "s1");
+    await vi.advanceTimersByTimeAsync(0);
+    store.close("s1");
+    expect(store.isOpen("s1")).toBe(false);
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(onRevision).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1500);
+    const before = (globalThis.fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length;
+    await vi.advanceTimersByTimeAsync(4500);
+    expect((globalThis.fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBe(before);
+  });
 });

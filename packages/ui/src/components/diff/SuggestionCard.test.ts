@@ -4,11 +4,14 @@ import { cleanup, fireEvent, render } from "@testing-library/svelte";
 const acceptSuggestion = vi.fn();
 const discardSuggestion = vi.fn();
 const updateSuggestionBody = vi.fn();
+const openIds = new Set<string>();
+const chatOpen = vi.fn((_pr: unknown, id: string) => openIds.add(id));
 vi.mock("../../context.js", () => ({
   getStores: () => ({
     diff: { acceptSuggestion, discardSuggestion, updateSuggestionBody, getCurrentPR: () => ({ owner: "acme", name: "widget", number: 1 }) },
     draftChat: {
-      open: vi.fn(), close: vi.fn(), send: vi.fn(), cancel: vi.fn(), apply: vi.fn(), revert: vi.fn(),
+      open: chatOpen, close: vi.fn(), send: vi.fn(), cancel: vi.fn(), apply: vi.fn(), revert: vi.fn(),
+      isOpen: (id: string) => openIds.has(id),
       getMessages: () => [], isBusy: () => false, isSending: () => false, getError: () => null,
     },
   }),
@@ -56,8 +59,9 @@ describe("SuggestionCard", () => {
   });
 
   it("opens the chat with Ask Claude", async () => {
-    const { getByText, getByPlaceholderText } = render(SuggestionCard, { props: { suggestion: s, currentHeadSha: "abc" } });
+    const { getByText } = render(SuggestionCard, { props: { suggestion: s, currentHeadSha: "abc" } });
     await fireEvent.click(getByText("Ask Claude"));
-    expect(getByPlaceholderText(/Ask about this comment/)).toBeTruthy();
+    expect(chatOpen).toHaveBeenCalledWith({ owner: "acme", name: "widget", number: 1 }, "s1");
+    openIds.clear();
   });
 });

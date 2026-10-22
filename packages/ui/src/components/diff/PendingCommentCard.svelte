@@ -13,10 +13,20 @@
   }
 
   const { comment, currentHeadSha, ondelete }: Props = $props();
-  const { diff: diffStore } = getStores();
+  const { diff: diffStore, draftChat } = getStores();
 
   let editing = $state(false);
-  let chatOpen = $state(false);
+  // Owned by the store so it survives this card being re-rendered.
+  const chatOpen = $derived(draftChat.isOpen(comment.id));
+
+  function toggleChat(): void {
+    if (chatOpen) {
+      draftChat.close(comment.id);
+      return;
+    }
+    const pr = diffStore.getCurrentPR();
+    if (pr) draftChat.open(pr, comment.id);
+  }
   // Chat needs a GitHub PR and a top-level comment; replies thread under
   // someone else's comment and local drafts get chat later.
   const canChat = $derived(!comment.inReplyTo && diffStore.getCurrentPR()?.owner !== "local");
@@ -122,7 +132,7 @@
         type="button"
         class="pending__ask"
         aria-expanded={chatOpen}
-        onclick={() => (chatOpen = !chatOpen)}
+        onclick={toggleChat}
         title="Discuss this comment with Claude"
       >Ask Claude</button>
     {/if}
@@ -181,7 +191,7 @@
     >{comment.body}</div>
   {/if}
   {#if chatOpen}
-    <DraftChat draftId={comment.id} onclose={() => (chatOpen = false)} />
+    <DraftChat draftId={comment.id} />
   {/if}
   {#if comment.syncError}
     <p class="pending__submit-error" role="alert">

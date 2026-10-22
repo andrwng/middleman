@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render } from "@testing-library/svelte";
 
 const prState = { owner: "acme" };
+const chatState = { open: new Set<string>() };
+const chatOpen = vi.fn((_pr: unknown, id: string) => chatState.open.add(id));
 
 vi.mock("../../context.js", () => ({
   getStores: () => ({
@@ -13,7 +15,8 @@ vi.mock("../../context.js", () => ({
       getCurrentPR: () => ({ owner: prState.owner, name: "widget", number: 1 }),
     },
     draftChat: {
-      open: vi.fn(), close: vi.fn(), send: vi.fn(), cancel: vi.fn(), apply: vi.fn(), revert: vi.fn(),
+      open: chatOpen, close: vi.fn(), send: vi.fn(), cancel: vi.fn(), apply: vi.fn(), revert: vi.fn(),
+      isOpen: (id: string) => chatState.open.has(id),
       getMessages: () => [], isBusy: () => false, isSending: () => false, getError: () => null,
     },
   }),
@@ -70,5 +73,12 @@ describe("PendingCommentCard publish error", () => {
     const local = render(PendingCommentCard, { props: { comment: base, currentHeadSha: "abc", ondelete: vi.fn() } });
     expect(local.queryByText("Ask Claude")).toBeNull();
     prState.owner = "acme";
+  });
+
+  it("keeps the chat open across a remount of the card", () => {
+    chatState.open.add(base.id);
+    const { getByPlaceholderText } = render(PendingCommentCard, { props: { comment: base, currentHeadSha: "abc", ondelete: vi.fn() } });
+    expect(getByPlaceholderText(/Ask about this comment/)).toBeTruthy();
+    chatState.open.clear();
   });
 });

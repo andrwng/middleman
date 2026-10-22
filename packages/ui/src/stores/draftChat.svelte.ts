@@ -14,11 +14,16 @@ interface Chat {
   messages: ServerDraftMessage[];
   error: string | null;
   sending: boolean;
+  // false after the reviewer closed the chat while Claude was still
+  // replying: the store keeps watching so a revision still refreshes the
+  // card, then forgets the chat.
+  visible: boolean;
 }
 
 // createDraftChatStore holds the open conversations with Claude about
-// individual drafts. Each open chat polls only while a Claude reply is
-// queued or running.
+// individual drafts. It owns which chats are open, so a card that is
+// re-rendered keeps its chat. Each chat polls only while a Claude reply
+// is queued or running.
 export function createDraftChatStore(opts?: DraftChatStoreOptions) {
   const api = createReviewDraftsApi(opts?.getBasePath ?? (() => "/"));
   let chats = $state<Record<string, Chat>>({});
@@ -37,6 +42,7 @@ export function createDraftChatStore(opts?: DraftChatStoreOptions) {
   // absorb stores a fresh message list and reports revisions not seen
   // before. The first load only records what exists.
   function absorb(id: string, messages: ServerDraftMessage[], initial: boolean): void {
+    if (!chats[id]) return; // closed and forgotten while the request was in flight
     const seen = seenRevisions.get(id) ?? new Set<number>();
     let fresh = false;
     for (const m of messages) {
@@ -49,7 +55,10 @@ export function createDraftChatStore(opts?: DraftChatStoreOptions) {
     update(id, (c) => ({ ...c, messages }));
     if (fresh) opts?.onRevision?.();
     if (busy(messages)) arm(id);
-    else disarm(id);
+    else {
+      disarm(id);
+      if (!chats[id]?.visible) forget(id);
+    }
   }
 
   async function refresh(id: string, initial = false): Promise<void> {
@@ -74,18 +83,28 @@ export function createDraftChatStore(opts?: DraftChatStoreOptions) {
   }
 
   function open(pr: PRRef, id: string): void {
-    if (!chats[id]) {
-      chats = { ...chats, [id]: { pr, messages: [], error: null, sending: false } };
+    const existing = chats[id];
+    if (existing) {
+      update(id, (c) => ({ ...c, visible: true }));
+    } else {
+      chats = { ...chats, [id]: { pr, messages: [], error: null, sending: false, visible: true } };
     }
-    void refresh(id, true);
+    void refresh(id, !existing);
   }
 
-  function close(id: string): void {
+  function forget(id: string): void {
     disarm(id);
     seenRevisions.delete(id);
     const next = { ...chats };
     delete next[id];
     chats = next;
+  }
+
+  function close(id: string): void {
+    const c = chats[id];
+    if (!c) return;
+    if (busy(c.messages)) update(id, (cur) => ({ ...cur, visible: false }));
+    else forget(id);
   }
 
   async function send(id: string, body: string, fresh = false): Promise<boolean> {
@@ -129,7 +148,7 @@ export function createDraftChatStore(opts?: DraftChatStoreOptions) {
   return {
     open,
     close,
-    isOpen: (id: string): boolean => id in chats,
+    isOpen: (id: string): boolean => chats[id]?.visible ?? false,
     getMessages: (id: string): ServerDraftMessage[] => chats[id]?.messages ?? [],
     isBusy: (id: string): boolean => busy(chats[id]?.messages ?? []),
     isSending: (id: string): boolean => chats[id]?.sending ?? false,

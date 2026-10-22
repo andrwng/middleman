@@ -11,10 +11,19 @@
   }
 
   const { suggestion, currentHeadSha }: Props = $props();
-  const { diff: diffStore } = getStores();
+  const { diff: diffStore, draftChat } = getStores();
 
   let editing = $state(false);
-  let chatOpen = $state(false);
+  const chatOpen = $derived(draftChat.isOpen(suggestion.id));
+
+  function toggleChat(): void {
+    if (chatOpen) {
+      draftChat.close(suggestion.id);
+      return;
+    }
+    const pr = diffStore.getCurrentPR();
+    if (pr) draftChat.open(pr, suggestion.id);
+  }
   let draftBody = $state("");
   let textareaEl: HTMLTextAreaElement | undefined = $state();
 
@@ -106,7 +115,7 @@
         type="button"
         class="suggestion__btn"
         aria-expanded={chatOpen}
-        onclick={() => (chatOpen = !chatOpen)}
+        onclick={toggleChat}
       >Ask Claude</button>
       <button
         type="button"
@@ -117,7 +126,7 @@
   {/if}
 
   {#if chatOpen}
-    <DraftChat draftId={suggestion.id} onclose={() => (chatOpen = false)} />
+    <DraftChat draftId={suggestion.id} />
   {/if}
 </div>
 

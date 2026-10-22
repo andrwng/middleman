@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
   import { getStores } from "../../context.js";
   import { renderMarkdown } from "../../utils/markdown.js";
   import type { ServerDraftMessage } from "../../stores/reviewDraftsApi.js";
@@ -11,7 +10,7 @@
   }
 
   const { draftId, onclose }: Props = $props();
-  const { draftChat, diff: diffStore } = getStores();
+  const { draftChat } = getStores();
 
   let text = $state("");
   let activityOpen = $state<Record<number, boolean>>({});
@@ -19,11 +18,12 @@
   const messages = $derived(draftChat.getMessages(draftId));
   const error = $derived(draftChat.getError(draftId));
 
-  onMount(() => {
-    const pr = diffStore.getCurrentPR();
-    if (pr) draftChat.open(pr, draftId);
-  });
-  onDestroy(() => draftChat.close(draftId));
+  // The store owns whether this chat is open (cards may be re-rendered
+  // under it); closing goes through the store too.
+  function close(): void {
+    draftChat.close(draftId);
+    onclose?.();
+  }
 
   async function submit(): Promise<void> {
     const body = text.trim();
@@ -44,7 +44,7 @@
   function onKeydown(e: KeyboardEvent): void {
     if (e.key === "Escape") {
       e.preventDefault();
-      onclose?.();
+      close();
       return;
     }
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {

@@ -2,6 +2,7 @@ import { beforeEach, describe, it, expect, vi } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/svelte";
 import RenderedMarkdownView from "./RenderedMarkdownView.svelte";
 import { STORES_KEY } from "../../context.js";
+import { createDraftChatStore } from "../../stores/draftChat.svelte.js";
 import { createDiffStore } from "../../stores/diff.svelte.js";
 import { createAIStore } from "../../stores/ai.svelte.js";
 import { createDetailStore } from "../../stores/detail.svelte.js";
@@ -96,7 +97,8 @@ function makeStores(opts: { reviewThreads?: ReviewThread[] } = {}) {
   const detail = createDetailStore({ client: null as unknown as MiddlemanClient });
   const reviewThreads = makeReviewThreadsStub(opts.reviewThreads ?? []);
   const worktreeSession = makeWorktreeSessionStub();
-  return { diff, ai, detail, reviewThreads, worktreeSession };
+  const draftChat = createDraftChatStore();
+  return { diff, ai, detail, reviewThreads, worktreeSession, draftChat };
 }
 
 function renderViewWithStores(stores: ReturnType<typeof makeStores>, commentLayout?: "inline" | "gutter") {

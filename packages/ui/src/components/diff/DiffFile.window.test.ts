@@ -12,6 +12,7 @@ import { createDiffWindow, type DiffWindow } from "./diffWindow.svelte.js";
 import type { DiffFile as DiffFileType } from "../../api/types.js";
 import type { MiddlemanClient } from "../../types.js";
 import { STORES_KEY } from "../../context.js";
+import { createDraftChatStore } from "../../stores/draftChat.svelte.js";
 import { createDiffStore } from "../../stores/diff.svelte.js";
 import { createAIStore } from "../../stores/ai.svelte.js";
 import { createReviewThreadsStore } from "../../stores/reviewThreads.svelte.js";
@@ -129,6 +130,7 @@ function renderWithWindow(
         STORES_KEY,
         {
           diff: diffStore,
+          draftChat: createDraftChatStore(),
           ai: createAIStore(),
           reviewThreads: createReviewThreadsStore({ client: stubClient() }),
           symbolRefs: createSymbolRefsStore({ client: stubClient() }),
