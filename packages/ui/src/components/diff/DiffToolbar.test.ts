@@ -6,6 +6,9 @@ const threadsRefresh = vi.fn(async () => {});
 const refsOpenBlank = vi.fn();
 const state = { owner: "local" };
 const shaState = { sha: "abc123" };
+const runState = { active: false };
+const startRun = vi.fn(async () => true);
+const cancelRun = vi.fn(async () => {});
 
 vi.mock("../../context.js", () => ({
   getStores: () => ({
@@ -22,6 +25,15 @@ vi.mock("../../context.js", () => ({
       isRefreshing: () => false,
       getRefreshError: () => null,
       getCurrentCommitSha: () => shaState.sha,
+      getSuggestions: () => [{ id: "s1" }, { id: "s2" }],
+    },
+    aiReviewRun: {
+      isActive: () => runState.active,
+      isStarting: () => false,
+      getError: () => null,
+      getRun: () => null,
+      startRun,
+      cancel: cancelRun,
     },
     detail: {
       getHiddenThreadCount: () => 0,
@@ -41,6 +53,7 @@ afterEach(() => {
   vi.clearAllMocks();
   state.owner = "local";
   shaState.sha = "abc123";
+  runState.active = false;
 });
 
 describe("DiffToolbar refresh routing", () => {
@@ -117,5 +130,32 @@ describe("DiffToolbar browse button", () => {
     const { getByRole } = render(DiffToolbar, { props: { onBrowseClick: vi.fn() } });
 
     expect(getByRole("button", { name: /browse/i }).getAttribute("title")).toMatch(/\bb\b/);
+  });
+});
+
+describe("DiffToolbar Review with Claude", () => {
+  it("starts a run from the toolbar on a GitHub PR", async () => {
+    state.owner = "acme";
+    const { getByRole, getByText } = render(DiffToolbar, { props: {} });
+    await fireEvent.click(getByRole("button", { name: "Review with Claude" }));
+    await fireEvent.input(getByRole("textbox"), { target: { value: "focus on tests" } });
+    await fireEvent.click(getByText("Start review"));
+    expect(startRun).toHaveBeenCalledWith("focus on tests");
+  });
+
+  it("is not offered on a local worktree", () => {
+    state.owner = "local";
+    const { queryByRole } = render(DiffToolbar, { props: {} });
+    expect(queryByRole("button", { name: "Review with Claude" })).toBeNull();
+  });
+
+  it("shows progress and Stop while Claude is reviewing", async () => {
+    state.owner = "acme";
+    runState.active = true;
+    const { getByText, queryByRole } = render(DiffToolbar, { props: {} });
+    expect(getByText(/Claude is reviewing · 2 suggestions/)).toBeTruthy();
+    expect(queryByRole("button", { name: "Review with Claude" })).toBeNull();
+    await fireEvent.click(getByText("Stop"));
+    expect(cancelRun).toHaveBeenCalled();
   });
 });

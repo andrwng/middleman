@@ -9,6 +9,8 @@
   import CommitListSection from "./CommitListSection.svelte";
   import QuestionsSection from "./QuestionsSection.svelte";
   import PendingCommentsSection from "./PendingCommentsSection.svelte";
+  import ClaudeReviewSection from "./ClaudeReviewSection.svelte";
+  import SuggestionsSection from "./SuggestionsSection.svelte";
   import ReviewCommentsSection from "./ReviewCommentsSection.svelte";
   import ReviewThreadsSection from "./ReviewThreadsSection.svelte";
 
@@ -207,6 +209,8 @@
     </svg>
   </button>
   <CommitListSection />
+  <ClaudeReviewSection />
+  <SuggestionsSection />
   <PendingCommentsSection />
   <ReviewCommentsSection />
   <ReviewThreadsSection />

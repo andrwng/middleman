@@ -55,6 +55,8 @@ function diffStub(
     loadCommits: vi.fn(async () => {}),
     getCurrentPR: () => null,
     getDraft: () => ({ comments: [] }),
+    getSuggestions: () => [],
+    getLastDiscarded: () => [],
     removeDraftComment: vi.fn(),
     requestEditDraft: vi.fn(),
   };
@@ -127,6 +129,7 @@ function renderSidebar(overrides: { diff?: ReturnType<typeof diffStub>; codeBrow
           detail: detailStub(),
           viewer: viewerStub(),
           codeBrowser,
+          aiReviewRun: { getRun: () => null, isActive: () => false },
         },
       ],
     ]),

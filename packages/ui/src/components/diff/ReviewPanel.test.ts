@@ -15,6 +15,7 @@ const publishDraft = vi.fn<
   (req: { event: string; body: string; commitId?: string }) => Promise<{ ok: true } | { ok: false; error: string }>
 >(async () => ({ ok: true }));
 const loadPulls = vi.fn();
+let suggestionList: Array<{ id: string }> = [];
 const clientPOST = vi.fn();
 
 const singlePathDraft = {
@@ -45,6 +46,7 @@ vi.mock("../../context.js", () => ({
       clearDraftCommentsForPath,
       publishDraft,
       getCommits: () => [{ sha: "head-sha" }],
+      getSuggestions: () => suggestionList,
     },
     pulls: { loadPulls },
     reviewThreads: { createThreads, getError: () => null },
@@ -136,5 +138,22 @@ describe("ReviewPanel publish (GitHub)", () => {
     await fireEvent.click(getByText("Publish review"));
     expect(await findByText(/couldn't anchor comment\[0\]/)).toBeTruthy();
     expect(onclose).not.toHaveBeenCalled();
+  });
+});
+
+describe("ReviewPanel unadded suggestions notice", () => {
+  afterEach(() => {
+    suggestionList = [];
+  });
+
+  it("warns that Claude suggestions will not be published", () => {
+    suggestionList = [{ id: "s1" }, { id: "s2" }];
+    const { getByText } = render(ReviewPanel, { props: { owner: "acme", name: "widget", number: 1, onclose: vi.fn() } });
+    expect(getByText(/2 Claude suggestions not added to drafts/)).toBeTruthy();
+  });
+
+  it("stays quiet without suggestions", () => {
+    const { queryByText } = render(ReviewPanel, { props: { owner: "acme", name: "widget", number: 1, onclose: vi.fn() } });
+    expect(queryByText(/not added to drafts/)).toBeNull();
   });
 });

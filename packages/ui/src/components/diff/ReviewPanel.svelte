@@ -30,6 +30,10 @@
   // the diff view's behavior stays byte-for-byte unchanged.
   const scoped = $derived(scopePath ? draft.comments.filter((c) => c.path === scopePath) : draft.comments);
 
+  // Claude suggestions the reviewer has not added to drafts. They are
+  // never published, so say so before the reviewer publishes.
+  const unaddedSuggestions = $derived(isLocal ? 0 : diffStore.getSuggestions().length);
+
   let submitting = $state(false);
   let errorMsg = $state<string | null>(null);
 
@@ -281,6 +285,12 @@
     <p class="panel__empty">No inline comments yet. Click the + button beside any line to start one.</p>
   {/if}
 
+  {#if unaddedSuggestions > 0}
+    <p class="panel__notice">
+      {unaddedSuggestions} Claude suggestion{unaddedSuggestions === 1 ? "" : "s"} not added to drafts. They won't be published.
+    </p>
+  {/if}
+
   {#if errorMsg}
     <div class="panel__error">
       {#each errorSegments as seg, i (i)}
@@ -528,6 +538,16 @@
 
   .panel__error-link:hover {
     filter: brightness(1.15);
+  }
+
+  .panel__notice {
+    margin: 0;
+    padding: 6px 10px;
+    font-size: 12px;
+    color: var(--text-muted);
+    background: color-mix(in srgb, var(--accent-claude) 6%, var(--bg-inset));
+    border: 1px dashed var(--accent-claude);
+    border-radius: var(--radius-sm);
   }
 
   .panel__error {

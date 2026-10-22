@@ -148,6 +148,9 @@ function symbolRefsClient(): MiddlemanClient {
 function fakeLifecycleStore() {
   return { start: vi.fn(), stop: vi.fn() };
 }
+function fakeRunStore() {
+  return { ...fakeLifecycleStore(), getRun: () => null, isActive: () => false };
+}
 function fakeReviewThreadsStore() {
   return {
     load: vi.fn(async () => {}),
@@ -225,7 +228,7 @@ function renderDiffView(
         diff: diffStore,
         ai: fakeLifecycleStore(),
         brief: fakeLifecycleStore(),
-        aiReviewRun: fakeLifecycleStore(),
+        aiReviewRun: fakeRunStore(),
         reviewThreads: reviewThreadsStore,
         symbolRefs: symbolRefsStore,
         codeBrowser: codeBrowserStore,
@@ -559,7 +562,7 @@ describe("DiffView: symbol-refs browse bypasses a stale bookmark", () => {
           diff: diffStore,
           ai: fakeLifecycleStore(),
           brief: fakeLifecycleStore(),
-          aiReviewRun: fakeLifecycleStore(),
+          aiReviewRun: fakeRunStore(),
           reviewThreads: fakeReviewThreadsStore(),
           symbolRefs: symbolRefsStore,
           codeBrowser: codeBrowserStore,

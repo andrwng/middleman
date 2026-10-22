@@ -1,5 +1,6 @@
 <script lang="ts">
   import { getStores } from "../../context.js";
+  import ReviewWithClaudeForm from "./ReviewWithClaudeForm.svelte";
 
   interface Props {
     onReviewClick?: () => void;
@@ -9,7 +10,13 @@
 
   const { onReviewClick, onRefsClick, onBrowseClick }: Props = $props();
 
-  const { diff, detail: detailStore, reviewThreads } = getStores();
+  const { diff, detail: detailStore, reviewThreads, aiReviewRun } = getStores();
+
+  // Review with Claude is GitHub-only for now; local worktrees have
+  // their own review-thread flow.
+  const canReviewWithClaude = $derived(diff.getCurrentPR()?.owner !== "local");
+  let claudeFormOpen = $state(false);
+  const suggestionCount = $derived(diff.getSuggestions().length);
   const tabOptions = [1, 2, 4, 8] as const;
   const layoutOptions = [
     { value: "unified", label: "Unified" },
@@ -170,6 +177,28 @@
       >↗</a>
     {/if}
   </div>
+  {#if canReviewWithClaude}
+    <div class="toolbar-group claude-entry">
+      {#if aiReviewRun.isActive()}
+        <span class="claude-pill" role="status">
+          Claude is reviewing · {suggestionCount} suggestion{suggestionCount === 1 ? "" : "s"}
+        </span>
+        <button type="button" class="claude-pill__stop" onclick={() => void aiReviewRun.cancel()}>Stop</button>
+      {:else}
+        <button
+          type="button"
+          class="claude-btn"
+          aria-expanded={claudeFormOpen}
+          onclick={() => (claudeFormOpen = !claudeFormOpen)}
+        >Review with Claude</button>
+        {#if claudeFormOpen}
+          <div class="claude-popover">
+            <ReviewWithClaudeForm onstarted={() => (claudeFormOpen = false)} oncancel={() => (claudeFormOpen = false)} />
+          </div>
+        {/if}
+      {/if}
+    </div>
+  {/if}
   {#if onReviewClick}
     <div class="toolbar-group">
       <button
@@ -200,6 +229,57 @@
 </div>
 
 <style>
+  .claude-entry {
+    position: relative;
+  }
+
+  .claude-btn {
+    font-size: 12px;
+    padding: 3px 10px;
+    border: 1px solid var(--accent-claude);
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--accent-claude);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .claude-btn:hover {
+    background: color-mix(in srgb, var(--accent-claude) 10%, transparent);
+  }
+
+  .claude-popover {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 40;
+    width: min(360px, 90vw);
+    padding: 10px;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md, 6px);
+    background: var(--bg-surface);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+  }
+
+  .claude-pill {
+    font-size: 12px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent-claude) 14%, var(--bg-surface));
+    color: var(--accent-claude);
+    white-space: nowrap;
+  }
+
+  .claude-pill__stop {
+    font-size: 12px;
+    padding: 2px 8px;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    cursor: pointer;
+  }
+
   .diff-toolbar {
     display: flex;
     align-items: center;
