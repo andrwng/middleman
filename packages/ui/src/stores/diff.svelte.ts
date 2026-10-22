@@ -157,6 +157,9 @@ export interface DraftComment {
   // GitHub's error from the last publish attempt, when this draft
   // blocked it. Cleared by the next body edit.
   submitError?: string;
+  // Set when the server never accepted this draft. The draft is kept
+  // locally and saved again before publish.
+  syncError?: string;
 }
 
 export interface DraftReview {
@@ -355,8 +358,11 @@ export function createDiffStore(opts: DiffStoreOptions) {
   let draftReviews = $state<Record<string, DraftReview>>({});
   let draftSyncError = $state<string | null>(null);
   // Per-PR publishable-draft counts for PRs whose drafts are not
-  // loaded; fetched lazily by hasDraftForPR.
-  let draftSummary = $state<Record<string, number> | null>(null);
+  // loaded; fetched lazily by hasDraftForPR. summaryRequested is plain
+  // (not $state) because hasDraftForPR runs inside $derived, where
+  // writing state throws state_unsafe_mutation.
+  let draftSummary = $state<Record<string, number>>({});
+  let summaryRequested = false;
   const draftsApi = createReviewDraftsApi(getBasePath);
   // Bumped per drafts load so a late response for a PR the user has
   // left is dropped.
@@ -367,6 +373,12 @@ export function createDiffStore(opts: DiffStoreOptions) {
   // user already deleted.
   const pendingCreates = new Map<string, Promise<unknown>>();
   const inflight = new Set<Promise<unknown>>();
+  // Draft mutations (create/edit/delete/meta) still in flight, and a
+  // per-PR counter bumped by every local mutation. A list response
+  // that started before a mutation is stale: it may predate a delete or
+  // edit, so it is discarded and re-fetched once the writes land.
+  const writes = new Set<Promise<unknown>>();
+  const mutationSeq = new Map<string, number>();
   let metaTimer: ReturnType<typeof setTimeout> | null = null;
   let metaPendingFor: PRRef | null = null;
 
@@ -379,10 +391,92 @@ export function createDiffStore(opts: DiffStoreOptions) {
     return p;
   }
 
+  function trackWrite<T>(p: Promise<T>): Promise<T> {
+    writes.add(p);
+    void p.then(
+      () => writes.delete(p),
+      () => writes.delete(p),
+    );
+    return track(p);
+  }
+
+  function bumpDrafts(key: string): void {
+    mutationSeq.set(key, (mutationSeq.get(key) ?? 0) + 1);
+  }
+
   async function whenDraftsSettled(): Promise<void> {
     while (inflight.size > 0) {
       await Promise.allSettled([...inflight]);
     }
+  }
+
+  async function whenWritesSettled(): Promise<void> {
+    while (writes.size > 0) {
+      await Promise.allSettled([...writes]);
+    }
+  }
+
+  function errorText(err: unknown): string {
+    return err instanceof Error ? err.message : String(err);
+  }
+
+  function setSyncError(key: string, ids: string[], msg: string | undefined): void {
+    const existing = draftReviews[key];
+    if (!existing) return;
+    const idSet = new Set(ids);
+    draftReviews = {
+      ...draftReviews,
+      [key]: {
+        ...existing,
+        comments: existing.comments.map((c) => {
+          if (!idSet.has(c.id)) return c;
+          const { syncError: _old, ...rest } = c;
+          return msg ? { ...rest, syncError: msg } : rest;
+        }),
+      },
+    };
+  }
+
+  // retryUnsaved saves drafts the server never accepted. Returns null
+  // when everything is saved, otherwise the error that blocked it.
+  async function retryUnsaved(pr: PRRef): Promise<{ count: number; error: string } | null> {
+    const key = draftKeyFor(pr);
+    const unsaved = (draftReviews[key]?.comments ?? []).filter((c) => c.syncError);
+    if (unsaved.length === 0) return null;
+    const ids = unsaved.map((c) => c.id);
+    try {
+      await trackWrite(draftsApi.create(pr, unsaved.map(toDraftWrite)));
+      setSyncError(key, ids, undefined);
+      return null;
+    } catch (err) {
+      setSyncError(key, ids, errorText(err));
+      return { count: unsaved.length, error: errorText(err) };
+    }
+  }
+
+  function refreshSummary(): void {
+    summaryRequested = true;
+    track(
+      draftsApi
+        .summary()
+        .then((prs) => {
+          const next: Record<string, number> = {};
+          for (const p of prs) next[`${p.owner}/${p.name}#${p.number}`] = p.count;
+          draftSummary = next;
+        })
+        .catch(() => {}),
+    );
+  }
+
+  // forgetSummaryFor drops a PR's cached count after its drafts were
+  // published or cleared, and refetches if anything reads the summary.
+  function forgetSummaryFor(key: string): void {
+    if (key in draftSummary) {
+      const next = { ...draftSummary };
+      delete next[key];
+      draftSummary = next;
+    }
+    if (summaryRequested) refreshSummary();
   }
 
   function currentPRRef(): PRRef | null {
@@ -393,34 +487,63 @@ export function createDiffStore(opts: DiffStoreOptions) {
     draftSyncError = err instanceof Error ? err.message : String(err);
   }
 
+  // importLegacyEntry moves one PR's localStorage drafts to the server.
+  // Returns the part that must stay in localStorage for a later retry,
+  // or null when nothing is left. A PR the server no longer knows (404)
+  // is dropped; a batch rejected as invalid (400) is retried one draft
+  // at a time so only the invalid drafts are dropped.
+  async function importLegacyEntry(pr: PRRef, d: DraftReview): Promise<DraftReview | null> {
+    try {
+      if (d.comments.length > 0) await draftsApi.create(pr, d.comments.map(toDraftWrite));
+    } catch (err) {
+      if (err instanceof DraftApiError && err.status === 404) return null;
+      if (!(err instanceof DraftApiError && err.status === 400)) return d;
+      const kept: DraftComment[] = [];
+      for (const c of d.comments) {
+        try {
+          await draftsApi.create(pr, [toDraftWrite(c)]);
+        } catch (one) {
+          if (!(one instanceof DraftApiError && (one.status === 400 || one.status === 404))) kept.push(c);
+        }
+      }
+      if (kept.length > 0) return { ...d, comments: kept };
+    }
+    if (d.body || d.event !== "COMMENT") {
+      try {
+        await draftsApi.putMeta(pr, d.body, d.event);
+      } catch (err) {
+        if (!(err instanceof DraftApiError && (err.status === 400 || err.status === 404))) {
+          return { ...d, comments: [] };
+        }
+      }
+    }
+    return null;
+  }
+
   // One-time move of drafts written by older builds into the server.
-  // The key is removed only when every PR imported; the server ignores
-  // ids it already has, so a retry on the next load is safe.
+  // Each PR is removed from localStorage as soon as it imports, so a
+  // later retry never re-posts drafts the user has since deleted or
+  // published. The server ignores ids it already has.
   function importLegacyDrafts(): Promise<void> {
     if (importPromise) return importPromise;
     importPromise = track((async () => {
       const legacy = loadDraftReviews();
       const keys = Object.keys(legacy);
       if (keys.length === 0) return;
-      let allOk = true;
+      const remaining: Record<string, DraftReview> = {};
       for (const key of keys) {
         const pr = parseDraftKey(key);
-        const d = legacy[key]!;
         if (!pr) continue;
-        try {
-          if (d.comments.length > 0) await draftsApi.create(pr, d.comments.map(toDraftWrite));
-          if (d.body || d.event !== "COMMENT") await draftsApi.putMeta(pr, d.body, d.event);
-        } catch {
-          allOk = false;
-        }
+        const left = await importLegacyEntry(pr, legacy[key]!);
+        if (left) remaining[key] = left;
       }
-      if (allOk) {
-        try {
-          localStorage.removeItem("diff-draft-reviews");
-        } catch {
-          // storage unavailable; the import will just run again
-        }
-      } else {
+      try {
+        if (Object.keys(remaining).length === 0) localStorage.removeItem("diff-draft-reviews");
+        else localStorage.setItem("diff-draft-reviews", JSON.stringify(remaining));
+      } catch {
+        // storage unavailable; the import will just run again
+      }
+      if (Object.keys(remaining).length > 0) {
         draftSyncError = "Some drafts from this browser could not be imported; they will retry on reload";
       }
     })());
@@ -433,12 +556,20 @@ export function createDiffStore(opts: DiffStoreOptions) {
     return track((async () => {
       await importLegacyDrafts();
       try {
+        const seqAtStart = mutationSeq.get(key) ?? 0;
         const res = await draftsApi.list(pr);
         if (gen !== draftsGen) return;
+        if ((mutationSeq.get(key) ?? 0) !== seqAtStart) {
+          // The snapshot may predate a local delete or edit. Fetch again
+          // once those writes land, unless the user has moved on.
+          await whenWritesSettled();
+          if (gen === draftsGen) await loadDraftsFor(pr);
+          return;
+        }
         const server = res.drafts.filter((d) => d.state === "draft").map(fromServerDraft);
         const local = draftReviews[key]?.comments ?? [];
         const pendingLocal = local.filter(
-          (c) => pendingCreates.has(c.id) && !server.some((sd) => sd.id === c.id),
+          (c) => (pendingCreates.has(c.id) || c.syncError) && !server.some((sd) => sd.id === c.id),
         );
         // A summary/event edit not yet flushed is newer than what the
         // server has; keep it rather than clobbering the user's typing.
@@ -472,7 +603,7 @@ export function createDiffStore(opts: DiffStoreOptions) {
     metaPendingFor = null;
     if (!pr) return;
     const d = draftReviews[draftKeyFor(pr)] ?? emptyDraft();
-    track(draftsApi.putMeta(pr, d.body, d.event).catch(syncFailed));
+    trackWrite(draftsApi.putMeta(pr, d.body, d.event).catch(syncFailed));
   }
 
   function scheduleMeta(): void {
@@ -486,7 +617,8 @@ export function createDiffStore(opts: DiffStoreOptions) {
 
   function removeOnServer(pr: PRRef, ids: string[]): void {
     if (ids.length === 0) return;
-    track(
+    bumpDrafts(draftKeyFor(pr));
+    trackWrite(
       (async () => {
         await Promise.allSettled(ids.map((id) => pendingCreates.get(id) ?? Promise.resolve()));
         await draftsApi.remove(pr, ids);
@@ -1014,8 +1146,11 @@ export function createDiffStore(opts: DiffStoreOptions) {
     currentOwner = owner;
     currentName = name;
     currentNumber = number;
+    // Reload drafts even for the same PR: another tab, or a local
+    // worktree switching branches, may have changed what the server
+    // holds for it.
+    void loadDraftsFor({ owner, name, number });
     if (prChanged) {
-      void loadDraftsFor({ owner, name, number });
       scope = { kind: "head" };
       commits = null;
       commitsLoading = false;
@@ -1593,19 +1728,7 @@ export function createDiffStore(opts: DiffStoreOptions) {
     const key = `${owner}/${name}#${number}`;
     const d = draftReviews[key];
     if (d) return d.comments.length > 0;
-    if (draftSummary === null) {
-      draftSummary = {};
-      track(
-        draftsApi
-          .summary()
-          .then((prs) => {
-            const next: Record<string, number> = {};
-            for (const p of prs) next[`${p.owner}/${p.name}#${p.number}`] = p.count;
-            draftSummary = next;
-          })
-          .catch(() => {}),
-      );
-    }
+    if (!summaryRequested) refreshSummary();
     return (draftSummary[key] ?? 0) > 0;
   }
 
@@ -1621,6 +1744,15 @@ export function createDiffStore(opts: DiffStoreOptions) {
     if (!pr) return { ok: false, error: "No pull request selected" };
     flushMeta();
     await whenDraftsSettled();
+    const unsaved = await retryUnsaved(pr);
+    if (unsaved) {
+      return {
+        ok: false,
+        error:
+          `${unsaved.count} draft(s) could not be saved to the server (${unsaved.error}). ` +
+          "They are kept here; try publishing again.",
+      };
+    }
     try {
       await draftsApi.publish(pr, {
         event: req.event,
@@ -1630,7 +1762,7 @@ export function createDiffStore(opts: DiffStoreOptions) {
       const next = { ...draftReviews };
       delete next[draftKeyFor(pr)];
       draftReviews = next;
-      draftSummary = null;
+      forgetSummaryFor(draftKeyFor(pr));
       return { ok: true };
     } catch (err) {
       await reloadDrafts();
@@ -1643,6 +1775,7 @@ export function createDiffStore(opts: DiffStoreOptions) {
     const key = draftKey();
     const existing = draftReviews[key] ?? emptyDraft();
     draftReviews = { ...draftReviews, [key]: { ...existing, body } };
+    bumpDrafts(key);
     scheduleMeta();
   }
 
@@ -1651,6 +1784,7 @@ export function createDiffStore(opts: DiffStoreOptions) {
     const key = draftKey();
     const existing = draftReviews[key] ?? emptyDraft();
     draftReviews = { ...draftReviews, [key]: { ...existing, event } };
+    bumpDrafts(key);
     scheduleMeta();
   }
 
@@ -1673,12 +1807,14 @@ export function createDiffStore(opts: DiffStoreOptions) {
     };
     const pr = currentPRRef();
     if (pr) {
-      const p = track(draftsApi.create(pr, [toDraftWrite(comment)]));
+      bumpDrafts(key);
+      const p = trackWrite(draftsApi.create(pr, [toDraftWrite(comment)]));
       pendingCreates.set(comment.id, p);
       void p.then(
         () => pendingCreates.delete(comment.id),
         (err: unknown) => {
           pendingCreates.delete(comment.id);
+          setSyncError(key, [comment.id], errorText(err));
           syncFailed(err);
         },
       );
@@ -1726,9 +1862,13 @@ export function createDiffStore(opts: DiffStoreOptions) {
     };
     const pr = currentPRRef();
     if (pr) {
-      track(
+      bumpDrafts(key);
+      trackWrite(
         (async () => {
           await (pendingCreates.get(id) ?? Promise.resolve()).catch(() => {});
+          // An unsaved draft has no server row to PATCH; its latest
+          // body goes out with the retry create before publish.
+          if (draftReviews[key]?.comments.find((c) => c.id === id)?.syncError) return;
           await draftsApi.updateBody(pr, id, trimmed);
         })().catch(syncFailed),
       );
@@ -1764,14 +1904,14 @@ export function createDiffStore(opts: DiffStoreOptions) {
     const next = { ...draftReviews };
     delete next[key];
     draftReviews = next;
-    draftSummary = null;
+    forgetSummaryFor(key);
     const pr = currentPRRef();
     if (!pr) return;
     removeOnServer(pr, ids);
     if (metaTimer) clearTimeout(metaTimer);
     metaTimer = null;
     metaPendingFor = null;
-    track(draftsApi.putMeta(pr, "", "").catch(syncFailed));
+    trackWrite(draftsApi.putMeta(pr, "", "").catch(syncFailed));
   }
 
   function clearDraftCommentsForPath(path: string): void {

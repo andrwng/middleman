@@ -163,7 +163,11 @@
       title="Double-click to edit"
     >{comment.body}</div>
   {/if}
-  {#if comment.submitError}
+  {#if comment.syncError}
+    <p class="pending__submit-error" role="alert">
+      Not saved to the server: {comment.syncError}. Kept here; it is saved again when you publish.
+    </p>
+  {:else if comment.submitError}
     <p class="pending__submit-error" role="alert">{comment.submitError}</p>
   {/if}
 </div>

@@ -32,4 +32,13 @@ describe("PendingCommentCard publish error", () => {
     });
     expect(queryByRole("alert")).toBeNull();
   });
+
+  it("flags a draft the server has not saved", () => {
+    const { getByRole } = render(PendingCommentCard, {
+      props: { comment: { ...base, syncError: "database is locked" }, currentHeadSha: "abc", ondelete: vi.fn() },
+    });
+    const alert = getByRole("alert");
+    expect(alert.textContent).toContain("Not saved");
+    expect(alert.textContent).toContain("database is locked");
+  });
 });
