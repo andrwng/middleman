@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/wesm/middleman/internal/gitenv"
 )
 
 // SnapshotRef is the ref that keeps a local review run's snapshot commit
@@ -29,7 +31,7 @@ func SnapshotWorkingTree(ctx context.Context, worktreePath string, runID int64) 
 	_ = os.Remove(idxPath) // git wants to create the index itself
 	defer func() { _ = os.Remove(idxPath) }()
 
-	env := append(os.Environ(),
+	env := append(gitenv.StripAll(os.Environ()),
 		"GIT_INDEX_FILE="+idxPath,
 		"GIT_AUTHOR_NAME=middleman", "GIT_AUTHOR_EMAIL=middleman@localhost",
 		"GIT_COMMITTER_NAME=middleman", "GIT_COMMITTER_EMAIL=middleman@localhost",
@@ -72,6 +74,7 @@ func SnapshotWorkingTree(ctx context.Context, worktreePath string, runID int64) 
 func DeleteSnapshotRef(ctx context.Context, worktreePath string, runID int64) error {
 	cmd := exec.CommandContext(ctx, "git", "update-ref", "-d", SnapshotRef(runID))
 	cmd.Dir = worktreePath
+	cmd.Env = gitenv.StripAll(os.Environ())
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git update-ref -d: %w: %s", err, strings.TrimSpace(string(out)))
 	}
