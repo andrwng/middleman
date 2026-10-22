@@ -821,6 +821,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/repos/{owner}/{name}/pulls/{number}/review-drafts/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post repos by owner by name pulls by number review drafts publish */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-review-drafts-publish"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/repos/{owner}/{name}/pulls/{number}/review-drafts/{draft_id}": {
         parameters: {
             query?: never;
@@ -2488,6 +2505,33 @@ export interface components {
             content: string;
             /** @description UTC RFC3339 timestamp of last save (empty when never saved) */
             updated_at?: string;
+        };
+        PublishReviewDraftsInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/PublishReviewDraftsInputBody.json
+             */
+            readonly $schema?: string;
+            /** @description Optional top-level review body */
+            body?: string;
+            /** @description PR head SHA; fallback anchor for drafts without one */
+            commit_id?: string;
+            /** @description APPROVE, REQUEST_CHANGES, or COMMENT */
+            event: string;
+        };
+        PublishReviewDraftsOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/PublishReviewDraftsOutputBody.json
+             */
+            readonly $schema?: string;
+            /** Format: int64 */
+            published: number;
+            /** Format: int64 */
+            review_id: number;
+            state: string;
         };
         PutCodeBrowserStateInputBody: {
             /**
@@ -5285,6 +5329,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeleteReviewDraftsOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-review-drafts-publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PublishReviewDraftsInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublishReviewDraftsOutputBody"];
                 };
             };
             /** @description Error */

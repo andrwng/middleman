@@ -123,6 +123,7 @@ func (s *Server) registerReviewDraftRoutes(api huma.API) {
 	huma.Patch(api, "/repos/{owner}/{name}/pulls/{number}/review-drafts/{draft_id}", s.updateReviewDraft)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review-drafts/delete", s.deleteReviewDrafts)
 	huma.Put(api, "/repos/{owner}/{name}/pulls/{number}/review-draft-meta", s.putReviewDraftMeta)
+	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review-drafts/publish", s.publishReviewDrafts)
 	huma.Get(api, "/review-drafts/summary", s.reviewDraftSummary)
 }
 
@@ -315,6 +316,103 @@ func (s *Server) reviewDraftSummary(ctx context.Context, _ *struct{}) (*reviewDr
 	out.Body.PRs = make([]reviewDraftSummaryItem, 0, len(counts))
 	for _, c := range counts {
 		out.Body.PRs = append(out.Body.PRs, reviewDraftSummaryItem{Owner: c.Owner, Name: c.Name, Number: c.Number, Count: c.Count})
+	}
+	return out, nil
+}
+
+type publishReviewDraftsInput struct {
+	Owner  string `path:"owner"`
+	Name   string `path:"name"`
+	Number int    `path:"number"`
+	Body   struct {
+		Event    string `json:"event"               doc:"APPROVE, REQUEST_CHANGES, or COMMENT"`
+		Body     string `json:"body,omitempty"      doc:"Optional top-level review body"`
+		CommitID string `json:"commit_id,omitempty" doc:"PR head SHA; fallback anchor for drafts without one"`
+	}
+}
+
+type publishReviewDraftsOutput struct {
+	Body struct {
+		ReviewID  int64  `json:"review_id"`
+		State     string `json:"state"`
+		Published int    `json:"published"`
+	}
+}
+
+func draftToSubmitComment(d db.ReviewDraft) submitReviewComment {
+	c := submitReviewComment{Path: d.Path, Line: d.Line, Side: d.Side, Body: d.Body, CommitID: d.CommitSHA}
+	if d.StartLine != nil {
+		c.StartLine = *d.StartLine
+	}
+	if d.InReplyTo != nil {
+		c.InReplyTo = *d.InReplyTo
+	}
+	return c
+}
+
+// publishReviewDrafts posts the PR's state='draft' rows to GitHub,
+// oldest first. Each draft is deleted as soon as GitHub accepts it, so
+// a failure part-way leaves only the unposted drafts, the failing one
+// carrying submit_error; a retry posts only what is left. The review
+// wrapper goes out only after every draft succeeded.
+func (s *Server) publishReviewDrafts(ctx context.Context, input *publishReviewDraftsInput) (*publishReviewDraftsOutput, error) {
+	if isLocalSource(input.Owner) {
+		return nil, huma.Error400BadRequest("local drafts publish as review threads")
+	}
+	switch input.Body.Event {
+	case "APPROVE", "REQUEST_CHANGES", "COMMENT":
+	default:
+		return nil, huma.Error400BadRequest("event must be APPROVE, REQUEST_CHANGES, or COMMENT")
+	}
+	mrID, branch, err := s.resolveDraftScope(ctx, input.Owner, input.Name, input.Number)
+	if err != nil {
+		return nil, huma.Error404NotFound("pull request not found")
+	}
+	client, err := s.syncer.ClientForRepo(input.Owner, input.Name)
+	if err != nil {
+		return nil, huma.Error404NotFound(err.Error())
+	}
+	rows, err := s.db.ListReviewDrafts(ctx, mrID, branch)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("list review drafts: " + err.Error())
+	}
+	drafts := make([]db.ReviewDraft, 0, len(rows))
+	comments := make([]submitReviewComment, 0, len(rows))
+	for _, r := range rows {
+		if r.State != "draft" {
+			continue
+		}
+		drafts = append(drafts, r)
+		comments = append(comments, draftToSubmitComment(r))
+	}
+	if input.Body.Event == "REQUEST_CHANGES" && strings.TrimSpace(input.Body.Body) == "" && len(comments) == 0 {
+		return nil, huma.Error400BadRequest("REQUEST_CHANGES requires a review body or at least one inline comment")
+	}
+	preps, err := prepareReviewComments(comments, input.Body.CommitID)
+	if err != nil {
+		return nil, err
+	}
+	for i, p := range preps {
+		if err := s.postPreparedComment(ctx, client, input.Owner, input.Name, input.Number, mrID, p); err != nil {
+			herr := translateCreateError(err, input.Owner, input.Name, input.Number, &p, i)
+			_ = s.db.SetReviewDraftSubmitError(ctx, drafts[i].ID, herr.Error())
+			return nil, herr
+		}
+		if _, err := s.db.DeleteReviewDrafts(ctx, mrID, branch, []string{drafts[i].ID}); err != nil {
+			return nil, huma.Error500InternalServerError("comment posted but draft not cleared: " + err.Error())
+		}
+	}
+	review, err := s.postReviewWrapper(ctx, client, input.Owner, input.Name, input.Number,
+		input.Body.Event, input.Body.Body, input.Body.CommitID)
+	if err != nil {
+		return nil, err
+	}
+	_ = s.db.DeleteReviewDraftMeta(ctx, mrID, branch)
+	out := &publishReviewDraftsOutput{}
+	out.Body.Published = len(preps)
+	if review != nil {
+		out.Body.ReviewID = review.GetID()
+		out.Body.State = review.GetState()
 	}
 	return out, nil
 }

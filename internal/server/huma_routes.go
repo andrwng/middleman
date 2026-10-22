@@ -1221,11 +1221,49 @@ func (s *Server) submitReview(ctx context.Context, input *submitReviewInput) (*s
 		return nil, huma.Error400BadRequest("REQUEST_CHANGES requires a review body or at least one inline comment")
 	}
 
-	// Validate and normalize every comment before any network call so
-	// partial failures are easier to reason about — invalid inputs
-	// fail fast and don't leave a half-published review.
-	preps := make([]preparedComment, 0, len(input.Body.Comments))
-	for i, c := range input.Body.Comments {
+	preps, err := prepareReviewComments(input.Body.Comments, input.Body.CommitID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Phase 1: post each inline comment with its own commit_id. A
+	// failure on any single comment aborts — partial publishes are
+	// confusing, and the client can retry after the reviewer deletes
+	// the bad draft. The MR id is only used to resolve reply targets;
+	// a PR missing from the DB just skips that resolution.
+	var mrID int64
+	if id, lerr := s.lookupMRID(ctx, repoNumberPathRef{
+		owner: input.Owner, name: input.Name, number: input.Number,
+	}); lerr == nil {
+		mrID = id
+	}
+	for posted, p := range preps {
+		if err := s.postPreparedComment(ctx, client, input.Owner, input.Name, input.Number, mrID, p); err != nil {
+			return nil, translateCreateError(err, input.Owner, input.Name, input.Number, &p, posted)
+		}
+	}
+
+	review, err := s.postReviewWrapper(ctx, client, input.Owner, input.Name, input.Number,
+		input.Body.Event, input.Body.Body, input.Body.CommitID)
+	if err != nil {
+		return nil, err
+	}
+
+	out := submitReviewResponseBody{}
+	if review != nil {
+		out.ReviewID = review.GetID()
+		out.State = review.GetState()
+	}
+	return &submitReviewOutput{Body: out}, nil
+}
+
+// prepareReviewComments validates and normalizes every comment before
+// any network call so invalid inputs fail fast and don't leave a
+// half-published review. The result is index-aligned with comments.
+// Errors are huma 400s.
+func prepareReviewComments(comments []submitReviewComment, fallbackSHA string) ([]preparedComment, error) {
+	preps := make([]preparedComment, 0, len(comments))
+	for i, c := range comments {
 		if strings.TrimSpace(c.Body) == "" {
 			return nil, huma.Error400BadRequest(fmt.Sprintf("comment[%d]: body is required", i))
 		}
@@ -1251,103 +1289,77 @@ func (s *Server) submitReview(ctx context.Context, input *submitReviewInput) (*s
 		}
 		sha := c.CommitID
 		if sha == "" {
-			sha = input.Body.CommitID // review-level fallback
+			sha = fallbackSHA // review-level fallback
 		}
 		if sha == "" {
 			return nil, huma.Error400BadRequest(fmt.Sprintf("comment[%d]: commit_id is required (either per-comment or review-level)", i))
 		}
 		preps = append(preps, preparedComment{in: c, side: side, sha: sha, index: i})
 	}
+	return preps, nil
+}
 
-	// Phase 1: post each inline comment with its own commit_id. A
-	// failure on any single comment aborts — partial publishes are
-	// confusing, and the client can retry after the reviewer deletes
-	// the bad draft.
-	// Resolve reply targets to their thread roots. GitHub's dedicated
-	// /pulls/{n}/comments/{id}/replies endpoint 404s unless {id} is
-	// itself a root comment, so replying to a mid-thread reply fails
-	// if we pass the target id through unchanged.
-	var mrIDForReplyResolve int64
-	hasReply := false
-	for _, p := range preps {
-		if p.in.InReplyTo > 0 {
-			hasReply = true
-			break
+// postPreparedComment posts one inline comment or reply. Reply targets
+// are resolved to their thread roots when mrID is known: GitHub's
+// /pulls/{n}/comments/{id}/replies endpoint 404s unless {id} is itself
+// a root comment, so replying to a mid-thread reply fails if we pass
+// the target id through unchanged.
+func (s *Server) postPreparedComment(
+	ctx context.Context, client ghclient.Client,
+	owner, name string, number int, mrID int64, p preparedComment,
+) error {
+	inReplyTo := p.in.InReplyTo
+	if inReplyTo > 0 && mrID != 0 {
+		if root, rerr := s.db.ResolveReviewCommentRootID(ctx, mrID, inReplyTo); rerr == nil && root > 0 {
+			inReplyTo = root
 		}
 	}
-	if hasReply {
-		id, err := s.lookupMRID(ctx, repoNumberPathRef{
-			owner: input.Owner, name: input.Name, number: input.Number,
-		})
-		if err == nil {
-			mrIDForReplyResolve = id
-		}
-	}
+	_, err := client.CreateInlineComment(ctx, owner, name, number, ghclient.InlineCommentOpts{
+		CommitID:  p.sha,
+		Path:      p.in.Path,
+		Body:      p.in.Body,
+		Line:      p.in.Line,
+		Side:      p.side,
+		StartLine: p.in.StartLine,
+		StartSide: p.side,
+		InReplyTo: inReplyTo,
+	})
+	return err
+}
 
-	postedIDs := make([]int64, 0, len(preps))
-	for _, p := range preps {
-		inReplyTo := p.in.InReplyTo
-		if inReplyTo > 0 && mrIDForReplyResolve != 0 {
-			if root, rerr := s.db.ResolveReviewCommentRootID(ctx, mrIDForReplyResolve, inReplyTo); rerr == nil && root > 0 {
-				inReplyTo = root
-			}
-		}
-		_, err := client.CreateInlineComment(ctx, input.Owner, input.Name, input.Number, ghclient.InlineCommentOpts{
-			CommitID:  p.sha,
-			Path:      p.in.Path,
-			Body:      p.in.Body,
-			Line:      p.in.Line,
-			Side:      p.side,
-			StartLine: p.in.StartLine,
-			StartSide: p.side,
-			InReplyTo: inReplyTo,
-		})
-		if err != nil {
-			return nil, translateCreateError(err, input, &p, len(postedIDs))
-		}
+// postReviewWrapper posts the review verdict + summary if it carries
+// meaningful content. Approve/Request-Changes always publish; a bare
+// "COMMENT" event with no body gets skipped (nil review) since the
+// inline comments are enough. The review is persisted as an event so
+// it shows up in the timeline without waiting for the next sync;
+// inline comments land via the review_comment sync path.
+func (s *Server) postReviewWrapper(
+	ctx context.Context, client ghclient.Client,
+	owner, name string, number int, event, body, commitID string,
+) (*gh.PullRequestReview, error) {
+	if event == "COMMENT" && strings.TrimSpace(body) == "" {
+		return nil, nil
 	}
-
-	// Phase 2: post the review wrapper (verdict + summary) if it
-	// carries meaningful content. Approve/Request-Changes always
-	// publish; a bare "COMMENT" event with no body and no user-level
-	// commentary gets skipped since the inline comments above are
-	// enough.
-	var review *gh.PullRequestReview
-	wrapperNeeded := input.Body.Event != "COMMENT" || strings.TrimSpace(input.Body.Body) != ""
-	if wrapperNeeded {
-		review, err = client.CreateReview(ctx, input.Owner, input.Name, input.Number, ghclient.CreateReviewOpts{
-			Event:    input.Body.Event,
-			Body:     input.Body.Body,
-			CommitID: input.Body.CommitID,
-		})
-		if err != nil {
-			if strings.Contains(err.Error(), "one pending review per pull request") {
-				prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", input.Owner, input.Name, input.Number)
-				return nil, huma.Error409Conflict(
-					"You already have a pending review on this PR. Cancel or submit it on GitHub before trying again: " + prURL,
-				)
-			}
-			return nil, huma.Error502BadGateway("submit review wrapper: " + err.Error())
+	review, err := client.CreateReview(ctx, owner, name, number, ghclient.CreateReviewOpts{
+		Event:    event,
+		Body:     body,
+		CommitID: commitID,
+	})
+	if err != nil {
+		if strings.Contains(err.Error(), "one pending review per pull request") {
+			prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, name, number)
+			return nil, huma.Error409Conflict(
+				"You already have a pending review on this PR. Cancel or submit it on GitHub before trying again: " + prURL,
+			)
 		}
+		return nil, huma.Error502BadGateway("submit review wrapper: " + err.Error())
 	}
-
-	// Persist the review body as an event so it shows up in the timeline
-	// without waiting for the next sync cycle. Inline comments land via
-	// the review_comment sync path on the next refresh.
-	if review != nil {
-		ref := repoNumberPathRef{owner: input.Owner, name: input.Name, number: input.Number}
-		if mrID, lookupErr := s.lookupMRID(ctx, ref); lookupErr == nil {
-			event := ghclient.NormalizeReviewEvent(mrID, review)
-			_ = s.db.UpsertMREvents(ctx, []db.MREvent{event})
-		}
+	ref := repoNumberPathRef{owner: owner, name: name, number: number}
+	if mrID, lookupErr := s.lookupMRID(ctx, ref); lookupErr == nil {
+		ev := ghclient.NormalizeReviewEvent(mrID, review)
+		_ = s.db.UpsertMREvents(ctx, []db.MREvent{ev})
 	}
-
-	out := submitReviewResponseBody{}
-	if review != nil {
-		out.ReviewID = review.GetID()
-		out.State = review.GetState()
-	}
-	return &submitReviewOutput{Body: out}, nil
+	return review, nil
 }
 
 // preparedComment is a validated, normalised draft waiting to be
@@ -1362,10 +1374,10 @@ type preparedComment struct {
 
 // translateCreateError wraps the individual-comment failure with
 // guidance the UI can render inline in the review panel.
-func translateCreateError(err error, input *submitReviewInput, failing *preparedComment, postedSoFar int) error {
+func translateCreateError(err error, owner, name string, number int, failing *preparedComment, postedSoFar int) error {
 	msg := err.Error()
 	if strings.Contains(msg, "one pending review per pull request") {
-		prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", input.Owner, input.Name, input.Number)
+		prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, name, number)
 		return huma.Error409Conflict(
 			"You already have a pending review on this PR. Cancel or submit it on GitHub before trying again: " + prURL,
 		)
