@@ -13,6 +13,7 @@ import (
 
 	"github.com/wesm/middleman/internal/aireview"
 	"github.com/wesm/middleman/internal/db"
+	"github.com/wesm/middleman/internal/gitclone"
 )
 
 const reviewInstructionsMaxBytes = 8192
@@ -166,6 +167,9 @@ func (s *Server) startAIReviewRun(ctx context.Context, input *startAIReviewRunIn
 	}
 	if gitLog != "" {
 		pc.WriteString("\nCommit log (oldest first):\n" + gitLog + "\n")
+	}
+	if diff, err := s.clones.Diff(ctx, host, input.Owner, input.Name, shas.MergeBaseSHA, shas.DiffHeadSHA, false); err == nil {
+		pc.WriteString(changedFilesContext(diff.Files))
 	}
 	pc.WriteString(s.reviewCommentsContext(ctx, mrID))
 
@@ -335,4 +339,37 @@ func (s *Server) discardReviewDraft(ctx context.Context, input *draftTransitionI
 }
 func (s *Server) restoreReviewDraft(ctx context.Context, input *draftTransitionInput) (*reviewDraftOutput, error) {
 	return s.transitionDraft(ctx, input, s.db.RestoreReviewDraft)
+}
+
+// maxPromptFiles caps the changed-file listing so a huge PR does not
+// blow up the prompt; Claude can still find the rest by reading.
+const maxPromptFiles = 200
+
+// changedFilesContext lists the PR's files with the line ranges a review
+// comment can anchor to. Bash is unavailable to Claude, so without this
+// it would have to guess anchors from per-commit diffs.
+func changedFilesContext(files []gitclone.DiffFile) string {
+	if len(files) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\nChanged files (status, path, commentable new-side lines / old-side lines):\n")
+	for i := range files {
+		if i == maxPromptFiles {
+			fmt.Fprintf(&b, "- ... %d more files not listed\n", len(files)-maxPromptFiles)
+			break
+		}
+		f := &files[i]
+		fmt.Fprintf(&b, "- %s %s", f.Status, f.Path)
+		if f.OldPath != "" && f.OldPath != f.Path {
+			fmt.Fprintf(&b, " (from %s)", f.OldPath)
+		}
+		if f.IsBinary {
+			b.WriteString("; binary, not commentable\n")
+			continue
+		}
+		fmt.Fprintf(&b, "; commentable new-side lines: %s; old-side lines: %s\n",
+			describeRanges(f, "RIGHT"), describeRanges(f, "LEFT"))
+	}
+	return b.String()
 }

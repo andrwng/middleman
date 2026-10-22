@@ -103,6 +103,10 @@ func TestAPIReviewRunLifecycle(t *testing.T) {
 	require.NoError(err)
 	assert.Contains(string(args), "mcp__middleman__propose_comment")
 	assert.Contains(string(args), instr)
+	// The prompt lists the changed files and where comments can anchor.
+	assert.Contains(string(args), "Changed files")
+	assert.Contains(string(args), "internal/handler.go")
+	assert.Contains(string(args), "commentable new-side lines")
 
 	// Proposals after the run finished are rejected.
 	path, line := firstAddedLine(t, client)
