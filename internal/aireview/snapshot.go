@@ -99,4 +99,3 @@ func (r *Runner) SweepLocalRunCheckouts(ctx context.Context) error {
 	}
 	return nil
 }
-

@@ -283,4 +283,3 @@ func (d *DB) ListFinishedLocalRuns(ctx context.Context) ([]AIReviewRun, error) {
 		  WHERE local_worktree_path != '' AND status NOT IN ('queued', 'running')
 		  ORDER BY id`)
 }
-
