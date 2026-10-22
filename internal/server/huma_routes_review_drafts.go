@@ -392,13 +392,16 @@ func (s *Server) publishReviewDrafts(ctx context.Context, input *publishReviewDr
 	if err != nil {
 		return nil, err
 	}
+	// Bookkeeping must survive the client going away: a comment GitHub
+	// accepted but whose draft row stayed would be posted again on retry.
+	dbCtx := context.WithoutCancel(ctx)
 	for i, p := range preps {
 		if err := s.postPreparedComment(ctx, client, input.Owner, input.Name, input.Number, mrID, p); err != nil {
 			herr := translateCreateError(err, input.Owner, input.Name, input.Number, &p, i)
-			_ = s.db.SetReviewDraftSubmitError(ctx, drafts[i].ID, herr.Error())
+			_ = s.db.SetReviewDraftSubmitError(dbCtx, drafts[i].ID, herr.Error())
 			return nil, herr
 		}
-		if _, err := s.db.DeleteReviewDrafts(ctx, mrID, branch, []string{drafts[i].ID}); err != nil {
+		if _, err := s.db.DeleteReviewDrafts(dbCtx, mrID, branch, []string{drafts[i].ID}); err != nil {
 			return nil, huma.Error500InternalServerError("comment posted but draft not cleared: " + err.Error())
 		}
 	}
@@ -407,7 +410,7 @@ func (s *Server) publishReviewDrafts(ctx context.Context, input *publishReviewDr
 	if err != nil {
 		return nil, err
 	}
-	_ = s.db.DeleteReviewDraftMeta(ctx, mrID, branch)
+	_ = s.db.DeleteReviewDraftMeta(dbCtx, mrID, branch)
 	out := &publishReviewDraftsOutput{}
 	out.Body.Published = len(preps)
 	if review != nil {

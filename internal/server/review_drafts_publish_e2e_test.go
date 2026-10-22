@@ -119,3 +119,27 @@ func TestAPIPublishReviewDrafts_RejectsLocalAndBadEvent(t *testing.T) {
 		})
 	}
 }
+
+func TestAPIPublishReviewDrafts_ClientDisconnectStillClearsPosted(t *testing.T) {
+	require := require.New(t)
+	mock := &mockGH{}
+	srv, database := setupTestServerWithMock(t, mock)
+	client := setupTestClient(t, srv)
+	seedPR(t, database, "acme", "widget", 1)
+	seedDrafts(t, client, "p-1")
+
+	// The client goes away right after GitHub accepted the comment. The
+	// draft must still be cleared, or a retry would post it twice.
+	ctx, cancel := context.WithCancel(context.Background())
+	mock.createInlineCommentFn = func(_ context.Context, _, _ string, _ int, _ ghclient.InlineCommentOpts) (*gh.PullRequestComment, error) {
+		cancel()
+		id := int64(1)
+		return &gh.PullRequestComment{ID: &id}, nil
+	}
+	_, _ = client.HTTP.PostReposByOwnerByNamePullsByNumberReviewDraftsPublishWithResponse(ctx, "acme", "widget", 1,
+		generated.PublishReviewDraftsInputBody{Event: "COMMENT"})
+
+	list, err := client.HTTP.GetReposByOwnerByNamePullsByNumberReviewDraftsWithResponse(context.Background(), "acme", "widget", 1)
+	require.NoError(err)
+	require.Empty(*list.JSON200.Drafts)
+}
