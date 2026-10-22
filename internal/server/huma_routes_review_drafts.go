@@ -41,6 +41,8 @@ type reviewDraftResponse struct {
 	Body        string `json:"body"`
 	Origin      string `json:"origin"`
 	State       string `json:"state"`
+	RunID       *int64 `json:"run_id,omitempty"`
+	Rationale   string `json:"rationale,omitempty"`
 	SubmitError string `json:"submit_error,omitempty"`
 	CreatedAt   string `json:"created_at"`
 	UpdatedAt   string `json:"updated_at"`
@@ -125,6 +127,7 @@ func (s *Server) registerReviewDraftRoutes(api huma.API) {
 	huma.Put(api, "/repos/{owner}/{name}/pulls/{number}/review-draft-meta", s.putReviewDraftMeta)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review-drafts/publish", s.publishReviewDrafts)
 	huma.Get(api, "/review-drafts/summary", s.reviewDraftSummary)
+	s.registerAIReviewRunRoutes(api)
 }
 
 // resolveDraftScope maps a PR-shaped path to (mrID, branch). branch is
@@ -151,7 +154,7 @@ func toReviewDraftResponse(r db.ReviewDraft) reviewDraftResponse {
 	return reviewDraftResponse{
 		ID: r.ID, Path: r.Path, Side: r.Side, Line: r.Line, StartLine: r.StartLine,
 		CommitSHA: r.CommitSHA, InReplyTo: r.InReplyTo, Body: r.Body,
-		Origin: r.Origin, State: r.State, SubmitError: r.SubmitError,
+		Origin: r.Origin, State: r.State, RunID: r.RunID, SubmitError: r.SubmitError,
 		CreatedAt: r.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt: r.UpdatedAt.UTC().Format(time.RFC3339),
 	}
@@ -166,10 +169,16 @@ func (s *Server) loadReviewDrafts(ctx context.Context, mrID int64, branch string
 	if err != nil {
 		return nil, huma.Error500InternalServerError("load review draft meta: " + err.Error())
 	}
+	rationales, err := s.db.ListDraftRationales(ctx, mrID, branch)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("load draft rationales: " + err.Error())
+	}
 	out := &reviewDraftsOutput{}
 	out.Body.Drafts = make([]reviewDraftResponse, 0, len(rows))
 	for _, r := range rows {
-		out.Body.Drafts = append(out.Body.Drafts, toReviewDraftResponse(r))
+		resp := toReviewDraftResponse(r)
+		resp.Rationale = rationales[r.ID]
+		out.Body.Drafts = append(out.Body.Drafts, resp)
 	}
 	out.Body.Meta = reviewDraftMetaResponse{Body: meta.Body, Event: meta.Event}
 	return out, nil

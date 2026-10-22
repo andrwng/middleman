@@ -327,6 +327,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/repos/{owner}/{name}/pulls/{number}/ai-review-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post repos by owner by name pulls by number ai review runs */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-ai-review-runs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{owner}/{name}/pulls/{number}/ai-review-runs/latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get repos by owner by name pulls by number ai review runs latest */
+        get: operations["get-repos-by-owner-by-name-pulls-by-number-ai-review-runs-latest"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{owner}/{name}/pulls/{number}/ai-review-runs/{run_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post repos by owner by name pulls by number ai review runs by run ID cancel */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-ai-review-runs-by-run-id-cancel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{owner}/{name}/pulls/{number}/ai-review-runs/{run_id}/proposals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post repos by owner by name pulls by number ai review runs by run ID proposals */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-ai-review-runs-by-run-id-proposals"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/repos/{owner}/{name}/pulls/{number}/ai-threads": {
         parameters: {
             query?: never;
@@ -853,6 +921,57 @@ export interface paths {
         head?: never;
         /** Patch repos by owner by name pulls by number review drafts by draft ID */
         patch: operations["patch-repos-by-owner-by-name-pulls-by-number-review-drafts-by-draft-id"];
+        trace?: never;
+    };
+    "/repos/{owner}/{name}/pulls/{number}/review-drafts/{draft_id}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post repos by owner by name pulls by number review drafts by draft ID accept */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-review-drafts-by-draft-id-accept"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{owner}/{name}/pulls/{number}/review-drafts/{draft_id}/discard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post repos by owner by name pulls by number review drafts by draft ID discard */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-review-drafts-by-draft-id-discard"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{owner}/{name}/pulls/{number}/review-drafts/{draft_id}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post repos by owner by name pulls by number review drafts by draft ID restore */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-review-drafts-by-draft-id-restore"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/repos/{owner}/{name}/pulls/{number}/review-threads": {
@@ -1577,6 +1696,27 @@ export interface components {
             /** Format: int64 */
             thread_id: number;
         };
+        AiReviewRunResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/AiReviewRunResponse.json
+             */
+            readonly $schema?: string;
+            completed_at?: string;
+            created_at: string;
+            error?: string;
+            head_sha: string;
+            /** Format: int64 */
+            id: number;
+            instructions: string;
+            raw_json: string;
+            started_at?: string;
+            status: string;
+            /** Format: int64 */
+            suggestion_count: number;
+            summary: string;
+        };
         AiSessionBrief: {
             created_at: string;
             depth: string;
@@ -2218,6 +2358,15 @@ export interface components {
             is_default: boolean;
             name: string;
         };
+        LatestAIReviewRunOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/LatestAIReviewRunOutputBody.json
+             */
+            readonly $schema?: string;
+            run: components["schemas"]["AiReviewRunResponse"];
+        };
         Line: {
             content: string;
             /** Format: int64 */
@@ -2506,6 +2655,22 @@ export interface components {
             /** @description UTC RFC3339 timestamp of last save (empty when never saved) */
             updated_at?: string;
         };
+        ProposeCommentInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/ProposeCommentInputBody.json
+             */
+            readonly $schema?: string;
+            body: string;
+            /** Format: int64 */
+            line: number;
+            path: string;
+            rationale: string;
+            side: string;
+            /** Format: int64 */
+            start_line?: number;
+        };
         PublishReviewDraftsInputBody: {
             /**
              * Format: uri
@@ -2767,6 +2932,9 @@ export interface components {
             line: number;
             origin: string;
             path: string;
+            rationale?: string;
+            /** Format: int64 */
+            run_id?: number;
             side: string;
             /** Format: int64 */
             start_line?: number;
@@ -2958,6 +3126,16 @@ export interface components {
             /** Format: int64 */
             number: number;
             owner: string;
+        };
+        StartAIReviewRunInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/StartAIReviewRunInputBody.json
+             */
+            readonly $schema?: string;
+            /** @description Optional reviewer instructions for Claude */
+            instructions?: string;
         };
         SubmitReviewComment: {
             /** @description Comment body (markdown) */
@@ -4011,6 +4189,148 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-ai-review-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartAIReviewRunInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiReviewRunResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-repos-by-owner-by-name-pulls-by-number-ai-review-runs-latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LatestAIReviewRunOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-ai-review-runs-by-run-id-cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+                run_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiReviewRunResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-ai-review-runs-by-run-id-proposals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+                run_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProposeCommentInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewDraftResponse"];
+                };
             };
             /** @description Error */
             default: {
@@ -5396,6 +5716,108 @@ export interface operations {
                 "application/json": components["schemas"]["UpdateReviewDraftInputBody"];
             };
         };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewDraftResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-review-drafts-by-draft-id-accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+                draft_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewDraftResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-review-drafts-by-draft-id-discard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+                draft_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewDraftResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-review-drafts-by-draft-id-restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+                draft_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description OK */
             200: {
