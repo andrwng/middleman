@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getClient, getStores } from "../../context.js";
+  import { getStores } from "../../context.js";
   import type { ReviewEvent } from "../../stores/diff.svelte.js";
   import { jumpToDraft } from "./jumpToDraft.js";
 
@@ -14,7 +14,6 @@
   const { owner, name, number, scopePath, onclose }: Props = $props();
 
   const { diff: diffStore, pulls: pullsStore, reviewThreads: reviewThreadsStore } = getStores();
-  const client = getClient();
 
   // For local worktrees the submit verb sends review feedback to
   // the interactive Claude session instead of POSTing to GitHub.
@@ -73,12 +72,11 @@
     diffStore.setDraftEvent(e);
   }
 
-  // Publish. Each inline comment carries the commit SHA it was
-  // drafted against so the backend can POST each one individually —
-  // reviewers drafting commit-by-commit don't have to worry about
-  // everything getting anchored to HEAD at publish time. The
-  // review-level commit_id is still sent as a fallback used when a
-  // comment has no commit_sha of its own.
+  // Publish. The server reads the drafts it stores for this PR and
+  // posts each inline comment with the commit SHA it was drafted
+  // against, so reviewers drafting commit-by-commit don't have to
+  // worry about everything getting anchored to HEAD. The review-level
+  // commit_id is sent as a fallback for drafts without their own.
   async function onSubmit(): Promise<void> {
     if (submitting) return;
     submitting = true;
@@ -126,52 +124,21 @@
     const commits = diffStore.getCommits();
     const headSha = commits && commits.length > 0 ? commits[0]!.sha : "";
 
-    const commentsBody = draft.comments.map((c) => {
-      // Replies inherit path/line/side/commit_id from the parent
-      // thread — send only the body and in_reply_to so the backend
-      // can route through GitHub's replies endpoint.
-      if (c.inReplyTo != null && c.inReplyTo > 0) {
-        return { body: c.body, in_reply_to: c.inReplyTo };
-      }
-      return {
-        path: c.path,
-        line: c.line,
-        side: c.side,
-        ...(c.startLine != null ? { start_line: c.startLine } : {}),
-        body: c.body,
-        ...(c.commitSha ? { commit_id: c.commitSha } : {}),
-      };
-    });
-
     try {
-      const { data, error } = await client.POST(
-        "/repos/{owner}/{name}/pulls/{number}/review",
-        {
-          params: { path: { owner, name, number } },
-          body: {
-            event: draft.event,
-            body: draft.body || "",
-            ...(headSha ? { commit_id: headSha } : {}),
-            comments: commentsBody,
-          },
-        },
-      );
-      if (error || !data) {
-        const detail =
-          error && typeof error === "object" && "detail" in error
-            ? String((error as { detail: unknown }).detail)
-            : "Unknown error";
-        errorMsg = detail;
+      const result = await diffStore.publishDraft({
+        event: draft.event,
+        body: draft.body || "",
+        ...(headSha ? { commitId: headSha } : {}),
+      });
+      if (!result.ok) {
+        errorMsg = result.error;
         return;
       }
-      diffStore.clearDraft();
-      // Submit handler writes the review event to the DB
-      // synchronously before responding, so a refetch right now
-      // picks up the new "reviewed" state without waiting on the
-      // 60s safety-net poll or a sync-complete event. Fire-and-
-      // forget — close the panel immediately so the action feels
-      // instant; the next render flips the chip when the refetch
-      // lands.
+      // Publish writes the review event to the DB synchronously
+      // before responding, so a refetch right now picks up the new
+      // "reviewed" state without waiting on the 60s safety-net poll
+      // or a sync-complete event. Fire-and-forget — close the panel
+      // immediately so the action feels instant.
       void pullsStore.loadPulls();
       onclose();
     } catch (err) {

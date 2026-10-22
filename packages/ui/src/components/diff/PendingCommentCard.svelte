@@ -163,6 +163,9 @@
       title="Double-click to edit"
     >{comment.body}</div>
   {/if}
+  {#if comment.submitError}
+    <p class="pending__submit-error" role="alert">{comment.submitError}</p>
+  {/if}
 </div>
 
 <style>
@@ -263,6 +266,17 @@
 
   .pending__action--delete:hover {
     color: var(--accent-red);
+  }
+
+  .pending__submit-error {
+    margin: 6px 0 0;
+    padding: 6px 8px;
+    font-size: 12px;
+    color: var(--accent-red);
+    background: color-mix(in srgb, var(--accent-red) 8%, var(--bg-inset));
+    border: 1px solid var(--accent-red);
+    border-radius: var(--radius-sm);
+    word-break: break-word;
   }
 
   .pending__body {

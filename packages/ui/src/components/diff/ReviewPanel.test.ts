@@ -11,6 +11,11 @@ const createThreads = vi.fn<
 >(async () => true);
 const clearDraft = vi.fn();
 const clearDraftCommentsForPath = vi.fn();
+const publishDraft = vi.fn<
+  (req: { event: string; body: string; commitId?: string }) => Promise<{ ok: true } | { ok: false; error: string }>
+>(async () => ({ ok: true }));
+const loadPulls = vi.fn();
+const clientPOST = vi.fn();
 
 const singlePathDraft = {
   comments: [{ id: 1, path: "a.go", side: "RIGHT", line: 12, commitSha: "abc", body: "x", inReplyTo: null }],
@@ -34,11 +39,17 @@ let draft: typeof singlePathDraft | typeof twoPathDraft = singlePathDraft;
 
 vi.mock("../../context.js", () => ({
   getStores: () => ({
-    diff: { getDraft: () => draft, clearDraft, clearDraftCommentsForPath, getCommits: () => [] },
-    pulls: { loadPulls: vi.fn() },
+    diff: {
+      getDraft: () => draft,
+      clearDraft,
+      clearDraftCommentsForPath,
+      publishDraft,
+      getCommits: () => [{ sha: "head-sha" }],
+    },
+    pulls: { loadPulls },
     reviewThreads: { createThreads, getError: () => null },
   }),
-  getClient: () => ({ POST: vi.fn() }),
+  getClient: () => ({ POST: clientPOST }),
 }));
 
 import ReviewPanel from "./ReviewPanel.svelte";
@@ -100,5 +111,30 @@ describe("ReviewPanel scopePath (local)", () => {
     expect(createThreads.mock.calls[0]![0].map((d) => d.path)).toEqual(["a.md", "b.md"]);
     expect(clearDraft).toHaveBeenCalledTimes(1);
     expect(clearDraftCommentsForPath).not.toHaveBeenCalled();
+  });
+});
+
+describe("ReviewPanel publish (GitHub)", () => {
+  it("publishes server-side drafts with the head sha and closes", async () => {
+    const onclose = vi.fn();
+    const { getByText } = render(ReviewPanel, {
+      props: { owner: "acme", name: "widget", number: 1, onclose },
+    });
+    await fireEvent.click(getByText("Publish review"));
+    expect(publishDraft).toHaveBeenCalledWith({ event: "COMMENT", body: "", commitId: "head-sha" });
+    expect(clientPOST).not.toHaveBeenCalled();
+    expect(loadPulls).toHaveBeenCalled();
+    expect(onclose).toHaveBeenCalled();
+  });
+
+  it("shows the publish error and keeps the panel open", async () => {
+    publishDraft.mockResolvedValueOnce({ ok: false, error: "GitHub couldn't anchor comment[0]" });
+    const onclose = vi.fn();
+    const { getByText, findByText } = render(ReviewPanel, {
+      props: { owner: "acme", name: "widget", number: 1, onclose },
+    });
+    await fireEvent.click(getByText("Publish review"));
+    expect(await findByText(/couldn't anchor comment\[0\]/)).toBeTruthy();
+    expect(onclose).not.toHaveBeenCalled();
   });
 });
