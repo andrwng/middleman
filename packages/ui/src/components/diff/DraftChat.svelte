@@ -65,6 +65,8 @@
 </script>
 
 <div class="draft-chat">
+  <!-- Only the conversation scrolls; the composer below keeps its size. -->
+  <div class="draft-chat__log">
   {#each messages as m, i (m.id)}
     {#if m.kind === "revision"}
       <div class="draft-chat__revision" class:draft-chat__revision--pending={!m.applied}>
@@ -120,6 +122,7 @@
       </div>
     {/if}
   {/each}
+  </div>
 
   {#if error}
     <p class="draft-chat__error" role="alert">{error}</p>
@@ -127,7 +130,7 @@
 
   <textarea
     class="draft-chat__input"
-    rows="2"
+    rows="3"
     placeholder="Ask about this comment, or ask Claude to change it"
     bind:value={text}
     onkeydown={onKeydown}
@@ -152,9 +155,15 @@
     margin-top: 8px;
     padding-top: 8px;
     border-top: 1px solid var(--border-muted);
-    max-height: 420px;
-    overflow-y: auto;
     font-size: 12px;
+  }
+
+  .draft-chat__log {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 320px;
+    overflow-y: auto;
   }
 
   .draft-chat__msg {
@@ -255,10 +264,13 @@
   }
 
   .draft-chat__input {
+    flex-shrink: 0;
     width: 100%;
+    min-height: 4.5em;
     box-sizing: border-box;
     font: inherit;
-    font-size: 12px;
+    font-size: 13px;
+    line-height: 1.4;
     padding: 6px 8px;
     border: 1px solid var(--border-default);
     border-radius: var(--radius-sm);
