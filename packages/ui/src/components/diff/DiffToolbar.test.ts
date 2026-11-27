@@ -102,6 +102,21 @@ describe("DiffToolbar icon-only buttons", () => {
   });
 });
 
+describe("DiffToolbar View menu", () => {
+  // The popover closes on any mousedown outside it; that must not cost
+  // the user a second click on the control they were reaching for.
+  it("closes View and still acts when another toolbar button is clicked", async () => {
+    const onRefsClick = vi.fn();
+    const { getByRole, queryByRole } = render(DiffToolbar, { props: { onRefsClick } });
+    await fireEvent.click(getByRole("button", { name: "View" }));
+    const refs = getByRole("button", { name: "Refs" });
+    await fireEvent.mouseDown(refs);
+    await fireEvent.click(refs);
+    expect(onRefsClick).toHaveBeenCalled();
+    expect(queryByRole("group", { name: "View options" })).toBeNull();
+  });
+});
+
 describe("DiffToolbar refs button", () => {
   it("opens the refs search when clicked", async () => {
     const onRefsClick = vi.fn();

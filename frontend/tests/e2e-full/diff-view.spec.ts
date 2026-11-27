@@ -246,6 +246,13 @@ async function clippedToolbarControls(
   }, selector);
 }
 
+// exact: Playwright matches a name string as a case-insensitive
+// substring, so "View" alone also matches "Review" and "Review with
+// Claude".
+async function openView(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "View", exact: true }).click();
+}
+
 // --- Functional tests ---
 
 test.describe("diff view", () => {
@@ -376,8 +383,9 @@ test.describe("diff view", () => {
     await navigateToDiff(page);
     await waitForDiffLoaded(page);
 
-    // The toolbar has two segmented controls (Layout, then Tab width);
-    // scope to the Tab-width group, whose segments are 1 / 2 / 4 / 8.
+    // The View popover has two segmented controls (Layout, then Tab
+    // width); scope to the Tab-width group, whose segments are 1 / 2 / 4 / 8.
+    await openView(page);
     const tabWidth = page.locator(".diff-toolbar .segmented-control").nth(1);
     const segments = tabWidth.locator(".segment");
 
@@ -402,6 +410,49 @@ test.describe("diff view", () => {
       await page.setViewportSize({ width, height: 800 });
       await expect.poll(() => clippedToolbarControls(page), { message: `clipped at ${width}px` }).toEqual([]);
     }
+  });
+
+  // With layout, tab width and whitespace folded into View, the toolbar
+  // is short enough for a single row at a common laptop width.
+  test("the toolbar fits on one row in a 1440px window", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await mockDiffApi(page, smallDiff);
+    await navigateToDiff(page);
+    await waitForDiffLoaded(page);
+    // The GitHub link arrives with the PR detail; measure the full row.
+    await expect(page.getByRole("link", { name: "Open this PR on GitHub" })).toBeVisible();
+
+    await expect.poll(() => clippedToolbarControls(page)).toEqual([]);
+    const centers = await page.locator(".diff-toolbar button:visible, .diff-toolbar a:visible")
+      .evaluateAll((els) => els.map((el) => {
+        const r = el.getBoundingClientRect();
+        return r.top + r.height / 2;
+      }));
+    expect(centers.length).toBeGreaterThan(0);
+    expect(Math.max(...centers) - Math.min(...centers)).toBeLessThan(4);
+  });
+
+  // The popover hangs over the diff, whose file headers are sticky, and
+  // it must stay usable after the toolbar has wrapped.
+  test("the View popover is on screen and on top in a narrow window", async ({ page }) => {
+    await page.setViewportSize({ width: 1024, height: 800 });
+    await mockDiffApi(page, smallDiff);
+    await navigateToDiff(page);
+    await waitForDiffLoaded(page);
+
+    await openView(page);
+    await expect(page.locator(".view-popover")).toBeVisible();
+
+    expect(await clippedToolbarControls(page, ".view-popover button")).toEqual([]);
+    const covered = await page.evaluate(() =>
+      [...document.querySelectorAll(".view-popover button")]
+        .filter((el) => {
+          const r = el.getBoundingClientRect();
+          return !el.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2));
+        })
+        .map((el) => el.textContent?.trim() || el.getAttribute("title") || el.className),
+    );
+    expect(covered).toEqual([]);
   });
 
   test("hide whitespace toggle triggers re-fetch", async ({ page }) => {
@@ -431,10 +482,16 @@ test.describe("diff view", () => {
     const initialCount = fetchCount;
 
     // Toggle hide whitespace on.
+    await openView(page);
     await page.locator(".toggle-switch").click();
 
     // Wait for the re-fetch to land and assert it actually happened.
     await expect.poll(() => fetchCount).toBeGreaterThan(initialCount);
+
+    // The closed View button carries the cue, and the popover stays open
+    // for further changes.
+    await expect(page.locator(".view-btn__marker")).toBeVisible();
+    await expect(page.locator(".view-popover")).toBeVisible();
   });
 
   test("j/k keyboard navigation moves between files", async ({ page }) => {
@@ -865,6 +922,7 @@ test.describe("diff view performance", () => {
 
     // Toggle whitespace -- triggers a re-fetch with ?whitespace=hide
     // which returns fewer files.
+    await openView(page);
     await page.locator(".toggle-switch").click();
 
     // Count should drop to 45, proving the re-fetch and re-render completed.
@@ -1024,6 +1082,7 @@ test.describe("diff view (git-backed)", () => {
     await expect(page.locator(".diff-file")).toHaveCount(4);
 
     // Toggle hide whitespace.
+    await openView(page);
     await page.locator(".toggle-switch").click();
 
     // README.md is whitespace-only and should be hidden.
