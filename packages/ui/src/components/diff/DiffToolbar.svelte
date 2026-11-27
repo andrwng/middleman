@@ -188,10 +188,6 @@
 </div>
 
 <style>
-  .claude-entry {
-    position: relative;
-  }
-
   .claude-btn {
     font-size: 12px;
     padding: 3px 10px;
@@ -207,12 +203,15 @@
     background: color-mix(in srgb, var(--accent-claude) 10%, transparent);
   }
 
+  /* Anchored to the toolbar, not to its button: once the toolbar wraps,
+     the button can sit at the left of a line, and a form hung off it
+     would run past the left edge of the diff column. */
   .claude-popover {
     position: absolute;
     top: calc(100% + 6px);
-    right: 0;
+    right: 16px;
     z-index: 40;
-    width: min(360px, 90vw);
+    width: min(360px, calc(100% - 32px));
     padding: 10px;
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md, 6px);
@@ -242,10 +241,15 @@
   }
 
   /* Wraps rather than overflowing: .diff-main clips with overflow:
-     hidden, so anything past its right edge would be out of reach. */
+     hidden, so anything past its right edge would be out of reach.
+     Every line packs to the right, so wrapped controls stay at the right
+     edge; View alone keeps the left. It is also the Claude form's
+     containing block. */
   .diff-toolbar {
+    position: relative;
     display: flex;
     flex-wrap: wrap;
+    justify-content: flex-end;
     align-items: center;
     gap: 6px 20px;
     padding: 6px 16px;
@@ -260,8 +264,11 @@
     gap: 8px;
   }
 
+  .diff-toolbar > :global(.view-menu) {
+    margin-right: auto;
+  }
+
   .toolbar-group--right {
-    margin-left: auto;
     flex-wrap: wrap;
     justify-content: flex-end;
   }

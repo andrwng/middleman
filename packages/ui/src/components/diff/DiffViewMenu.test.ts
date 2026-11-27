@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, within } from "@testing-library/svelte";
+import { tick } from "svelte";
 
 const setLayout = vi.fn();
 const setTabWidth = vi.fn();
@@ -58,6 +59,23 @@ describe("DiffViewMenu", () => {
     await fireEvent.click(getByRole("button", { name: "View" }));
     await fireEvent.keyDown(document, { key: "Escape" });
     expect(queryByRole("group", { name: "View options" })).toBeNull();
+  });
+
+  // App sends any Escape nobody has claimed back to the PR list, which
+  // would also throw away an unsaved inline comment. So the Escape that
+  // closes the popover is claimed, and a later one is left to the app.
+  it("claims only the Escape that closes it", async () => {
+    const { getByRole } = render(DiffViewMenu);
+    await fireEvent.click(getByRole("button", { name: "View" }));
+
+    const closing = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    document.dispatchEvent(closing);
+    expect(closing.defaultPrevented).toBe(true);
+
+    await tick();
+    const later = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    document.dispatchEvent(later);
+    expect(later.defaultPrevented).toBe(false);
   });
 
   it("closes on a mousedown outside, but not inside", async () => {

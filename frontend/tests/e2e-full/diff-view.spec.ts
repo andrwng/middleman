@@ -253,6 +253,19 @@ async function openView(page: Page): Promise<void> {
   await page.getByRole("button", { name: "View", exact: true }).click();
 }
 
+// Labels of the controls matched by `selector` that something else is
+// painted over at their center, so a click there would land elsewhere.
+async function coveredControls(page: Page, selector: string): Promise<string[]> {
+  return page.evaluate((sel) =>
+    [...document.querySelectorAll(sel)]
+      .filter((el) => {
+        const r = el.getBoundingClientRect();
+        return !el.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2));
+      })
+      .map((el) => el.getAttribute("aria-label") || el.textContent?.trim() || el.className),
+  selector);
+}
+
 // --- Functional tests ---
 
 test.describe("diff view", () => {
@@ -444,15 +457,77 @@ test.describe("diff view", () => {
     await expect(page.locator(".view-popover")).toBeVisible();
 
     expect(await clippedToolbarControls(page, ".view-popover button")).toEqual([]);
-    const covered = await page.evaluate(() =>
-      [...document.querySelectorAll(".view-popover button")]
-        .filter((el) => {
-          const r = el.getBoundingClientRect();
-          return !el.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2));
-        })
-        .map((el) => el.textContent?.trim() || el.getAttribute("title") || el.className),
-    );
-    expect(covered).toEqual([]);
+    expect(await coveredControls(page, ".view-popover button")).toEqual([]);
+  });
+
+  // App sends an unclaimed Escape back to the PR list. With the popover
+  // open, Escape means "close this" and must not also leave the diff,
+  // which would throw away an unsaved inline comment.
+  test("Escape closes the View popover without leaving the diff", async ({ page }) => {
+    await mockDiffApi(page, smallDiff);
+    await navigateToDiff(page);
+    await waitForDiffLoaded(page);
+    await openView(page);
+    await expect(page.locator(".view-popover")).toBeVisible();
+
+    await page.keyboard.press("Escape");
+
+    await expect(page.locator(".view-popover")).toHaveCount(0);
+    await expect(page).toHaveURL(/\/pulls\/acme\/widgets\/1\/files$/);
+    await expect(page.locator(".diff-file").first()).toBeVisible();
+  });
+
+  // Once the toolbar wraps, the Claude entry can sit anywhere on a line;
+  // its form has to open inside the diff column, not hang off its edge.
+  test("the Review with Claude form is on screen in a narrow window", async ({ page }) => {
+    await mockDiffApi(page, smallDiff);
+    await navigateToDiff(page);
+    await waitForDiffLoaded(page);
+    for (const width of [900, 1024]) {
+      await page.setViewportSize({ width, height: 800 });
+      await page.getByRole("button", { name: "Review with Claude" }).click();
+      await expect(page.locator(".claude-popover")).toBeVisible();
+      await expect.poll(
+        () => clippedToolbarControls(page, ".claude-popover button, .claude-popover textarea"),
+        { message: `Claude form clipped at ${width}px` },
+      ).toEqual([]);
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+      await expect(page.locator(".claude-popover")).toHaveCount(0);
+    }
+  });
+
+  // Wrapped lines pack to the right, so the trailing controls stay at the
+  // toolbar's right edge instead of dropping to the left, under View.
+  test("wrapped toolbar controls stay right-aligned in a narrow window", async ({ page }) => {
+    await mockDiffApi(page, smallDiff);
+    await navigateToDiff(page);
+    await waitForDiffLoaded(page);
+    for (const width of [900, 1024]) {
+      await page.setViewportSize({ width, height: 800 });
+      await expect.poll(() => page.evaluate(() => {
+        const tb = document.querySelector(".diff-toolbar");
+        const review = tb?.querySelector(".review-btn");
+        if (!tb || !review) return null;
+        const contentRight = tb.getBoundingClientRect().right - parseFloat(getComputedStyle(tb).paddingRight);
+        return Math.round(contentRight - review.getBoundingClientRect().right);
+      }), { message: `gap between Review and the right edge at ${width}px` }).toBe(0);
+    }
+  });
+
+  // Both popovers can be open at once. View is the short-lived one, which
+  // closes on any click outside it, so it must not open underneath.
+  test("the View popover opens above an open Claude form", async ({ page }) => {
+    await page.setViewportSize({ width: 1024, height: 800 });
+    await mockDiffApi(page, smallDiff);
+    await navigateToDiff(page);
+    await waitForDiffLoaded(page);
+    await page.getByRole("button", { name: "Review with Claude" }).click();
+    await expect(page.locator(".claude-popover")).toBeVisible();
+
+    await openView(page);
+    await expect(page.locator(".view-popover")).toBeVisible();
+
+    expect(await coveredControls(page, ".view-popover button")).toEqual([]);
   });
 
   test("hide whitespace toggle triggers re-fetch", async ({ page }) => {

@@ -27,8 +27,12 @@
       open = false;
     }
 
+    // Claim the Escape: App sends any unclaimed one back to the PR list,
+    // which would leave the diff and drop an unsaved inline comment.
     function onKeydown(event: KeyboardEvent): void {
-      if (event.key === "Escape") open = false;
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      open = false;
     }
 
     document.addEventListener("mousedown", onMousedown);
@@ -152,12 +156,15 @@
   }
 
   /* max-content: an absolutely positioned box otherwise shrinks to its
-     containing block, which here is only as wide as the button. */
+     containing block, which here is only as wide as the button.
+     z-index 41: one above the Review with Claude form, which can be open
+     at the same time. View closes on any click outside it, so clicking
+     back into the form dismisses View and leaves the form as it was. */
   .view-popover {
     position: absolute;
     top: calc(100% + 6px);
     left: 0;
-    z-index: 40;
+    z-index: 41;
     width: max-content;
     display: flex;
     flex-direction: column;
