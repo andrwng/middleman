@@ -188,7 +188,7 @@ func sectionPath(fd *godiff.FileDiff) (path string, ok bool) {
 // up with its raw counterpart.
 func ParsePatch(patch []byte, rawFiles []DiffFile) []DiffFile {
 	fileDiffs, _ := godiff.ParseMultiFileDiff(patch)
-	if len(fileDiffs) == 0 {
+	if len(fileDiffs) == 0 || len(rawFiles) == 0 {
 		return rawFiles
 	}
 

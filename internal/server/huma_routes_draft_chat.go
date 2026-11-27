@@ -219,7 +219,7 @@ func (s *Server) sendDraftMessage(ctx context.Context, input *sendDraftMessageIn
 		turn.Mode, turn.ParentSessionID = aireview.DraftChatFork, run.ClaudeSessionID
 		turn.WorktreePath = s.aiReview.ReviewRunPath(run.ID)
 		useRun()
-	case local:
+	case localW != nil:
 		turn.Mode, turn.WorktreePath, turn.UseExistingDir = aireview.DraftChatFresh, localW.Path, true
 	default:
 		turn.Mode, turn.WorktreePath, turn.CheckoutSHA = aireview.DraftChatFresh, s.aiReview.DraftChatWorktreePath(d.ID), d.CommitSHA
@@ -229,10 +229,11 @@ func (s *Server) sendDraftMessage(ctx context.Context, input *sendDraftMessageIn
 	}
 	prContext := ""
 	if turn.Mode == aireview.DraftChatFresh {
-		if local {
+		switch {
+		case localW != nil:
 			prContext = fmt.Sprintf("Local worktree: %s on branch %s. You are in the reviewer's working copy.\n",
 				input.Name, s.currentWorktreeBranch(ctx, localW))
-		} else {
+		case pr != nil && shas != nil:
 			prContext = s.prContextBlock(ctx, input.Owner, input.Name, mrID, shas, pr)
 		}
 	}

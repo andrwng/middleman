@@ -504,13 +504,15 @@ test.describe("diff view", () => {
     await waitForDiffLoaded(page);
     for (const width of [900, 1024]) {
       await page.setViewportSize({ width, height: 800 });
+      // Firefox lays the toolbar out at sub-pixel offsets, so the gap only
+      // has to be under half a pixel.
       await expect.poll(() => page.evaluate(() => {
         const tb = document.querySelector(".diff-toolbar");
         const review = tb?.querySelector(".review-btn");
         if (!tb || !review) return null;
         const contentRight = tb.getBoundingClientRect().right - parseFloat(getComputedStyle(tb).paddingRight);
-        return Math.round(contentRight - review.getBoundingClientRect().right);
-      }), { message: `gap between Review and the right edge at ${width}px` }).toBe(0);
+        return contentRight - review.getBoundingClientRect().right;
+      }), { message: `gap between Review and the right edge at ${width}px` }).toBeCloseTo(0, 0);
     }
   });
 

@@ -196,7 +196,6 @@ func TestDiffRevspecPathsMatchesDiffRevspecPerFile(t *testing.T) {
 	require.NotEmpty(t, full)
 
 	for _, ff := range full {
-		ff := ff
 		t.Run(ff.Path, func(t *testing.T) {
 			result, err := DiffRevspecPaths(ctx, dir, r, []string{ff.Path, ff.OldPath})
 			require.NoError(t, err)

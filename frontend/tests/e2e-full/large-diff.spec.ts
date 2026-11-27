@@ -22,6 +22,14 @@ const DELETED_PATH = "legacy/schema.sql";
 const MODIFIED_PATH = "internal/big_table.go";
 const PKG3_FILES = 35; // i % 20 == 3 for i in [0, 700)
 
+// Rendering this PR (742 files, about 65,000 DOM nodes) keeps Firefox's
+// main thread busy for several seconds, two to three times as long as
+// Chromium. On a loaded CI runner its first lines have taken more than
+// 10s to appear, so waits on that work get RENDER_TIMEOUT, and the tests
+// that wait on it get TEST_TIMEOUT.
+const RENDER_TIMEOUT = 30_000;
+const TEST_TIMEOUT = 120_000;
+
 function sidebarRow(page: Page, path: string) {
   return page.locator(`.diff-file-row[title="${path}"]`);
 }
@@ -61,6 +69,8 @@ function trackDiffRequests(page: Page, prNumber: number) {
 }
 
 test.describe("large diff review", () => {
+  test.describe.configure({ timeout: TEST_TIMEOUT });
+
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => {
       localStorage.removeItem("diff-hide-whitespace");
@@ -86,14 +96,14 @@ test.describe("large diff review", () => {
     await expect(diffFile(page, "gen/file00.pb.go")).toBeVisible();
 
     release();
-    await expect(page.locator(".line-wrap").first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator(".line-wrap").first()).toBeVisible({ timeout: RENDER_TIMEOUT });
   });
 
   test("the large PR never requests the full diff; the small PR only does", async ({ page }) => {
     const large = trackDiffRequests(page, 2);
     await page.goto(LARGE_PR);
     await waitForSidebar(page);
-    await expect(page.locator(".line-wrap").first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator(".line-wrap").first()).toBeVisible({ timeout: RENDER_TIMEOUT });
     await expect.poll(() => large.hunks).toBeGreaterThan(0);
     expect(large.full).toBe(0);
 
@@ -112,7 +122,7 @@ test.describe("large diff review", () => {
     test.setTimeout(120_000);
     await page.goto(LARGE_PR);
     await waitForSidebar(page);
-    await expect(page.locator(".line-wrap").first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator(".line-wrap").first()).toBeVisible({ timeout: RENDER_TIMEOUT });
 
     const area = page.locator(".diff-area");
     // Lines whose box overlaps the diff area's visible rect: proof the
@@ -205,7 +215,7 @@ test.describe("large diff review", () => {
 
     await page.reload();
     await waitForSidebar(page);
-    await expect(page.locator(".line-wrap").first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator(".line-wrap").first()).toBeVisible({ timeout: RENDER_TIMEOUT });
 
     await expect(page.locator(".diff-area")).toHaveJSProperty("scrollTop", 0);
     const file = diffFile(page, target);
@@ -253,7 +263,7 @@ test.describe("large diff review", () => {
 // own server: adding gen/** on the shared one would change what every other
 // test sees for acme/widgets. Serial so the reset in beforeEach is not raced.
 test.describe("large diff collapse globs", () => {
-  test.describe.configure({ mode: "serial" });
+  test.describe.configure({ mode: "serial", timeout: TEST_TIMEOUT });
 
   let isolated: IsolatedE2EServer;
   let api: APIRequestContext;
@@ -294,7 +304,10 @@ test.describe("large diff collapse globs", () => {
     await expect(genBadges).toHaveCount(0);
 
     await page.getByRole("button", { name: "Always collapse gen/** in this repo", exact: true }).click();
-    await expect(page.locator(".globs__item", { hasText: "gen/**" })).toContainText(`${GEN_FILES} files`);
+    await expect(page.locator(".globs__item", { hasText: "gen/**" })).toContainText(
+      `${GEN_FILES} files`,
+      { timeout: RENDER_TIMEOUT },
+    );
     await expect(genBadges).toHaveCount(GEN_FILES);
 
     await page.reload();
@@ -325,7 +338,7 @@ test.describe("large diff collapse globs", () => {
 
     await file.locator(".file-header__collapse").click();
     await expect(file.locator(".collapse-chevron--collapsed")).toHaveCount(0);
-    await expect(diffLine(page, path, 1)).toBeVisible({ timeout: 10_000 });
+    await expect(diffLine(page, path, 1)).toBeVisible({ timeout: RENDER_TIMEOUT });
 
     // Scroll down through the file to its end.
     const last = diffLine(page, path, 400);
@@ -341,6 +354,8 @@ test.describe("large diff collapse globs", () => {
 // and a large (lazy) diff, which is where the pane once went blank: the
 // file list re-rendered while the previous diff had already been cleared.
 test.describe("switching PRs in the review pane", () => {
+  test.describe.configure({ timeout: TEST_TIMEOUT });
+
   test("renders each PR's diff when switching between a small and a large PR", async ({ page }) => {
     const pageErrors: string[] = [];
     page.on("pageerror", (e) => pageErrors.push(e.message));
@@ -355,7 +370,7 @@ test.describe("switching PRs in the review pane", () => {
     await expect(page).toHaveURL(/\/pulls\/acme\/widgets\/2/);
     await waitForSidebar(page);
     await expect(page.locator(".diff-file").first()).toBeVisible();
-    await expect(page.locator(".line-wrap").first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator(".line-wrap").first()).toBeVisible({ timeout: RENDER_TIMEOUT });
 
     await smallItem.click();
     await expect(page).toHaveURL(/\/pulls\/acme\/widgets\/1/);

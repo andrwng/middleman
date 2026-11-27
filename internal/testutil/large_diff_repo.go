@@ -185,6 +185,9 @@ func lines(n int, gen func(i int) string) string {
 // gitStdin runs git in dir with stdin, using the same environment
 // scrubbing as git().
 func gitStdin(dir string, stdin []byte, args ...string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("git: no args")
+	}
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
 	cmd.Env = append(gitenv.StripAll(os.Environ()), "GIT_TERMINAL_PROMPT=0")
