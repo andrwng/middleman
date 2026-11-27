@@ -105,7 +105,8 @@
     {/if}
     <button
       type="button"
-      class="refresh-btn"
+      class="refresh-btn refresh-btn--icon"
+      aria-label="Refresh"
       onclick={onRefresh}
       disabled={diff.isRefreshing()}
       title={isLocal
@@ -116,16 +117,16 @@
     >
       <svg
         width="12" height="12" viewBox="0 0 12 12" fill="none"
-        stroke="currentColor" stroke-width="1.5"
+        stroke="currentColor" stroke-width="1.5" aria-hidden="true"
         class:refresh-btn__icon--spinning={diff.isRefreshing()}
       >
         <path d="M10 3A4 4 0 1 1 6 3M10 3V1M10 3H8" stroke-linecap="round" stroke-linejoin="round" />
       </svg>
-      Refresh
     </button>
     <button
       type="button"
-      class="refresh-btn"
+      class="refresh-btn refresh-btn--icon"
+      aria-label="Refs"
       onclick={onRefsClick}
       disabled={!canSearchSymbols}
       title={canSearchSymbols
@@ -134,16 +135,16 @@
     >
       <svg
         width="12" height="12" viewBox="0 0 12 12" fill="none"
-        stroke="currentColor" stroke-width="1.5"
+        stroke="currentColor" stroke-width="1.5" aria-hidden="true"
       >
         <circle cx="5" cy="5" r="3.5" />
         <path d="M7.6 7.6L11 11" stroke-linecap="round" />
       </svg>
-      Refs
     </button>
     <button
       type="button"
-      class="refresh-btn"
+      class="refresh-btn refresh-btn--icon"
+      aria-label="Browse"
       onclick={onBrowseClick}
       disabled={!canSearchSymbols}
       title={canSearchSymbols
@@ -152,12 +153,11 @@
     >
       <svg
         width="12" height="12" viewBox="0 0 12 12" fill="none"
-        stroke="currentColor" stroke-width="1.5"
+        stroke="currentColor" stroke-width="1.5" aria-hidden="true"
       >
         <path d="M2 2.5h8v7H2z" stroke-linejoin="round" />
         <path d="M2 4.5h8" />
       </svg>
-      Browse
     </button>
     {#if diff.getRefreshError()}
       <span class="refresh-error" title={diff.getRefreshError()}>
@@ -285,10 +285,13 @@
     cursor: pointer;
   }
 
+  /* Wraps rather than overflowing: .diff-main clips with overflow:
+     hidden, so anything past its right edge would be out of reach. */
   .diff-toolbar {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 20px;
+    gap: 6px 20px;
     padding: 6px 16px;
     background: var(--diff-toolbar-bg);
     border-bottom: 1px solid var(--diff-border);
@@ -344,6 +347,8 @@
 
   .toolbar-group--right {
     margin-left: auto;
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
 
   .refresh-btn {
@@ -357,6 +362,10 @@
     background: var(--bg-inset);
     color: var(--text-secondary);
     cursor: pointer;
+  }
+
+  .refresh-btn--icon {
+    padding: 3px 6px;
   }
 
   .refresh-btn:hover:not(:disabled) {

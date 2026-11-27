@@ -217,6 +217,35 @@ async function waitForSidebarFilesLoaded(page: Page): Promise<void> {
     .waitFor({ state: "visible", timeout: 10_000 });
 }
 
+// Labels of the controls matched by `selector` whose box reaches past
+// the on-screen part of .diff-main. Measured from rects, never by
+// clicking or hovering: .diff-main clips with overflow: hidden, which
+// still scrolls programmatically, so Playwright's auto-scroll would
+// reach controls a person cannot.
+async function clippedToolbarControls(
+  page: Page,
+  selector = ".diff-toolbar button, .diff-toolbar a",
+): Promise<string[]> {
+  return page.evaluate((sel) => {
+    const main = document.querySelector(".diff-main");
+    if (!main) return ["(no .diff-main)"];
+    const m = main.getBoundingClientRect();
+    const left = Math.max(m.left, 0);
+    const top = Math.max(m.top, 0);
+    const right = Math.min(m.right, window.innerWidth);
+    const bottom = Math.min(m.bottom, window.innerHeight);
+    const clipped: string[] = [];
+    for (const el of document.querySelectorAll(sel)) {
+      const r = el.getBoundingClientRect();
+      if (r.width === 0) continue;
+      if (r.left < left - 0.5 || r.right > right + 0.5 || r.top < top - 0.5 || r.bottom > bottom + 0.5) {
+        clipped.push(el.getAttribute("aria-label") || el.textContent?.trim() || el.className);
+      }
+    }
+    return clipped;
+  }, selector);
+}
+
 // --- Functional tests ---
 
 test.describe("diff view", () => {
@@ -359,6 +388,20 @@ test.describe("diff view", () => {
     await segments.nth(1).click();
     await expect(segments.nth(1)).toHaveClass(/segment--active/);
     await expect(segments.nth(2)).not.toHaveClass(/segment--active/);
+  });
+
+  // The toolbar used to be one row that never wrapped, and .diff-main
+  // clipped whatever ran past its right edge, with no scrollbar to reach
+  // it. At these widths the diff column beside the two sidebars is
+  // narrower than that row.
+  test("every toolbar control stays on screen in a narrow window", async ({ page }) => {
+    await mockDiffApi(page, smallDiff);
+    await navigateToDiff(page);
+    await waitForDiffLoaded(page);
+    for (const width of [1024, 1280]) {
+      await page.setViewportSize({ width, height: 800 });
+      await expect.poll(() => clippedToolbarControls(page), { message: `clipped at ${width}px` }).toEqual([]);
+    }
   });
 
   test("hide whitespace toggle triggers re-fetch", async ({ page }) => {
