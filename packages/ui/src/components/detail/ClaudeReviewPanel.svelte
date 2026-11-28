@@ -142,7 +142,8 @@
 
 <style>
   /* The pill: the open button, plus a dismiss button once the run has
-     finished. overflow keeps each button's hover inside the rounding. */
+     finished. Each button carries its own end of the rounding, so its
+     hover stays inside the pill without clipping its focus ring. */
   .claude-toggle {
     display: inline-flex;
     align-items: stretch;
@@ -152,7 +153,6 @@
     color: var(--text-secondary);
     font-size: 12px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-    overflow: hidden;
   }
 
   .claude-toggle__open,
@@ -169,10 +169,13 @@
     align-items: center;
     gap: 6px;
     padding: 6px 12px;
+    border-radius: 999px;
   }
 
   .claude-toggle__open:not(:last-child) {
     padding-right: 6px;
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
   }
 
   .claude-toggle__dismiss {
@@ -180,6 +183,7 @@
     color: var(--text-muted);
     font-size: 16px;
     line-height: 1;
+    border-radius: 0 999px 999px 0;
   }
 
   .claude-toggle__open:hover,
