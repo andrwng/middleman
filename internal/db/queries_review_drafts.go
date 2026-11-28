@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -366,6 +367,9 @@ func (d *DB) InsertClaudeSuggestion(
 	r, err := d.GetReviewDraft(ctx, mrID, branch, in.ID)
 	if err != nil {
 		return ReviewDraft{}, err
+	}
+	if r == nil {
+		return ReviewDraft{}, fmt.Errorf("review draft %q missing after insert", in.ID)
 	}
 	return *r, nil
 }

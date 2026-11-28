@@ -19,6 +19,7 @@
   const run = $derived(aiReviewRun.getRun());
   const active = $derived(aiReviewRun.isActive());
   const open = $derived(aiReviewRun.isPanelOpen());
+  const dismissed = $derived(aiReviewRun.isDismissed());
 
   // #123/@user links only make sense for GitHub repos.
   const repoCtx = $derived(owner && owner !== "local" ? { owner, name } : undefined);
@@ -56,7 +57,7 @@
   }
 </script>
 
-{#if run}
+{#if run && !dismissed}
   {#if open}
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <div class="claude-panel" role="dialog" aria-label="Claude review" tabindex="-1" onkeydown={onKeydown}>
@@ -116,36 +117,82 @@
       </div>
     </div>
   {:else}
-    <button
-      type="button"
-      class="claude-toggle"
-      class:claude-toggle--active={active}
-      onclick={() => aiReviewRun.togglePanel()}
-      title="Open the Claude review"
-    >
-      <span class="claude-toggle__badge" aria-hidden="true">Claude</span>
-      <span>{statusLabel} · {countLabel}</span>
-    </button>
+    <div class="claude-toggle" class:claude-toggle--active={active}>
+      <button
+        type="button"
+        class="claude-toggle__open"
+        onclick={() => aiReviewRun.togglePanel()}
+        title="Open the Claude review"
+      >
+        <span class="claude-toggle__badge" aria-hidden="true">Claude</span>
+        <span>{statusLabel} · {countLabel}</span>
+      </button>
+      {#if !active}
+        <button
+          type="button"
+          class="claude-toggle__dismiss"
+          onclick={() => aiReviewRun.dismiss()}
+          title="Dismiss"
+          aria-label="Dismiss Claude review"
+        >&times;</button>
+      {/if}
+    </div>
   {/if}
 {/if}
 
 <style>
+  /* The pill: the open button, plus a dismiss button once the run has
+     finished. Each button carries its own end of the rounding, so its
+     hover stays inside the pill without clipping its focus ring. */
   .claude-toggle {
     display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
+    align-items: stretch;
     border-radius: 999px;
     border: 1px solid var(--accent-claude);
     background: var(--bg-surface);
     color: var(--text-secondary);
     font-size: 12px;
-    cursor: pointer;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
   }
 
-  .claude-toggle:hover {
+  .claude-toggle__open,
+  .claude-toggle__dismiss {
+    border: none;
+    background: none;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .claude-toggle__open {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 999px;
+  }
+
+  .claude-toggle__open:not(:last-child) {
+    padding-right: 6px;
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+
+  .claude-toggle__dismiss {
+    padding: 0 10px 0 4px;
+    color: var(--text-muted);
+    font-size: 16px;
+    line-height: 1;
+    border-radius: 0 999px 999px 0;
+  }
+
+  .claude-toggle__open:hover,
+  .claude-toggle__dismiss:hover {
     background: var(--bg-surface-hover);
+  }
+
+  .claude-toggle__dismiss:hover {
+    color: var(--text-primary);
   }
 
   .claude-toggle--active {

@@ -68,7 +68,7 @@ func TestAnchorFileDiffFollowsRenames(t *testing.T) {
 	// Only the changed region is commentable, on both sides.
 	assert.NoError(validateAnchor(f, "RIGHT", 25, nil))
 	assert.NoError(validateAnchor(f, "LEFT", 25, nil))
-	assert.Error(validateAnchor(f, "RIGHT", 5, nil))
+	require.Error(validateAnchor(f, "RIGHT", 5, nil))
 
 	missing, err := anchorFileDiff(context.Background(), clones, "github.com", "acme", "widget", base, head, "nope.txt")
 	require.NoError(err)

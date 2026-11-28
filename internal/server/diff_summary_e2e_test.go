@@ -265,7 +265,7 @@ func TestAPIFilesSummary_LocalAgainstBaseWithUncommittedEdit(t *testing.T) {
 	require.Len(*filesResp.JSON200.Files, 2)
 
 	assert.Equal(baseSHA, filesResp.JSON200.DiffFrom)
-	assert.Equal("", filesResp.JSON200.DiffTo)
+	assert.Empty(filesResp.JSON200.DiffTo)
 	assert.Equal(int64(0), filesResp.JSON200.WhitespaceOnlyCount)
 }
 

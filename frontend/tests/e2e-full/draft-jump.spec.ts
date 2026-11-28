@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { DiffResult, FilesResult } from "@middleman/ui/api/types";
+import { startIsolatedE2EServer, type IsolatedE2EServer } from "./support/e2eServer";
 
 // Clicking a draft in the sidebar's Drafts list goes to the draft's anchor
 // even when it was written against a commit other than the one on screen:
@@ -84,8 +85,9 @@ async function mockApi(page: Page): Promise<string[]> {
   return diffQueries;
 }
 
-// Drafts persist in localStorage keyed by PR, so seeding it is how a test
-// starts with a draft already written.
+// On load the store moves any drafts an older build left in localStorage
+// onto the server, so seeding localStorage is how a test starts with a
+// draft already written.
 async function seedDraft(page: Page, commitSha: string): Promise<void> {
   await page.addInitScript(
     ([path, sha]) => {
@@ -119,10 +121,23 @@ function rowFor(page: Page, sha: string) {
 }
 
 test.describe("jumping to a draft", () => {
+  // Both tests seed a draft with the same id on the same PR, and the server
+  // keeps the first draft it sees under an id. On a shared server the second
+  // test would get the first test's draft, so each test gets its own.
+  let server: IsolatedE2EServer;
+
+  test.beforeEach(async () => {
+    server = await startIsolatedE2EServer();
+  });
+
+  test.afterEach(async () => {
+    await server?.stop();
+  });
+
   test("a draft on another commit switches the diff to that commit", async ({ page }) => {
     const diffQueries = await mockApi(page);
     await seedDraft(page, OLDEST);
-    await page.goto("/pulls/acme/widgets/1/files");
+    await page.goto(`${server.info.base_url}/pulls/acme/widgets/1/files`);
     await page.locator(".commit-item").first().waitFor({ state: "visible", timeout: 10_000 });
 
     // Head scope to start: no single commit selected.
@@ -142,7 +157,7 @@ test.describe("jumping to a draft", () => {
   test("a draft on the head commit returns from a commit scope to head", async ({ page }) => {
     const diffQueries = await mockApi(page);
     await seedDraft(page, NEWEST);
-    await page.goto("/pulls/acme/widgets/1/files");
+    await page.goto(`${server.info.base_url}/pulls/acme/widgets/1/files`);
     await page.locator(".commit-item").first().waitFor({ state: "visible", timeout: 10_000 });
 
     await rowFor(page, OLDEST).click();

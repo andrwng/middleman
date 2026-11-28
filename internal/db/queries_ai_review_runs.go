@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -114,6 +115,9 @@ func (d *DB) CreateAIReviewRun(ctx context.Context, in NewAIReviewRun) (AIReview
 	r, err := d.GetAIReviewRun(ctx, id)
 	if err != nil {
 		return AIReviewRun{}, err
+	}
+	if r == nil {
+		return AIReviewRun{}, fmt.Errorf("review run %d missing after insert", id)
 	}
 	return *r, nil
 }

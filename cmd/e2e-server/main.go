@@ -105,6 +105,12 @@ func run(ctx context.Context, port int, roborevEndpoint, serverInfoFile string) 
 		}
 	}
 
+	// A finished Review with Claude run for the review pill tests, on a
+	// PR no other e2e test opens.
+	if err := seedFinishedReviewRun(ctx, database, "acme", "widgets", 7); err != nil {
+		return fmt.Errorf("seed review run: %w", err)
+	}
+
 	diffRepo, err := testutil.SetupDiffRepo(ctx, tmpDir, database)
 	if err != nil {
 		return fmt.Errorf("setup diff repo: %w", err)
@@ -352,6 +358,26 @@ func writeServerInfoFile(path string, info e2eServerInfo) error {
 		return fmt.Errorf("rename server info file: %w", err)
 	}
 	return nil
+}
+
+// seedFinishedReviewRun records a done Review with Claude run, with no
+// suggestions, on the given PR.
+func seedFinishedReviewRun(ctx context.Context, database *db.DB, owner, name string, number int) error {
+	pr, err := database.GetMergeRequest(ctx, owner, name, number)
+	if err != nil {
+		return err
+	}
+	if pr == nil {
+		return fmt.Errorf("%s/%s#%d is not seeded", owner, name, number)
+	}
+	run, err := database.CreateAIReviewRun(ctx, db.NewAIReviewRun{
+		MergeRequestID: pr.ID,
+		HeadSHA:        pr.PlatformHeadSHA,
+	})
+	if err != nil {
+		return err
+	}
+	return database.MarkAIReviewRunDone(ctx, run.ID, "", "No issues found.", "")
 }
 
 func patchFixturePRSHAs(fc *testutil.FixtureClient, owner, repo string, number int, headSHA, baseSHA string) {

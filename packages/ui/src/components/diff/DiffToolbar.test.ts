@@ -7,6 +7,7 @@ const refsOpenBlank = vi.fn();
 const state = { owner: "local" };
 const shaState = { sha: "abc123" };
 const runState = { active: false };
+const refreshState = { refreshing: false };
 const startRun = vi.fn(async () => true);
 const cancelRun = vi.fn(async () => {});
 const openPanel = vi.fn();
@@ -23,7 +24,7 @@ vi.mock("../../context.js", () => ({
       setHideWhitespace: vi.fn(),
       getCurrentPR: () => (state.owner ? { owner: state.owner, name: "demo", number: 7 } : null),
       refresh: diffRefresh,
-      isRefreshing: () => false,
+      isRefreshing: () => refreshState.refreshing,
       getRefreshError: () => null,
       getCurrentCommitSha: () => shaState.sha,
       getSuggestions: () => [{ id: "s1" }, { id: "s2" }],
@@ -56,6 +57,7 @@ afterEach(() => {
   state.owner = "local";
   shaState.sha = "abc123";
   runState.active = false;
+  refreshState.refreshing = false;
 });
 
 describe("DiffToolbar refresh routing", () => {
@@ -73,6 +75,45 @@ describe("DiffToolbar refresh routing", () => {
     await fireEvent.click(getByRole("button", { name: /refresh/i }));
     expect(diffRefresh).toHaveBeenCalled();
     expect(threadsRefresh).not.toHaveBeenCalled();
+  });
+});
+
+// The toolbar has to fit beside two sidebars, so these three carry only
+// their icons. The tooltip still explains each one, and the aria-label
+// keeps a fixed name for screen readers and for every test that finds
+// them by name.
+describe("DiffToolbar icon-only buttons", () => {
+  it("shows only an icon on Refresh, Refs and Browse, named by aria-label", () => {
+    const { getByRole } = render(DiffToolbar, { props: {} });
+    for (const name of ["Refresh", "Refs", "Browse"]) {
+      const btn = getByRole("button", { name });
+      expect(btn.textContent?.trim()).toBe("");
+      expect(btn.getAttribute("aria-label")).toBe(name);
+    }
+  });
+
+  // Without a visible label the name would fall back to the title, which
+  // changes to "Syncing with GitHub..." for as long as a sync runs.
+  it("keeps the name Refresh while a GitHub sync is running", () => {
+    state.owner = "acme";
+    refreshState.refreshing = true;
+    const { getByRole } = render(DiffToolbar, { props: {} });
+    expect(getByRole("button", { name: "Refresh" }).getAttribute("title")).toBe("Syncing with GitHub...");
+  });
+});
+
+describe("DiffToolbar View menu", () => {
+  // The popover closes on any mousedown outside it; that must not cost
+  // the user a second click on the control they were reaching for.
+  it("closes View and still acts when another toolbar button is clicked", async () => {
+    const onRefsClick = vi.fn();
+    const { getByRole, queryByRole } = render(DiffToolbar, { props: { onRefsClick } });
+    await fireEvent.click(getByRole("button", { name: "View" }));
+    const refs = getByRole("button", { name: "Refs" });
+    await fireEvent.mouseDown(refs);
+    await fireEvent.click(refs);
+    expect(onRefsClick).toHaveBeenCalled();
+    expect(queryByRole("group", { name: "View options" })).toBeNull();
   });
 });
 

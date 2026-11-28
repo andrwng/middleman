@@ -1,5 +1,6 @@
 <script lang="ts">
   import { getStores } from "../../context.js";
+  import DiffViewMenu from "./DiffViewMenu.svelte";
   import ReviewWithClaudeForm from "./ReviewWithClaudeForm.svelte";
 
   interface Props {
@@ -15,11 +16,6 @@
   const canReviewWithClaude = $derived(diff.getCurrentPR() !== null);
   let claudeFormOpen = $state(false);
   const suggestionCount = $derived(diff.getSuggestions().length);
-  const tabOptions = [1, 2, 4, 8] as const;
-  const layoutOptions = [
-    { value: "unified", label: "Unified" },
-    { value: "split", label: "Split" },
-  ] as const;
 
   const pendingCount = $derived(diff.getDraft().comments.length);
   const draftEvent = $derived(diff.getDraft().event);
@@ -49,47 +45,7 @@
 </script>
 
 <div class="diff-toolbar">
-  <div class="toolbar-group">
-    <span class="toolbar-label">Layout</span>
-    <div class="segmented-control">
-      {#each layoutOptions as opt}
-        <button
-          class="segment"
-          class:segment--active={diff.getLayout() === opt.value}
-          onclick={() => diff.setLayout(opt.value)}
-        >
-          {opt.label}
-        </button>
-      {/each}
-    </div>
-  </div>
-  <div class="toolbar-group">
-    <span class="toolbar-label">Tab width</span>
-    <div class="segmented-control">
-      {#each tabOptions as opt}
-        <button
-          class="segment"
-          class:segment--active={diff.getTabWidth() === opt}
-          onclick={() => diff.setTabWidth(opt)}
-        >
-          {opt}
-        </button>
-      {/each}
-    </div>
-  </div>
-  <div class="toolbar-group">
-    <span class="toolbar-label">Hide whitespace</span>
-    <button
-      class="toggle-switch"
-      class:toggle-switch--on={diff.getHideWhitespace()}
-      role="switch"
-      aria-checked={diff.getHideWhitespace()}
-      title={diff.getHideWhitespace() ? "Show whitespace changes" : "Hide whitespace changes"}
-      onclick={() => diff.setHideWhitespace(!diff.getHideWhitespace())}
-    >
-      <span class="toggle-knob"></span>
-    </button>
-  </div>
+  <DiffViewMenu />
   <div class="toolbar-group toolbar-group--right">
     {#if hiddenCount > 0}
       <button
@@ -105,7 +61,8 @@
     {/if}
     <button
       type="button"
-      class="refresh-btn"
+      class="refresh-btn refresh-btn--icon"
+      aria-label="Refresh"
       onclick={onRefresh}
       disabled={diff.isRefreshing()}
       title={isLocal
@@ -116,16 +73,16 @@
     >
       <svg
         width="12" height="12" viewBox="0 0 12 12" fill="none"
-        stroke="currentColor" stroke-width="1.5"
+        stroke="currentColor" stroke-width="1.5" aria-hidden="true"
         class:refresh-btn__icon--spinning={diff.isRefreshing()}
       >
         <path d="M10 3A4 4 0 1 1 6 3M10 3V1M10 3H8" stroke-linecap="round" stroke-linejoin="round" />
       </svg>
-      Refresh
     </button>
     <button
       type="button"
-      class="refresh-btn"
+      class="refresh-btn refresh-btn--icon"
+      aria-label="Refs"
       onclick={onRefsClick}
       disabled={!canSearchSymbols}
       title={canSearchSymbols
@@ -134,16 +91,16 @@
     >
       <svg
         width="12" height="12" viewBox="0 0 12 12" fill="none"
-        stroke="currentColor" stroke-width="1.5"
+        stroke="currentColor" stroke-width="1.5" aria-hidden="true"
       >
         <circle cx="5" cy="5" r="3.5" />
         <path d="M7.6 7.6L11 11" stroke-linecap="round" />
       </svg>
-      Refs
     </button>
     <button
       type="button"
-      class="refresh-btn"
+      class="refresh-btn refresh-btn--icon"
+      aria-label="Browse"
       onclick={onBrowseClick}
       disabled={!canSearchSymbols}
       title={canSearchSymbols
@@ -152,12 +109,11 @@
     >
       <svg
         width="12" height="12" viewBox="0 0 12 12" fill="none"
-        stroke="currentColor" stroke-width="1.5"
+        stroke="currentColor" stroke-width="1.5" aria-hidden="true"
       >
         <path d="M2 2.5h8v7H2z" stroke-linejoin="round" />
         <path d="M2 4.5h8" />
       </svg>
-      Browse
     </button>
     {#if diff.getRefreshError()}
       <span class="refresh-error" title={diff.getRefreshError()}>
@@ -232,10 +188,6 @@
 </div>
 
 <style>
-  .claude-entry {
-    position: relative;
-  }
-
   .claude-btn {
     font-size: 12px;
     padding: 3px 10px;
@@ -251,12 +203,15 @@
     background: color-mix(in srgb, var(--accent-claude) 10%, transparent);
   }
 
+  /* Anchored to the toolbar, not to its button: once the toolbar wraps,
+     the button can sit at the left of a line, and a form hung off it
+     would run past the left edge of the diff column. */
   .claude-popover {
     position: absolute;
     top: calc(100% + 6px);
-    right: 0;
+    right: 16px;
     z-index: 40;
-    width: min(360px, 90vw);
+    width: min(360px, calc(100% - 32px));
     padding: 10px;
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md, 6px);
@@ -285,10 +240,18 @@
     cursor: pointer;
   }
 
+  /* Wraps rather than overflowing: .diff-main clips with overflow:
+     hidden, so anything past its right edge would be out of reach.
+     Every line packs to the right, so wrapped controls stay at the right
+     edge; View alone keeps the left. It is also the Claude form's
+     containing block. */
   .diff-toolbar {
+    position: relative;
     display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
     align-items: center;
-    gap: 20px;
+    gap: 6px 20px;
     padding: 6px 16px;
     background: var(--diff-toolbar-bg);
     border-bottom: 1px solid var(--diff-border);
@@ -301,49 +264,13 @@
     gap: 8px;
   }
 
-  .toolbar-label {
-    font-size: 11px;
-    color: var(--text-secondary);
-    user-select: none;
-    white-space: nowrap;
-  }
-
-  .segmented-control {
-    display: flex;
-    border: 1px solid var(--diff-border);
-    border-radius: var(--radius-sm);
-    overflow: hidden;
-  }
-
-  .segment {
-    font-size: 11px;
-    font-family: var(--font-mono);
-    padding: 2px 8px;
-    color: var(--text-secondary);
-    background: var(--diff-bg);
-    border-right: 1px solid var(--diff-border);
-    line-height: 18px;
-  }
-
-  .segment:last-child {
-    border-right: none;
-  }
-
-  .segment:hover {
-    background: var(--bg-surface-hover);
-  }
-
-  .segment--active {
-    background: var(--accent-blue);
-    color: #ffffff;
-  }
-
-  .segment--active:hover {
-    background: var(--accent-blue);
+  .diff-toolbar > :global(.view-menu) {
+    margin-right: auto;
   }
 
   .toolbar-group--right {
-    margin-left: auto;
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
 
   .refresh-btn {
@@ -357,6 +284,10 @@
     background: var(--bg-inset);
     color: var(--text-secondary);
     cursor: pointer;
+  }
+
+  .refresh-btn--icon {
+    padding: 3px 6px;
   }
 
   .refresh-btn:hover:not(:disabled) {
@@ -455,36 +386,6 @@
 
   .review-btn__event--changes {
     color: var(--accent-red);
-  }
-
-  .toggle-switch {
-    position: relative;
-    width: 36px;
-    height: 20px;
-    border-radius: 10px;
-    background: var(--border-default);
-    transition: background 0.2s;
-    flex-shrink: 0;
-  }
-
-  .toggle-switch--on {
-    background: var(--accent-blue);
-  }
-
-  .toggle-knob {
-    position: absolute;
-    top: 2px;
-    left: 2px;
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    background: #ffffff;
-    transition: transform 0.2s;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-  }
-
-  .toggle-switch--on .toggle-knob {
-    transform: translateX(16px);
   }
 
   .hidden-toggle {

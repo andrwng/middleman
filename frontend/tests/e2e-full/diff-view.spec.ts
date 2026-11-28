@@ -217,6 +217,55 @@ async function waitForSidebarFilesLoaded(page: Page): Promise<void> {
     .waitFor({ state: "visible", timeout: 10_000 });
 }
 
+// Labels of the controls matched by `selector` whose box reaches past
+// the on-screen part of .diff-main. Measured from rects, never by
+// clicking or hovering: .diff-main clips with overflow: hidden, which
+// still scrolls programmatically, so Playwright's auto-scroll would
+// reach controls a person cannot.
+async function clippedToolbarControls(
+  page: Page,
+  selector = ".diff-toolbar button, .diff-toolbar a",
+): Promise<string[]> {
+  return page.evaluate((sel) => {
+    const main = document.querySelector(".diff-main");
+    if (!main) return ["(no .diff-main)"];
+    const m = main.getBoundingClientRect();
+    const left = Math.max(m.left, 0);
+    const top = Math.max(m.top, 0);
+    const right = Math.min(m.right, window.innerWidth);
+    const bottom = Math.min(m.bottom, window.innerHeight);
+    const clipped: string[] = [];
+    for (const el of document.querySelectorAll(sel)) {
+      const r = el.getBoundingClientRect();
+      if (r.width === 0) continue;
+      if (r.left < left - 0.5 || r.right > right + 0.5 || r.top < top - 0.5 || r.bottom > bottom + 0.5) {
+        clipped.push(el.getAttribute("aria-label") || el.textContent?.trim() || el.className);
+      }
+    }
+    return clipped;
+  }, selector);
+}
+
+// exact: Playwright matches a name string as a case-insensitive
+// substring, so "View" alone also matches "Review" and "Review with
+// Claude".
+async function openView(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "View", exact: true }).click();
+}
+
+// Labels of the controls matched by `selector` that something else is
+// painted over at their center, so a click there would land elsewhere.
+async function coveredControls(page: Page, selector: string): Promise<string[]> {
+  return page.evaluate((sel) =>
+    [...document.querySelectorAll(sel)]
+      .filter((el) => {
+        const r = el.getBoundingClientRect();
+        return !el.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2));
+      })
+      .map((el) => el.getAttribute("aria-label") || el.textContent?.trim() || el.className),
+  selector);
+}
+
 // --- Functional tests ---
 
 test.describe("diff view", () => {
@@ -347,8 +396,9 @@ test.describe("diff view", () => {
     await navigateToDiff(page);
     await waitForDiffLoaded(page);
 
-    // The toolbar has two segmented controls (Layout, then Tab width);
-    // scope to the Tab-width group, whose segments are 1 / 2 / 4 / 8.
+    // The View popover has two segmented controls (Layout, then Tab
+    // width); scope to the Tab-width group, whose segments are 1 / 2 / 4 / 8.
+    await openView(page);
     const tabWidth = page.locator(".diff-toolbar .segmented-control").nth(1);
     const segments = tabWidth.locator(".segment");
 
@@ -359,6 +409,127 @@ test.describe("diff view", () => {
     await segments.nth(1).click();
     await expect(segments.nth(1)).toHaveClass(/segment--active/);
     await expect(segments.nth(2)).not.toHaveClass(/segment--active/);
+  });
+
+  // The toolbar used to be one row that never wrapped, and .diff-main
+  // clipped whatever ran past its right edge, with no scrollbar to reach
+  // it. At these widths the diff column beside the two sidebars is
+  // narrower than that row.
+  test("every toolbar control stays on screen in a narrow window", async ({ page }) => {
+    await mockDiffApi(page, smallDiff);
+    await navigateToDiff(page);
+    await waitForDiffLoaded(page);
+    for (const width of [1024, 1280]) {
+      await page.setViewportSize({ width, height: 800 });
+      await expect.poll(() => clippedToolbarControls(page), { message: `clipped at ${width}px` }).toEqual([]);
+    }
+  });
+
+  // With layout, tab width and whitespace folded into View, the toolbar
+  // is short enough for a single row at a common laptop width.
+  test("the toolbar fits on one row in a 1440px window", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await mockDiffApi(page, smallDiff);
+    await navigateToDiff(page);
+    await waitForDiffLoaded(page);
+    // The GitHub link arrives with the PR detail; measure the full row.
+    await expect(page.getByRole("link", { name: "Open this PR on GitHub" })).toBeVisible();
+
+    await expect.poll(() => clippedToolbarControls(page)).toEqual([]);
+    const centers = await page.locator(".diff-toolbar button:visible, .diff-toolbar a:visible")
+      .evaluateAll((els) => els.map((el) => {
+        const r = el.getBoundingClientRect();
+        return r.top + r.height / 2;
+      }));
+    expect(centers.length).toBeGreaterThan(0);
+    expect(Math.max(...centers) - Math.min(...centers)).toBeLessThan(4);
+  });
+
+  // The popover hangs over the diff, whose file headers are sticky, and
+  // it must stay usable after the toolbar has wrapped.
+  test("the View popover is on screen and on top in a narrow window", async ({ page }) => {
+    await page.setViewportSize({ width: 1024, height: 800 });
+    await mockDiffApi(page, smallDiff);
+    await navigateToDiff(page);
+    await waitForDiffLoaded(page);
+
+    await openView(page);
+    await expect(page.locator(".view-popover")).toBeVisible();
+
+    expect(await clippedToolbarControls(page, ".view-popover button")).toEqual([]);
+    expect(await coveredControls(page, ".view-popover button")).toEqual([]);
+  });
+
+  // App sends an unclaimed Escape back to the PR list. With the popover
+  // open, Escape means "close this" and must not also leave the diff,
+  // which would throw away an unsaved inline comment.
+  test("Escape closes the View popover without leaving the diff", async ({ page }) => {
+    await mockDiffApi(page, smallDiff);
+    await navigateToDiff(page);
+    await waitForDiffLoaded(page);
+    await openView(page);
+    await expect(page.locator(".view-popover")).toBeVisible();
+
+    await page.keyboard.press("Escape");
+
+    await expect(page.locator(".view-popover")).toHaveCount(0);
+    await expect(page).toHaveURL(/\/pulls\/acme\/widgets\/1\/files$/);
+    await expect(page.locator(".diff-file").first()).toBeVisible();
+  });
+
+  // Once the toolbar wraps, the Claude entry can sit anywhere on a line;
+  // its form has to open inside the diff column, not hang off its edge.
+  test("the Review with Claude form is on screen in a narrow window", async ({ page }) => {
+    await mockDiffApi(page, smallDiff);
+    await navigateToDiff(page);
+    await waitForDiffLoaded(page);
+    for (const width of [900, 1024]) {
+      await page.setViewportSize({ width, height: 800 });
+      await page.getByRole("button", { name: "Review with Claude" }).click();
+      await expect(page.locator(".claude-popover")).toBeVisible();
+      await expect.poll(
+        () => clippedToolbarControls(page, ".claude-popover button, .claude-popover textarea"),
+        { message: `Claude form clipped at ${width}px` },
+      ).toEqual([]);
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+      await expect(page.locator(".claude-popover")).toHaveCount(0);
+    }
+  });
+
+  // Wrapped lines pack to the right, so the trailing controls stay at the
+  // toolbar's right edge instead of dropping to the left, under View.
+  test("wrapped toolbar controls stay right-aligned in a narrow window", async ({ page }) => {
+    await mockDiffApi(page, smallDiff);
+    await navigateToDiff(page);
+    await waitForDiffLoaded(page);
+    for (const width of [900, 1024]) {
+      await page.setViewportSize({ width, height: 800 });
+      // Firefox lays the toolbar out at sub-pixel offsets, so the gap only
+      // has to be under half a pixel.
+      await expect.poll(() => page.evaluate(() => {
+        const tb = document.querySelector(".diff-toolbar");
+        const review = tb?.querySelector(".review-btn");
+        if (!tb || !review) return null;
+        const contentRight = tb.getBoundingClientRect().right - parseFloat(getComputedStyle(tb).paddingRight);
+        return contentRight - review.getBoundingClientRect().right;
+      }), { message: `gap between Review and the right edge at ${width}px` }).toBeCloseTo(0, 0);
+    }
+  });
+
+  // Both popovers can be open at once. View is the short-lived one, which
+  // closes on any click outside it, so it must not open underneath.
+  test("the View popover opens above an open Claude form", async ({ page }) => {
+    await page.setViewportSize({ width: 1024, height: 800 });
+    await mockDiffApi(page, smallDiff);
+    await navigateToDiff(page);
+    await waitForDiffLoaded(page);
+    await page.getByRole("button", { name: "Review with Claude" }).click();
+    await expect(page.locator(".claude-popover")).toBeVisible();
+
+    await openView(page);
+    await expect(page.locator(".view-popover")).toBeVisible();
+
+    expect(await coveredControls(page, ".view-popover button")).toEqual([]);
   });
 
   test("hide whitespace toggle triggers re-fetch", async ({ page }) => {
@@ -388,10 +559,16 @@ test.describe("diff view", () => {
     const initialCount = fetchCount;
 
     // Toggle hide whitespace on.
+    await openView(page);
     await page.locator(".toggle-switch").click();
 
     // Wait for the re-fetch to land and assert it actually happened.
     await expect.poll(() => fetchCount).toBeGreaterThan(initialCount);
+
+    // The closed View button carries the cue, and the popover stays open
+    // for further changes.
+    await expect(page.locator(".view-btn__marker")).toBeVisible();
+    await expect(page.locator(".view-popover")).toBeVisible();
   });
 
   test("j/k keyboard navigation moves between files", async ({ page }) => {
@@ -822,6 +999,7 @@ test.describe("diff view performance", () => {
 
     // Toggle whitespace -- triggers a re-fetch with ?whitespace=hide
     // which returns fewer files.
+    await openView(page);
     await page.locator(".toggle-switch").click();
 
     // Count should drop to 45, proving the re-fetch and re-render completed.
@@ -981,6 +1159,7 @@ test.describe("diff view (git-backed)", () => {
     await expect(page.locator(".diff-file")).toHaveCount(4);
 
     // Toggle hide whitespace.
+    await openView(page);
     await page.locator(".toggle-switch").click();
 
     // README.md is whitespace-only and should be hidden.
