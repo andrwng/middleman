@@ -157,11 +157,10 @@ export function createAIReviewRunStore(opts?: AIReviewRunStoreOptions) {
     // run can't be dismissed: its pill is the progress indicator.
     dismiss: (): void => {
       if (!run || active(run)) return;
-      const key = runKey(run);
-      if (!dismissedRuns.includes(key)) {
-        dismissedRuns = [...dismissedRuns, key];
-        saveDismissedRuns(dismissedRuns);
-      }
+      // Merge with storage: another tab may have dismissed runs since
+      // this one loaded, and writing only this tab's copy would drop them.
+      dismissedRuns = [...new Set([...loadDismissedRuns(), ...dismissedRuns, runKey(run)])];
+      saveDismissedRuns(dismissedRuns);
       panelOpen = false;
     },
   };

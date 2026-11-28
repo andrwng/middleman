@@ -155,4 +155,24 @@ describe("aiReviewRun store dismissal", () => {
     expect(store.isPanelOpen()).toBe(true);
     store.stop();
   });
+
+  it("a dismissal keeps the ones another tab made after this tab loaded", async () => {
+    globalThis.fetch = vi.fn(async (url: unknown) => {
+      const id = String(url).includes("/pulls/2/") ? 2 : 1;
+      return new Response(JSON.stringify({ run: run("done", { id }) }), { status: 200 });
+    }) as unknown as typeof fetch;
+    // Tab B loads PR 2 before tab A dismisses PR 1's run.
+    const tabB = createAIReviewRunStore();
+    tabB.start("acme", "widget", 2);
+    await vi.waitFor(() => expect(tabB.getRun()).not.toBeNull());
+    const tabA = await started();
+    tabA.dismiss();
+    tabB.dismiss();
+    tabA.stop();
+    tabB.stop();
+
+    const reloaded = await started();
+    expect(reloaded.isDismissed()).toBe(true);
+    reloaded.stop();
+  });
 });
