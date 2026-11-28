@@ -5,7 +5,11 @@ const state = {
   run: null as null | Record<string, unknown>,
   active: false,
   open: false,
+  dismissed: false,
 };
+const dismiss = vi.fn(() => {
+  state.dismissed = true;
+});
 const cancel = vi.fn(async () => {});
 const startRun = vi.fn(async () => true);
 const togglePanel = vi.fn(() => {
@@ -23,6 +27,8 @@ vi.mock("../../context.js", () => ({
       isStarting: () => false,
       getError: () => null,
       isPanelOpen: () => state.open,
+      isDismissed: () => state.dismissed,
+      dismiss,
       togglePanel,
       closePanel,
       cancel,
@@ -39,6 +45,7 @@ afterEach(() => {
   state.run = null;
   state.active = false;
   state.open = false;
+  state.dismissed = false;
 });
 
 function aRun(extra: Record<string, unknown> = {}) {
@@ -109,5 +116,27 @@ describe("ClaudeReviewPanel", () => {
     state.open = true;
     const { container } = render(ClaudeReviewPanel, { props: { owner: "acme", name: "widget" } });
     expect(container.querySelector(".claude-panel__summary strong")?.textContent).toBe("two");
+  });
+
+  it.each(["done", "failed", "cancelled"])("a %s run's pill can be dismissed", async (status) => {
+    state.run = aRun({ status });
+    const { getByRole } = render(ClaudeReviewPanel);
+    await fireEvent.click(getByRole("button", { name: "Dismiss Claude review" }));
+    expect(dismiss).toHaveBeenCalledOnce();
+  });
+
+  it("an active run's pill has no dismiss button", () => {
+    state.run = aRun({ status: "running", summary: "" });
+    state.active = true;
+    const { getByRole, queryByRole } = render(ClaudeReviewPanel);
+    expect(getByRole("button", { name: /Reviewing… · 2 suggestions/ })).toBeTruthy();
+    expect(queryByRole("button", { name: "Dismiss Claude review" })).toBeNull();
+  });
+
+  it("renders nothing for a dismissed run", () => {
+    state.run = aRun();
+    state.dismissed = true;
+    const { container } = render(ClaudeReviewPanel);
+    expect(container.textContent?.trim()).toBe("");
   });
 });
