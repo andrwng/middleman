@@ -109,11 +109,64 @@ export function findDiffLineEl(target: DiffJumpTarget): HTMLElement | null {
 // times it out.
 export function flashDiffLine(el: HTMLElement): void {
   el.scrollIntoView({ block: "center", behavior: "smooth" });
+  checkLanding(el);
   if (highlightedEl && highlightedEl !== el && highlightedEl.isConnected) {
     highlightedEl.classList.remove(HIGHLIGHT_CLASS);
   }
   highlightedEl = el;
   el.classList.add(HIGHLIGHT_CLASS);
+}
+
+// How long checkLanding waits for the jump's smooth scroll to end. A
+// smooth scroll takes well under a second.
+export const LANDING_CHECK_TIMEOUT_MS = 3_000;
+
+// Input that means the reader has taken over from the jump.
+const READER_INPUT_EVENTS = ["pointerdown", "keydown", "wheel", "touchmove"] as const;
+
+// Cancels the most recent jump's landing check while it is still waiting.
+let cancelLandingCheck: (() => void) | null = null;
+
+// checkLanding makes sure a jump's smooth scroll reaches its line. WebKit
+// ends a smooth scroll as soon as scroll anchoring adjusts the scroll
+// position, which in a large diff happens whenever something above the
+// viewport changes height mid-scroll, such as a neighbouring file's hunks
+// arriving. The jump then stops short with the line anywhere, often far
+// off screen. So when the diff area's scroll ends, a line that is not
+// fully in view gets one instant scroll to it.
+//
+// Only the first scrollend counts. Input anywhere on the page cancels the
+// check first, because a sidebar click or a j/k keypress starts a scroll
+// of its own whose scrollend must not drag the reader back. So do a newer
+// jump, a cleared highlight and the timeout.
+function checkLanding(el: HTMLElement): void {
+  cancelLandingCheck?.();
+  const area = el.closest<HTMLElement>(".diff-area");
+  if (!area) return;
+  const watch = new AbortController();
+  const cancel = (): void => {
+    clearTimeout(timer);
+    watch.abort();
+    if (cancelLandingCheck === cancel) cancelLandingCheck = null;
+  };
+  const timer = setTimeout(cancel, LANDING_CHECK_TIMEOUT_MS);
+  area.addEventListener(
+    "scrollend",
+    () => {
+      cancel();
+      if (!el.isConnected) return;
+      const line = el.getBoundingClientRect();
+      const view = area.getBoundingClientRect();
+      if (line.top < view.top || line.bottom > view.bottom) {
+        el.scrollIntoView({ block: "center", behavior: "instant" });
+      }
+    },
+    { signal: watch.signal },
+  );
+  for (const type of READER_INPUT_EVENTS) {
+    document.addEventListener(type, cancel, { capture: true, passive: true, signal: watch.signal });
+  }
+  cancelLandingCheck = cancel;
 }
 
 // clearDiffLineHighlight removes the persistent highlight left by the
@@ -122,6 +175,7 @@ export function flashDiffLine(el: HTMLElement): void {
 // symbol-refs gutter closing — rather than leaving a highlighted line
 // with nothing on screen explaining why.
 export function clearDiffLineHighlight(): void {
+  cancelLandingCheck?.();
   if (highlightedEl && highlightedEl.isConnected) {
     highlightedEl.classList.remove(HIGHLIGHT_CLASS);
   }

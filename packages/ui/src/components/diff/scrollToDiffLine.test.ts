@@ -5,6 +5,7 @@ import {
   currentDiffPosition,
   findDiffLineEl,
   flashDiffLine,
+  LANDING_CHECK_TIMEOUT_MS,
   scrollToDiffLine,
   type DiffJumpDeps,
 } from "./scrollToDiffLine";
@@ -555,5 +556,129 @@ describe("highlightedDiffPosition", () => {
     wrap.remove();
 
     expect(highlightedDiffPosition()).toBeNull();
+  });
+});
+
+// A diff area showing y 100 to 500, holding one file with line 80 at
+// lineTop.
+function makeLandingFixture(lineTop: number): { area: HTMLElement; line: HTMLElement } {
+  const area = makeDiffArea();
+  stubRect(area, 100, 500);
+  const file = document.createElement("div");
+  file.className = "diff-file";
+  file.dataset.filePath = "src/last.go";
+  area.appendChild(file);
+  const line = appendLineWrap(file, 80, "RIGHT");
+  stubRect(line, lineTop, lineTop + 20);
+  return { area, line };
+}
+
+// The options of each scrollIntoView call made on el. The stub is shared by
+// every element, so calls are matched to elements by their `this`.
+function scrollsOn(el: HTMLElement): unknown[] {
+  const scroll = vi.mocked(Element.prototype.scrollIntoView);
+  return scroll.mock.calls
+    .filter((_, i) => scroll.mock.contexts[i] === el)
+    .map(([options]) => options);
+}
+
+const SMOOTH = { block: "center", behavior: "smooth" };
+const INSTANT = { block: "center", behavior: "instant" };
+
+describe("flashDiffLine's landing check", () => {
+  // WebKit ends a smooth scroll as soon as scroll anchoring moves the
+  // scroll position, so in a large diff the jump can stop short of its
+  // line, leaving it anywhere.
+  it.each([
+    ["far below the view", 1700],
+    ["cut off at the bottom edge", 490],
+    ["above the view", 40],
+  ])("scrolls straight to a line left %s when the smooth scroll ends", (_, lineTop) => {
+    const { area, line } = makeLandingFixture(lineTop);
+
+    flashDiffLine(line);
+    area.dispatchEvent(new Event("scrollend"));
+
+    expect(scrollsOn(line)).toEqual([SMOOTH, INSTANT]);
+  });
+
+  it("leaves a line alone when the smooth scroll ends with it in view", () => {
+    const { area, line } = makeLandingFixture(290);
+
+    flashDiffLine(line);
+    area.dispatchEvent(new Event("scrollend"));
+
+    expect(scrollsOn(line)).toEqual([SMOOTH]);
+  });
+
+  // The reader has taken over, wherever on the page they acted: a click
+  // in the sidebar or a j/k keypress starts a scroll of its own, and its
+  // scrollend must not drag them back to the old line.
+  it.each(["pointerdown", "keydown", "wheel", "touchmove"])(
+    "does not pull the reader back after a %s anywhere on the page",
+    (type) => {
+      const { area, line } = makeLandingFixture(1700);
+
+      flashDiffLine(line);
+      document.body.dispatchEvent(new Event(type, { bubbles: true }));
+      area.dispatchEvent(new Event("scrollend"));
+
+      expect(scrollsOn(line)).toEqual([SMOOTH]);
+    },
+  );
+
+  it("checks only the first scroll end", () => {
+    const { area, line } = makeLandingFixture(290);
+
+    flashDiffLine(line);
+    area.dispatchEvent(new Event("scrollend"));
+    stubRect(line, 1700, 1720);
+    area.dispatchEvent(new Event("scrollend"));
+
+    expect(scrollsOn(line)).toEqual([SMOOTH]);
+  });
+
+  it("stops waiting when no scroll end arrives in time", () => {
+    vi.useFakeTimers();
+    const { area, line } = makeLandingFixture(1700);
+
+    flashDiffLine(line);
+    vi.advanceTimersByTime(LANDING_CHECK_TIMEOUT_MS);
+    area.dispatchEvent(new Event("scrollend"));
+
+    expect(scrollsOn(line)).toEqual([SMOOTH]);
+  });
+
+  it("drops the check when a newer jump lands", () => {
+    const { area, line } = makeLandingFixture(1700);
+    const newer = appendLineWrap(line.parentElement!, 10, "RIGHT");
+    stubRect(newer, 290, 310);
+
+    flashDiffLine(line);
+    flashDiffLine(newer);
+    area.dispatchEvent(new Event("scrollend"));
+
+    expect(scrollsOn(line)).toEqual([SMOOTH]);
+    expect(scrollsOn(newer)).toEqual([SMOOTH]);
+  });
+
+  it("drops the check when the highlight is cleared", () => {
+    const { area, line } = makeLandingFixture(1700);
+
+    flashDiffLine(line);
+    clearDiffLineHighlight();
+    area.dispatchEvent(new Event("scrollend"));
+
+    expect(scrollsOn(line)).toEqual([SMOOTH]);
+  });
+
+  it("does nothing for a line that has left the document", () => {
+    const { area, line } = makeLandingFixture(1700);
+
+    flashDiffLine(line);
+    line.remove();
+    area.dispatchEvent(new Event("scrollend"));
+
+    expect(scrollsOn(line)).toEqual([SMOOTH]);
   });
 });
